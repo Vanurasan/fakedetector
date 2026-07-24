@@ -4,12 +4,10 @@ version = "0.1.0"
 description = "Инструмент обнаружения признаков искусственного создания или модификации мультимедийных файлов"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
-license = { text = "MIT" }
-authors = [
-    { name = "FakeDetector Team" },
-]
 dependencies = [
     "fastapi>=0.115.0",
+    "pydantic>=2.13.4",
+    "pyyaml>=6.0",
     "uvicorn[standard]>=0.34.0",
 ]
 
@@ -19,6 +17,7 @@ dev = [
     "pytest>=8.3.0",
     "ruff>=0.9.0",
     "mypy>=1.13.0",
+    "types-pyyaml>=6.0.12.20260724",
 ]
 
 [tool.pytest.ini_options]
