@@ -1,0 +1,120 @@
+# Полный пример канонической конфигурации.
+# Настройки ещё не реализованных модулей пока не используются приложением.
+# Пороги и веса risk_assessment являются проектными примерами
+# и не являются валидированной моделью оценки риска.
+# Скопируйте этот файл в config.yaml и измените под своё окружение.
+# Секреты (токены, пароли) храните только в переменных окружения или .env.
+
+schema_version: "1.0"
+
+server:
+  host: "127.0.0.1"
+  port: 8080
+  request_timeout_seconds: 600
+  application_version: "0.1.0"
+
+access_channels:
+  webui:
+    enabled: true
+    require_authentication: true
+  api:
+    enabled: true
+    require_token: true
+    token_env_var: "MEDIA_ANALYZER_API_TOKEN"
+
+limits:
+  max_file_size_mb:
+    image: 20
+    audio: 50
+    video: 200
+  max_parallel_tasks:
+    image: 4
+    audio: 2
+    video: 1
+  processing_timeout_seconds: 600
+
+allowed_formats:
+  image:
+    extensions: ["jpg", "jpeg", "png", "webp"]
+    mime_types: ["image/jpeg", "image/png", "image/webp"]
+  audio:
+    extensions: ["wav", "mp3", "flac", "m4a"]
+    mime_types: ["audio/wav", "audio/mpeg", "audio/flac", "audio/mp4"]
+  video:
+    extensions: ["mp4", "mov", "avi", "mkv"]
+    mime_types: ["video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska"]
+
+validation:
+  check_extension: true
+  check_mime_type: true
+  check_file_signature: true
+  reject_if_type_mismatch: true
+  calculate_sha256: true
+  safe_decode: true
+
+temporary_storage:
+  root_path: "runtime/temp"
+  ttl_minutes: 60
+  cleanup_retries: 3
+  quarantine_enabled: true
+  quarantine_ttl_hours: 24
+
+preprocessing:
+  image:
+    extract_metadata: true
+    normalize_for_analysis: true
+  audio:
+    extract_metadata: true
+    fragment_duration_seconds: 10
+    build_spectrogram: true
+  video:
+    extract_metadata: true
+    keyframe_interval_seconds: 2
+    extract_audio_track: true
+
+analyzers:
+  defaults:
+    timeout_seconds: 120
+    continue_on_error: true
+  image:
+    enabled: []
+  audio:
+    enabled: []
+  video:
+    enabled: []
+  settings: {}
+
+risk_assessment:
+  model_id: "score_model_v1"
+  model_version: "0.1.0"
+  thresholds:
+    low_max: 29
+    medium_max: 60
+  severity_scores:
+    weak: 5
+    significant: 25
+  critical_override:
+    enabled: false
+    allowed_finding_types: []
+  completeness:
+    minimum_for_assessment: 0.5
+
+result:
+  directory: "runtime/results"
+  atomic_write: true
+  include_raw_metrics: false
+  store_original_name: true
+
+error_handling:
+  continue_if_analyzer_fails: true
+  mark_partial_on_analyzer_failure: true
+  hide_internal_error_details: true
+
+logging:
+  level: "INFO"
+  jsonl_path: "runtime/logs/application.jsonl"
+  rotation_max_bytes: 10485760
+  rotation_backup_count: 5
+
+external_systems:
+  enabled: false

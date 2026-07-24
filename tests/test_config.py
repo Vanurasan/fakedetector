@@ -1,0 +1,760 @@
+"""Tests for configuration loading and validation."""
+
+from __future__ import annotations
+
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from fakedetector.config.loader import ConfigurationError, load_config
+from fakedetector.config.models import AppConfig
+
+
+def test_valid_config_loads() -> None:
+    """A minimal valid YAML configuration loads successfully."""
+    yaml_content = """\
+schema_version: "1.0"
+server:
+  host: "0.0.0.0"
+  port: 9090
+access_channels:
+  webui:
+    enabled: true
+    require_authentication: true
+  api:
+    enabled: true
+    require_token: true
+    token_env_var: "MEDIA_ANALYZER_API_TOKEN"
+limits:
+  max_file_size_mb:
+    image: 20
+    audio: 50
+    video: 200
+  max_parallel_tasks:
+    image: 4
+    audio: 2
+    video: 1
+  processing_timeout_seconds: 600
+allowed_formats:
+  image:
+    extensions: ["jpg", "jpeg", "png", "webp"]
+    mime_types: ["image/jpeg", "image/png", "image/webp"]
+  audio:
+    extensions: ["wav", "mp3", "flac", "m4a"]
+    mime_types: ["audio/wav", "audio/mpeg", "audio/flac", "audio/mp4"]
+  video:
+    extensions: ["mp4", "mov", "avi", "mkv"]
+    mime_types: ["video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska"]
+validation:
+  check_extension: true
+  check_mime_type: true
+  check_file_signature: true
+  reject_if_type_mismatch: true
+  calculate_sha256: true
+  safe_decode: true
+temporary_storage:
+  root_path: "runtime/temp"
+  ttl_minutes: 60
+  cleanup_retries: 3
+  quarantine_enabled: true
+  quarantine_ttl_hours: 24
+preprocessing:
+  image:
+    extract_metadata: true
+    normalize_for_analysis: true
+  audio:
+    extract_metadata: true
+    fragment_duration_seconds: 10
+    build_spectrogram: true
+  video:
+    extract_metadata: true
+    keyframe_interval_seconds: 2
+    extract_audio_track: true
+analyzers:
+  defaults:
+    timeout_seconds: 120
+    continue_on_error: true
+  image:
+    enabled: []
+  audio:
+    enabled: []
+  video:
+    enabled: []
+  settings: {}
+risk_assessment:
+  model_id: "score_model_v1"
+  model_version: "0.1.0"
+  thresholds:
+    low_max: 29
+    medium_max: 60
+  severity_scores:
+    weak: 5
+    significant: 25
+  critical_override:
+    enabled: false
+    allowed_finding_types: []
+  completeness:
+    minimum_for_assessment: 0.5
+result:
+  directory: "runtime/results"
+  atomic_write: true
+  include_raw_metrics: false
+  store_original_name: true
+error_handling:
+  continue_if_analyzer_fails: true
+  mark_partial_on_analyzer_failure: true
+  hide_internal_error_details: true
+logging:
+  level: "INFO"
+  jsonl_path: "runtime/logs/application.jsonl"
+  rotation_max_bytes: 10485760
+  rotation_backup_count: 5
+external_systems:
+  enabled: false
+"""
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(yaml_content)
+        tmp_path = f.name
+
+    try:
+        config = load_config(tmp_path)
+        assert isinstance(config, AppConfig)
+        assert config.schema_version == "1.0"
+        assert config.server.host == "0.0.0.0"
+        assert config.server.port == 9090
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_unknown_field_rejected() -> None:
+    """A YAML file with an unknown top-level field raises ConfigurationError."""
+    yaml_content = """\
+schema_version: "1.0"
+server:
+  host: "127.0.0.1"
+  port: 8080
+access_channels:
+  webui:
+    enabled: true
+    require_authentication: true
+  api:
+    enabled: true
+    require_token: true
+    token_env_var: "MEDIA_ANALYZER_API_TOKEN"
+limits:
+  max_file_size_mb:
+    image: 20
+    audio: 50
+    video: 200
+  max_parallel_tasks:
+    image: 4
+    audio: 2
+    video: 1
+  processing_timeout_seconds: 600
+allowed_formats:
+  image:
+    extensions: ["jpg", "jpeg", "png", "webp"]
+    mime_types: ["image/jpeg", "image/png", "image/webp"]
+  audio:
+    extensions: ["wav", "mp3", "flac", "m4a"]
+    mime_types: ["audio/wav", "audio/mpeg", "audio/flac", "audio/mp4"]
+  video:
+    extensions: ["mp4", "mov", "avi", "mkv"]
+    mime_types: ["video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska"]
+validation:
+  check_extension: true
+  check_mime_type: true
+  check_file_signature: true
+  reject_if_type_mismatch: true
+  calculate_sha256: true
+  safe_decode: true
+temporary_storage:
+  root_path: "runtime/temp"
+  ttl_minutes: 60
+  cleanup_retries: 3
+  quarantine_enabled: true
+  quarantine_ttl_hours: 24
+preprocessing:
+  image:
+    extract_metadata: true
+    normalize_for_analysis: true
+  audio:
+    extract_metadata: true
+    fragment_duration_seconds: 10
+    build_spectrogram: true
+  video:
+    extract_metadata: true
+    keyframe_interval_seconds: 2
+    extract_audio_track: true
+analyzers:
+  defaults:
+    timeout_seconds: 120
+    continue_on_error: true
+  image:
+    enabled: []
+  audio:
+    enabled: []
+  video:
+    enabled: []
+  settings: {}
+risk_assessment:
+  model_id: "score_model_v1"
+  model_version: "0.1.0"
+  thresholds:
+    low_max: 29
+    medium_max: 60
+  severity_scores:
+    weak: 5
+    significant: 25
+  critical_override:
+    enabled: false
+    allowed_finding_types: []
+  completeness:
+    minimum_for_assessment: 0.5
+result:
+  directory: "runtime/results"
+  atomic_write: true
+  include_raw_metrics: false
+  store_original_name: true
+error_handling:
+  continue_if_analyzer_fails: true
+  mark_partial_on_analyzer_failure: true
+  hide_internal_error_details: true
+logging:
+  level: "INFO"
+  jsonl_path: "runtime/logs/application.jsonl"
+  rotation_max_bytes: 10485760
+  rotation_backup_count: 5
+external_systems:
+  enabled: false
+unknown_section:
+  foo: bar
+"""
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(yaml_content)
+        tmp_path = f.name
+
+    try:
+        with pytest.raises(ConfigurationError, match="validation failed"):
+            load_config(tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_invalid_field_type_rejected() -> None:
+    """A field with an invalid type (e.g. string instead of int) raises ConfigurationError."""
+    yaml_content = """\
+schema_version: "1.0"
+server:
+  host: "127.0.0.1"
+  port: "not_a_number"
+access_channels:
+  webui:
+    enabled: true
+    require_authentication: true
+  api:
+    enabled: true
+    require_token: true
+    token_env_var: "MEDIA_ANALYZER_API_TOKEN"
+limits:
+  max_file_size_mb:
+    image: 20
+    audio: 50
+    video: 200
+  max_parallel_tasks:
+    image: 4
+    audio: 2
+    video: 1
+  processing_timeout_seconds: 600
+allowed_formats:
+  image:
+    extensions: ["jpg", "jpeg", "png", "webp"]
+    mime_types: ["image/jpeg", "image/png", "image/webp"]
+  audio:
+    extensions: ["wav", "mp3", "flac", "m4a"]
+    mime_types: ["audio/wav", "audio/mpeg", "audio/flac", "audio/mp4"]
+  video:
+    extensions: ["mp4", "mov", "avi", "mkv"]
+    mime_types: ["video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska"]
+validation:
+  check_extension: true
+  check_mime_type: true
+  check_file_signature: true
+  reject_if_type_mismatch: true
+  calculate_sha256: true
+  safe_decode: true
+temporary_storage:
+  root_path: "runtime/temp"
+  ttl_minutes: 60
+  cleanup_retries: 3
+  quarantine_enabled: true
+  quarantine_ttl_hours: 24
+preprocessing:
+  image:
+    extract_metadata: true
+    normalize_for_analysis: true
+  audio:
+    extract_metadata: true
+    fragment_duration_seconds: 10
+    build_spectrogram: true
+  video:
+    extract_metadata: true
+    keyframe_interval_seconds: 2
+    extract_audio_track: true
+analyzers:
+  defaults:
+    timeout_seconds: 120
+    continue_on_error: true
+  image:
+    enabled: []
+  audio:
+    enabled: []
+  video:
+    enabled: []
+  settings: {}
+risk_assessment:
+  model_id: "score_model_v1"
+  model_version: "0.1.0"
+  thresholds:
+    low_max: 29
+    medium_max: 60
+  severity_scores:
+    weak: 5
+    significant: 25
+  critical_override:
+    enabled: false
+    allowed_finding_types: []
+  completeness:
+    minimum_for_assessment: 0.5
+result:
+  directory: "runtime/results"
+  atomic_write: true
+  include_raw_metrics: false
+  store_original_name: true
+error_handling:
+  continue_if_analyzer_fails: true
+  mark_partial_on_analyzer_failure: true
+  hide_internal_error_details: true
+logging:
+  level: "INFO"
+  jsonl_path: "runtime/logs/application.jsonl"
+  rotation_max_bytes: 10485760
+  rotation_backup_count: 5
+external_systems:
+  enabled: false
+"""
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(yaml_content)
+        tmp_path = f.name
+
+    try:
+        with pytest.raises(ConfigurationError, match="validation failed"):
+            load_config(tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_invalid_yaml_raises_controlled_error() -> None:
+    """Malformed YAML raises ConfigurationError, not a raw YAML exception."""
+    yaml_content = """\
+schema_version: "1.0"
+server:
+  host: "127.0.0.1"
+  port: [unclosed
+"""
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(yaml_content)
+        tmp_path = f.name
+
+    try:
+        with pytest.raises(ConfigurationError, match="invalid YAML"):
+            load_config(tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_missing_file_raises_controlled_error() -> None:
+    """A non-existent file path raises ConfigurationError."""
+    with pytest.raises(ConfigurationError, match="not found"):
+        load_config("nonexistent_config_12345.yaml")
+
+
+def test_full_example_config_loads() -> None:
+    """The config.example.yaml file loads without errors."""
+    example_path = Path("config/config.example.yaml")
+    assert example_path.is_file(), "config.example.yaml must exist"
+    config = load_config(str(example_path))
+    assert isinstance(config, AppConfig)
+    assert config.schema_version == "1.0"
+
+
+def test_unknown_nested_field_rejected() -> None:
+    """An unknown field inside a known section raises ConfigurationError."""
+    yaml_content = """\
+schema_version: "1.0"
+server:
+  host: "127.0.0.1"
+  port: 8080
+  unknown_server_field: true
+access_channels:
+  webui:
+    enabled: true
+    require_authentication: true
+  api:
+    enabled: true
+    require_token: true
+    token_env_var: "MEDIA_ANALYZER_API_TOKEN"
+limits:
+  max_file_size_mb:
+    image: 20
+    audio: 50
+    video: 200
+  max_parallel_tasks:
+    image: 4
+    audio: 2
+    video: 1
+  processing_timeout_seconds: 600
+allowed_formats:
+  image:
+    extensions: ["jpg", "jpeg", "png", "webp"]
+    mime_types: ["image/jpeg", "image/png", "image/webp"]
+  audio:
+    extensions: ["wav", "mp3", "flac", "m4a"]
+    mime_types: ["audio/wav", "audio/mpeg", "audio/flac", "audio/mp4"]
+  video:
+    extensions: ["mp4", "mov", "avi", "mkv"]
+    mime_types: ["video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska"]
+validation:
+  check_extension: true
+  check_mime_type: true
+  check_file_signature: true
+  reject_if_type_mismatch: true
+  calculate_sha256: true
+  safe_decode: true
+temporary_storage:
+  root_path: "runtime/temp"
+  ttl_minutes: 60
+  cleanup_retries: 3
+  quarantine_enabled: true
+  quarantine_ttl_hours: 24
+preprocessing:
+  image:
+    extract_metadata: true
+    normalize_for_analysis: true
+  audio:
+    extract_metadata: true
+    fragment_duration_seconds: 10
+    build_spectrogram: true
+  video:
+    extract_metadata: true
+    keyframe_interval_seconds: 2
+    extract_audio_track: true
+analyzers:
+  defaults:
+    timeout_seconds: 120
+    continue_on_error: true
+  image:
+    enabled: []
+  audio:
+    enabled: []
+  video:
+    enabled: []
+  settings: {}
+risk_assessment:
+  model_id: "score_model_v1"
+  model_version: "0.1.0"
+  thresholds:
+    low_max: 29
+    medium_max: 60
+  severity_scores:
+    weak: 5
+    significant: 25
+  critical_override:
+    enabled: false
+    allowed_finding_types: []
+  completeness:
+    minimum_for_assessment: 0.5
+result:
+  directory: "runtime/results"
+  atomic_write: true
+  include_raw_metrics: false
+  store_original_name: true
+error_handling:
+  continue_if_analyzer_fails: true
+  mark_partial_on_analyzer_failure: true
+  hide_internal_error_details: true
+logging:
+  level: "INFO"
+  jsonl_path: "runtime/logs/application.jsonl"
+  rotation_max_bytes: 10485760
+  rotation_backup_count: 5
+external_systems:
+  enabled: false
+"""
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(yaml_content)
+        tmp_path = f.name
+
+    try:
+        with pytest.raises(ConfigurationError, match="validation failed"):
+            load_config(tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_empty_yaml_rejected() -> None:
+    """An empty YAML file is rejected because all sections are required."""
+    yaml_content = """\
+schema_version: "1.0"
+"""
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(yaml_content)
+        tmp_path = f.name
+
+    try:
+        with pytest.raises(ConfigurationError, match="validation failed"):
+            load_config(tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_missing_required_section_rejected() -> None:
+    """A YAML file missing a required top-level section raises ConfigurationError."""
+    yaml_content = """\
+schema_version: "1.0"
+server:
+  host: "127.0.0.1"
+  port: 8080
+access_channels:
+  webui:
+    enabled: true
+    require_authentication: true
+  api:
+    enabled: true
+    require_token: true
+    token_env_var: "MEDIA_ANALYZER_API_TOKEN"
+limits:
+  max_file_size_mb:
+    image: 20
+    audio: 50
+    video: 200
+  max_parallel_tasks:
+    image: 4
+    audio: 2
+    video: 1
+  processing_timeout_seconds: 600
+allowed_formats:
+  image:
+    extensions: ["jpg", "jpeg", "png", "webp"]
+    mime_types: ["image/jpeg", "image/png", "image/webp"]
+  audio:
+    extensions: ["wav", "mp3", "flac", "m4a"]
+    mime_types: ["audio/wav", "audio/mpeg", "audio/flac", "audio/mp4"]
+  video:
+    extensions: ["mp4", "mov", "avi", "mkv"]
+    mime_types: ["video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska"]
+validation:
+  check_extension: true
+  check_mime_type: true
+  check_file_signature: true
+  reject_if_type_mismatch: true
+  calculate_sha256: true
+  safe_decode: true
+temporary_storage:
+  root_path: "runtime/temp"
+  ttl_minutes: 60
+  cleanup_retries: 3
+  quarantine_enabled: true
+  quarantine_ttl_hours: 24
+preprocessing:
+  image:
+    extract_metadata: true
+    normalize_for_analysis: true
+  audio:
+    extract_metadata: true
+    fragment_duration_seconds: 10
+    build_spectrogram: true
+  video:
+    extract_metadata: true
+    keyframe_interval_seconds: 2
+    extract_audio_track: true
+analyzers:
+  defaults:
+    timeout_seconds: 120
+    continue_on_error: true
+  image:
+    enabled: []
+  audio:
+    enabled: []
+  video:
+    enabled: []
+  settings: {}
+risk_assessment:
+  model_id: "score_model_v1"
+  model_version: "0.1.0"
+  thresholds:
+    low_max: 29
+    medium_max: 60
+  severity_scores:
+    weak: 5
+    significant: 25
+  critical_override:
+    enabled: false
+    allowed_finding_types: []
+  completeness:
+    minimum_for_assessment: 0.5
+result:
+  directory: "runtime/results"
+  atomic_write: true
+  include_raw_metrics: false
+  store_original_name: true
+error_handling:
+  continue_if_analyzer_fails: true
+  mark_partial_on_analyzer_failure: true
+  hide_internal_error_details: true
+logging:
+  level: "INFO"
+  jsonl_path: "runtime/logs/application.jsonl"
+  rotation_max_bytes: 10485760
+  rotation_backup_count: 5
+# external_systems is missing
+"""
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(yaml_content)
+        tmp_path = f.name
+
+    try:
+        with pytest.raises(ConfigurationError, match="validation failed"):
+            load_config(tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_unsupported_schema_version_rejected() -> None:
+    """A schema_version other than '1.0' raises ConfigurationError."""
+    yaml_content = """\
+schema_version: "2.0"
+server:
+  host: "127.0.0.1"
+  port: 8080
+access_channels:
+  webui:
+    enabled: true
+    require_authentication: true
+  api:
+    enabled: true
+    require_token: true
+    token_env_var: "MEDIA_ANALYZER_API_TOKEN"
+limits:
+  max_file_size_mb:
+    image: 20
+    audio: 50
+    video: 200
+  max_parallel_tasks:
+    image: 4
+    audio: 2
+    video: 1
+  processing_timeout_seconds: 600
+allowed_formats:
+  image:
+    extensions: ["jpg", "jpeg", "png", "webp"]
+    mime_types: ["image/jpeg", "image/png", "image/webp"]
+  audio:
+    extensions: ["wav", "mp3", "flac", "m4a"]
+    mime_types: ["audio/wav", "audio/mpeg", "audio/flac", "audio/mp4"]
+  video:
+    extensions: ["mp4", "mov", "avi", "mkv"]
+    mime_types: ["video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska"]
+validation:
+  check_extension: true
+  check_mime_type: true
+  check_file_signature: true
+  reject_if_type_mismatch: true
+  calculate_sha256: true
+  safe_decode: true
+temporary_storage:
+  root_path: "runtime/temp"
+  ttl_minutes: 60
+  cleanup_retries: 3
+  quarantine_enabled: true
+  quarantine_ttl_hours: 24
+preprocessing:
+  image:
+    extract_metadata: true
+    normalize_for_analysis: true
+  audio:
+    extract_metadata: true
+    fragment_duration_seconds: 10
+    build_spectrogram: true
+  video:
+    extract_metadata: true
+    keyframe_interval_seconds: 2
+    extract_audio_track: true
+analyzers:
+  defaults:
+    timeout_seconds: 120
+    continue_on_error: true
+  image:
+    enabled: []
+  audio:
+    enabled: []
+  video:
+    enabled: []
+  settings: {}
+risk_assessment:
+  model_id: "score_model_v1"
+  model_version: "0.1.0"
+  thresholds:
+    low_max: 29
+    medium_max: 60
+  severity_scores:
+    weak: 5
+    significant: 25
+  critical_override:
+    enabled: false
+    allowed_finding_types: []
+  completeness:
+    minimum_for_assessment: 0.5
+result:
+  directory: "runtime/results"
+  atomic_write: true
+  include_raw_metrics: false
+  store_original_name: true
+error_handling:
+  continue_if_analyzer_fails: true
+  mark_partial_on_analyzer_failure: true
+  hide_internal_error_details: true
+logging:
+  level: "INFO"
+  jsonl_path: "runtime/logs/application.jsonl"
+  rotation_max_bytes: 10485760
+  rotation_backup_count: 5
+external_systems:
+  enabled: false
+"""
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(yaml_content)
+        tmp_path = f.name
+
+    try:
+        with pytest.raises(ConfigurationError, match="validation failed"):
+            load_config(tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
