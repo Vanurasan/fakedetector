@@ -246,6 +246,241 @@ unknown_section:
         Path(tmp_path).unlink(missing_ok=True)
 
 
+# ---------------------------------------------------------------------------
+# Environment variable override tests
+# ---------------------------------------------------------------------------
+
+_MINIMAL_YAML = """\
+schema_version: "1.0"
+server:
+  host: "127.0.0.1"
+  port: 8080
+access_channels:
+  webui:
+    enabled: true
+    require_authentication: true
+  api:
+    enabled: true
+    require_token: true
+    token_env_var: "MEDIA_ANALYZER_API_TOKEN"
+limits:
+  max_file_size_mb:
+    image: 20
+    audio: 50
+    video: 200
+  max_parallel_tasks:
+    image: 4
+    audio: 2
+    video: 1
+  processing_timeout_seconds: 600
+allowed_formats:
+  image:
+    extensions: ["jpg", "jpeg", "png", "webp"]
+    mime_types: ["image/jpeg", "image/png", "image/webp"]
+  audio:
+    extensions: ["wav", "mp3", "flac", "m4a"]
+    mime_types: ["audio/wav", "audio/mpeg", "audio/flac", "audio/mp4"]
+  video:
+    extensions: ["mp4", "mov", "avi", "mkv"]
+    mime_types: ["video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska"]
+validation:
+  check_extension: true
+  check_mime_type: true
+  check_file_signature: true
+  reject_if_type_mismatch: true
+  calculate_sha256: true
+  safe_decode: true
+temporary_storage:
+  root_path: "runtime/temp"
+  ttl_minutes: 60
+  cleanup_retries: 3
+  quarantine_enabled: true
+  quarantine_ttl_hours: 24
+preprocessing:
+  image:
+    extract_metadata: true
+    normalize_for_analysis: true
+  audio:
+    extract_metadata: true
+    fragment_duration_seconds: 10
+    build_spectrogram: true
+  video:
+    extract_metadata: true
+    keyframe_interval_seconds: 2
+    extract_audio_track: true
+analyzers:
+  defaults:
+    timeout_seconds: 120
+    continue_on_error: true
+  image:
+    enabled: []
+  audio:
+    enabled: []
+  video:
+    enabled: []
+  settings: {}
+risk_assessment:
+  model_id: "score_model_v1"
+  model_version: "0.1.0"
+  thresholds:
+    low_max: 29
+    medium_max: 60
+  severity_scores:
+    weak: 5
+    significant: 25
+  critical_override:
+    enabled: false
+    allowed_finding_types: []
+  completeness:
+    minimum_for_assessment: 0.5
+result:
+  directory: "runtime/results"
+  atomic_write: true
+  include_raw_metrics: false
+  store_original_name: true
+error_handling:
+  continue_if_analyzer_fails: true
+  mark_partial_on_analyzer_failure: true
+  hide_internal_error_details: true
+logging:
+  level: "INFO"
+  jsonl_path: "runtime/logs/application.jsonl"
+  rotation_max_bytes: 10485760
+  rotation_backup_count: 5
+external_systems:
+  enabled: false
+"""
+
+
+def _write_temp_yaml(content: str) -> str:
+    """Write *content* to a temporary ``.yaml`` file and return its path."""
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(content)
+        return f.name
+
+
+def test_no_env_uses_yaml_value() -> None:
+    """When no FAKEDETECTOR_ vars are set, the YAML value is used as-is."""
+    tmp_path = _write_temp_yaml(_MINIMAL_YAML)
+    try:
+        config = load_config(tmp_path, env={})
+        assert config.server.host == "127.0.0.1"
+        assert config.server.port == 8080
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_env_overrides_server_host() -> None:
+    """FAKEDETECTOR_SERVER__HOST overrides the YAML host value."""
+    tmp_path = _write_temp_yaml(_MINIMAL_YAML)
+    try:
+        config = load_config(
+            tmp_path,
+            env={"FAKEDETECTOR_SERVER__HOST": "0.0.0.0"},
+        )
+        assert config.server.host == "0.0.0.0"
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_env_server_port_converted_to_int() -> None:
+    """FAKEDETECTOR_SERVER__PORT with a numeric string becomes an int."""
+    tmp_path = _write_temp_yaml(_MINIMAL_YAML)
+    try:
+        config = load_config(
+            tmp_path,
+            env={"FAKEDETECTOR_SERVER__PORT": "9090"},
+        )
+        assert config.server.port == 9090
+        assert isinstance(config.server.port, int)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_env_bool_override() -> None:
+    """Boolean settings can be overridden via env var."""
+    tmp_path = _write_temp_yaml(_MINIMAL_YAML)
+    try:
+        config = load_config(
+            tmp_path,
+            env={"FAKEDETECTOR_VALIDATION__CHECK_EXTENSION": "false"},
+        )
+        assert config.validation.check_extension is False
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_env_without_prefix_ignored() -> None:
+    """Variables that do not start with FAKEDETECTOR_ are silently ignored."""
+    tmp_path = _write_temp_yaml(_MINIMAL_YAML)
+    try:
+        config = load_config(
+            tmp_path,
+            env={
+                "SERVER__HOST": "10.0.0.1",
+                "FAKEDETECTOR_SERVER__HOST": "192.168.1.1",
+            },
+        )
+        # The unprefixed var is ignored; the prefixed one takes effect.
+        assert config.server.host == "192.168.1.1"
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_unknown_fakedetector_path_rejected() -> None:
+    """A FAKEDETECTOR_ variable pointing to an unknown field raises
+    ConfigurationError (extra fields are forbidden by the Pydantic models).
+    """
+    tmp_path = _write_temp_yaml(_MINIMAL_YAML)
+    try:
+        with pytest.raises(ConfigurationError, match="environment variable"):
+            load_config(
+                tmp_path,
+                env={"FAKEDETECTOR_SERVER__NONEXISTENT": "value"},
+            )
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_invalid_env_value_raises_configuration_error() -> None:
+    """An env var that yields an invalid Pydantic type raises ConfigurationError."""
+    tmp_path = _write_temp_yaml(_MINIMAL_YAML)
+    try:
+        with pytest.raises(ConfigurationError, match="environment variable"):
+            load_config(
+                tmp_path,
+                env={"FAKEDETECTOR_SERVER__PORT": "not_a_number"},
+            )
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_error_message_does_not_leak_secret_value() -> None:
+    """The ConfigurationError message must not contain the raw env-var value."""
+    tmp_path = _write_temp_yaml(_MINIMAL_YAML)
+    # Use a secret-like value that should never appear in plain text in
+    # the error message.
+    secret_value = "s3cret-t0ken-DO-NOT-LEAK"
+    try:
+        with pytest.raises(ConfigurationError) as exc_info:
+            load_config(
+                tmp_path,
+                env={"FAKEDETECTOR_UNKNOWN__TOP__KEY": secret_value},
+            )
+        error_text = str(exc_info.value)
+        assert secret_value not in error_text, (
+            f"Error message leaked secret value: {error_text}"
+        )
+        # But the misbehaving variable name *is* safe to mention.
+        assert "FAKEDETECTOR_UNKNOWN__TOP__KEY" in error_text
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
 def test_invalid_field_type_rejected() -> None:
     """A field with an invalid type (e.g. string instead of int) raises ConfigurationError."""
     yaml_content = """\
