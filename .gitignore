@@ -1,0 +1,140 @@
+# ============================================================
+# Python
+# ============================================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Packages and builds
+build/
+dist/
+*.egg-info/
+.eggs/
+wheels/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ============================================================
+# Environment variables and secrets
+# ============================================================
+
+.env
+.env.*
+!.env.example
+
+*.pem
+*.key
+*.pfx
+*.p12
+
+# ============================================================
+# Tests, coverage and static analysis
+# ============================================================
+
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+.ruff_cache/
+.pyright/
+.tox/
+.nox/
+
+# ============================================================
+# IDE and editors
+# ============================================================
+
+.vscode/
+.idea/
+
+*.code-workspace
+*.swp
+*.swo
+*~
+tempCodeRunnerFile.py
+
+# ============================================================
+# Operating systems
+# ============================================================
+
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ============================================================
+# Application runtime data
+# ============================================================
+
+runtime/
+temp/
+tmp/
+logs/
+results/
+quarantine/
+
+*.log
+*.jsonl
+
+# ============================================================
+# Models, datasets and large binary artifacts
+# ============================================================
+
+models/
+weights/
+checkpoints/
+datasets/
+data/
+
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.engine
+*.bin
+
+# ============================================================
+# Generated multimedia and intermediate analysis data
+# ============================================================
+
+*.spectrogram.png
+*.normalized.png
+*.keyframe.jpg
+*.keyframe.png
+
+# Private test media
+samples/private/
+tests/private_data/
+
+# ============================================================
+# AI coding agents: local history and caches
+# ============================================================
+
+.aider.chat.history.md
+.aider.input.history
+.aider.tags.cache*/
+.cline/
+.roo/
+.continue/sessions/
+
+# ============================================================
+# Local tools and temporary files
+# ============================================================
+
+.cache/
+.local/
+*.tmp
+*.temp
