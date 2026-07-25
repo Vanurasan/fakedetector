@@ -68,22 +68,27 @@ def _apply_env_overrides(
 
         suffix = key[len(_ENV_PREFIX):]
         if not suffix:
-            # Bare FAKEDETECTOR_ with nothing after the prefix – ignore.
-            continue
+            raise ConfigurationError(
+                f"Environment variable {key} has an invalid configuration path"
+            )
 
         parts = suffix.split(_NESTED_SEPARATOR)
-        # Strip empty parts that may result from leading/trailing/double
-        # separators, e.g. FAKEDETECTOR___FOO → ['', '', 'FOO'].
-        parts = [p.lower() for p in parts if p]
-        if not parts:
-            continue
+        if any(not part for part in parts):
+            raise ConfigurationError(
+                f"Environment variable {key} has an invalid configuration path"
+            )
+        parts = [part.lower() for part in parts]
 
+        parse_error = False
         try:
             parsed = _parse_env_value(str_value)
         except Exception:
+            parse_error = True
+
+        if parse_error:
             raise ConfigurationError(
                 f"Environment variable {key} has an unparseable value"
-            ) from None
+            )
 
         # Walk / create the nested dict structure.
         cursor: dict[str, object] = result
@@ -124,15 +129,27 @@ def load_config(
     if not path.is_file():
         raise ConfigurationError("Configuration file not found")
 
+    read_error: str | None = None
+    raw_text: str | None = None
     try:
         raw_text = path.read_text(encoding="utf-8")
     except OSError:
-        raise ConfigurationError("Cannot read configuration file") from None
+        read_error = "Cannot read configuration file"
+    except UnicodeError:
+        read_error = "Configuration file is not valid UTF-8"
 
+    if read_error is not None:
+        raise ConfigurationError(read_error)
+
+    assert raw_text is not None
+    yaml_error = False
     try:
         raw_data = yaml.safe_load(raw_text)
     except yaml.YAMLError:
-        raise ConfigurationError("Configuration file contains invalid YAML") from None
+        yaml_error = True
+
+    if yaml_error:
+        raise ConfigurationError("Configuration file contains invalid YAML")
 
     if raw_data is None:
         raw_data = {}
@@ -146,9 +163,13 @@ def load_config(
 
     overridden = _apply_env_overrides(raw_data, env=env)
 
+    validation_error = False
     try:
         config = AppConfig.model_validate(overridden)
-    except PydanticValidationError as exc:
+    except PydanticValidationError:
+        validation_error = True
+
+    if validation_error:
         # Build a safe message that mentions *which* env var is problematic
         # but never includes its value.
         env_var_names = sorted(
@@ -162,6 +183,6 @@ def load_config(
             )
         else:
             detail = "Configuration validation failed"
-        raise ConfigurationError(detail) from exc
+        raise ConfigurationError(detail)
 
     return config

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import tempfile
+import traceback
 from pathlib import Path
 
 import pytest
+from pytest import param
 
 from fakedetector.config.loader import ConfigurationError, load_config
 from fakedetector.config.models import AppConfig
@@ -991,5 +993,103 @@ external_systems:
     try:
         with pytest.raises(ConfigurationError, match="validation failed"):
             load_config(tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "env_name",
+    [
+        param("FAKEDETECTOR_", id="empty-suffix"),
+        param("FAKEDETECTOR_SERVER____PORT", id="empty-middle-segment"),
+        param("FAKEDETECTOR___SERVER__PORT", id="empty-leading-segment"),
+        param("FAKEDETECTOR_SERVER__PORT__", id="empty-trailing-segment"),
+    ],
+)
+def test_malformed_env_path_rejected(env_name: str) -> None:
+    """Environment paths with empty segments raise ConfigurationError."""
+    tmp_path = _write_temp_yaml(_MINIMAL_YAML)
+    try:
+        with pytest.raises(ConfigurationError, match="invalid configuration path"):
+            load_config(tmp_path, env={env_name: "9090"})
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_empty_yaml_file_rejected() -> None:
+    """A truly empty YAML file is rejected as an incomplete configuration."""
+    tmp_path = _write_temp_yaml("")
+    try:
+        with pytest.raises(ConfigurationError, match="validation failed"):
+            load_config(tmp_path, env={})
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_non_utf8_yaml_rejected_as_configuration_error() -> None:
+    """Invalid UTF-8 bytes are converted to a safe ConfigurationError."""
+    with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+        f.write(b"\xff\xfe\x00")
+        tmp_path = Path(f.name)
+
+    try:
+        with pytest.raises(ConfigurationError, match="not valid UTF-8"):
+            load_config(tmp_path, env={})
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def test_env_mapping_is_not_mutated() -> None:
+    """The caller-provided environment mapping remains unchanged."""
+    tmp_path = _write_temp_yaml(_MINIMAL_YAML)
+    env = {"FAKEDETECTOR_SERVER__PORT": "9090"}
+    original_env = env.copy()
+    try:
+        load_config(tmp_path, env=env)
+        assert env == original_env
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_nested_defaults_are_applied() -> None:
+    """Documented nested defaults apply when a root section is empty."""
+    yaml_content = _MINIMAL_YAML.replace(
+        "server:\n  host: \"127.0.0.1\"\n  port: 8080",
+        "server: {}",
+    )
+    tmp_path = _write_temp_yaml(yaml_content)
+    try:
+        config = load_config(tmp_path, env={})
+        assert config.server.host == "127.0.0.1"
+        assert config.server.port == 8080
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_configuration_error_chain_does_not_leak_env_value() -> None:
+    """No exception representation or traceback contains an env value."""
+    tmp_path = _write_temp_yaml(_MINIMAL_YAML)
+    secret_value = "secret-value-must-not-leak"
+    try:
+        with pytest.raises(ConfigurationError) as exc_info:
+            load_config(
+                tmp_path,
+                env={"FAKEDETECTOR_SERVER__PORT": secret_value},
+            )
+
+        error = exc_info.value
+        chain_text = ""
+        current: BaseException | None = error
+        while current is not None:
+            chain_text += repr(current)
+            current = current.__cause__ or current.__context__
+        traceback_text = "".join(traceback.format_exception(error))
+
+        assert secret_value not in str(error)
+        assert secret_value not in repr(error)
+        assert secret_value not in traceback_text
+        assert secret_value not in chain_text
+        assert error.__cause__ is None
+        assert error.__context__ is None
     finally:
         Path(tmp_path).unlink(missing_ok=True)
