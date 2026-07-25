@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fakedetector import main as main_module
 from fakedetector.config.loader import ConfigurationError
 from fakedetector.config.models import AppConfig
+from fakedetector.runtime_setup import RuntimeSetupError
 
 
 def make_config(*, host: str = "127.0.0.1", port: int = 8080) -> AppConfig:
@@ -50,6 +51,15 @@ def test_main_loads_default_config_and_runs_uvicorn(monkeypatch) -> None:
         events.append(("configure", logging_config))
         return FakeLogger()  # type: ignore[return-value]
 
+    def fake_runtime_setup(runtime_config: AppConfig) -> None:
+        events.append(("runtime", runtime_config))
+
+    def fake_create_app(app_config: AppConfig) -> FastAPI:
+        events.append(("create_app", app_config))
+        app = FastAPI()
+        app.state.config = app_config
+        return app
+
     def fake_load_config(config_path: str | Path) -> AppConfig:
         loaded_paths.append(config_path)
         events.append(("load", config_path))
@@ -60,7 +70,9 @@ def test_main_loads_default_config_and_runs_uvicorn(monkeypatch) -> None:
         uvicorn_calls.append((app, host, port))
 
     monkeypatch.setattr(main_module, "load_config", fake_load_config)
+    monkeypatch.setattr(main_module, "ensure_runtime_directories", fake_runtime_setup)
     monkeypatch.setattr(main_module, "configure_logging", fake_configure_logging)
+    monkeypatch.setattr(main_module, "create_app", fake_create_app)
     monkeypatch.setattr(main_module.uvicorn, "run", fake_uvicorn_run)
 
     result = main_module.main([])
@@ -72,8 +84,10 @@ def test_main_loads_default_config_and_runs_uvicorn(monkeypatch) -> None:
     assert app.state.config is config
     assert (host, port) == ("0.0.0.0", 9090)
     assert events[0] == ("load", "config/config.example.yaml")
-    assert events[1] == ("configure", config.logging)
-    assert events[2] == (
+    assert events[1] == ("runtime", config)
+    assert events[2] == ("configure", config.logging)
+    assert events[3] == ("create_app", config)
+    assert events[4] == (
         "log",
         "Application is starting.",
         {
@@ -83,7 +97,8 @@ def test_main_loads_default_config_and_runs_uvicorn(monkeypatch) -> None:
             "port": 9090,
         },
     )
-    assert events[3] == ("uvicorn", "0.0.0.0", 9090)
+    assert events[5] == ("uvicorn", "0.0.0.0", 9090)
+    assert sum(event[0] == "runtime" for event in events) == 1
 
 
 def test_config_argument_is_passed_to_loader(monkeypatch) -> None:
@@ -101,6 +116,7 @@ def test_config_argument_is_passed_to_loader(monkeypatch) -> None:
         return config
 
     monkeypatch.setattr(main_module, "load_config", fake_load_config)
+    monkeypatch.setattr(main_module, "ensure_runtime_directories", lambda config: None)
     monkeypatch.setattr(
         main_module,
         "configure_logging",
@@ -141,6 +157,11 @@ def test_configuration_error_is_safe_and_skips_uvicorn(
     monkeypatch.setattr(main_module, "load_config", fake_load_config)
     monkeypatch.setattr(
         main_module,
+        "ensure_runtime_directories",
+        lambda config: (_ for _ in ()).throw(AssertionError("runtime setup after error")),
+    )
+    monkeypatch.setattr(
+        main_module,
         "configure_logging",
         lambda config: (_ for _ in ()).throw(AssertionError("logging configured after error")),
     )
@@ -170,6 +191,11 @@ def test_non_utf8_config_returns_error_without_running_uvicorn(capsys, monkeypat
         monkeypatch.setattr(main_module.uvicorn, "run", fake_uvicorn_run)
         monkeypatch.setattr(
             main_module,
+            "ensure_runtime_directories",
+            lambda config: (_ for _ in ()).throw(AssertionError("runtime setup after error")),
+        )
+        monkeypatch.setattr(
+            main_module,
             "configure_logging",
             lambda config: (_ for _ in ()).throw(AssertionError("logging configured after error")),
         )
@@ -184,3 +210,48 @@ def test_non_utf8_config_returns_error_without_running_uvicorn(capsys, monkeypat
         assert config_bytes.decode("latin-1") not in captured.err
     finally:
         config_path.unlink(missing_ok=True)
+
+
+def test_runtime_setup_error_is_safe_and_stops_startup(monkeypatch, capsys) -> None:
+    """Runtime initialization failure exits safely before logging and app creation."""
+    config = make_config()
+    sentinel = "secret-like-sentinel"
+    unsafe_path = f"runtime/{sentinel}/logs"
+    runtime_calls: list[AppConfig] = []
+
+    def fail_runtime_setup(runtime_config: AppConfig) -> None:
+        runtime_calls.append(runtime_config)
+        raise RuntimeSetupError(f"cannot create {unsafe_path}: {sentinel}")
+
+    monkeypatch.setattr(main_module, "load_config", lambda path: config)
+    monkeypatch.setattr(main_module, "ensure_runtime_directories", fail_runtime_setup)
+    monkeypatch.setattr(
+        main_module,
+        "configure_logging",
+        lambda logging_config: (_ for _ in ()).throw(
+            AssertionError("logging configured after runtime error")
+        ),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "create_app",
+        lambda app_config: (_ for _ in ()).throw(
+            AssertionError("application created after runtime error")
+        ),
+    )
+    monkeypatch.setattr(
+        main_module.uvicorn,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("Uvicorn started after runtime error")
+        ),
+    )
+
+    result = main_module.main([])
+    captured = capsys.readouterr()
+
+    assert result == 3
+    assert runtime_calls == [config]
+    assert "Runtime initialization failed" in captured.err
+    assert unsafe_path not in captured.err
+    assert sentinel not in captured.err
