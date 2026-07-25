@@ -340,6 +340,12 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-07-26
+
+### Added
+
+- **[Testing] `pytest-cov` 7.1.0 добавлен в dev-зависимости.** Обычный `uv run pytest` формирует terminal coverage report с branch coverage: 49 тестов прошли, итоговое покрытие — 96% (`339` statements, `11` missed, `48` branches, `5` partial); минимальный порог не установлен, поскольку точное значение не зафиксировано.
+
 ### 2026-07-25
 
 ### Added
