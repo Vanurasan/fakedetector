@@ -8,6 +8,7 @@ import uvicorn
 
 from fakedetector.app import create_app
 from fakedetector.config.loader import ConfigurationError, load_config
+from fakedetector.logging_setup import configure_logging
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -33,7 +34,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
 
+    logger = configure_logging(config.logging)
     app = create_app(config)
+    logger.info(
+        "Application is starting.",
+        extra={
+            "event": "application_starting",
+            "schema_version": config.schema_version,
+            "host": config.server.host,
+            "port": config.server.port,
+        },
+    )
     uvicorn.run(app, host=config.server.host, port=config.server.port)
     return 0
 

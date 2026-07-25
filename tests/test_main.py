@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from pathlib import Path
 
@@ -39,15 +40,27 @@ def test_main_loads_default_config_and_runs_uvicorn(monkeypatch) -> None:
     config = make_config(host="0.0.0.0", port=9090)
     loaded_paths: list[str | Path] = []
     uvicorn_calls: list[tuple[FastAPI, str, int]] = []
+    events: list[object] = []
+
+    class FakeLogger:
+        def info(self, message: str, *, extra: dict[str, object]) -> None:
+            events.append(("log", message, extra))
+
+    def fake_configure_logging(logging_config) -> logging.Logger:
+        events.append(("configure", logging_config))
+        return FakeLogger()  # type: ignore[return-value]
 
     def fake_load_config(config_path: str | Path) -> AppConfig:
         loaded_paths.append(config_path)
+        events.append(("load", config_path))
         return config
 
     def fake_uvicorn_run(app: FastAPI, *, host: str, port: int) -> None:
+        events.append(("uvicorn", host, port))
         uvicorn_calls.append((app, host, port))
 
     monkeypatch.setattr(main_module, "load_config", fake_load_config)
+    monkeypatch.setattr(main_module, "configure_logging", fake_configure_logging)
     monkeypatch.setattr(main_module.uvicorn, "run", fake_uvicorn_run)
 
     result = main_module.main([])
@@ -58,24 +71,56 @@ def test_main_loads_default_config_and_runs_uvicorn(monkeypatch) -> None:
     app, host, port = uvicorn_calls[0]
     assert app.state.config is config
     assert (host, port) == ("0.0.0.0", 9090)
+    assert events[0] == ("load", "config/config.example.yaml")
+    assert events[1] == ("configure", config.logging)
+    assert events[2] == (
+        "log",
+        "Application is starting.",
+        {
+            "event": "application_starting",
+            "schema_version": "1.0",
+            "host": "0.0.0.0",
+            "port": 9090,
+        },
+    )
+    assert events[3] == ("uvicorn", "0.0.0.0", 9090)
 
 
 def test_config_argument_is_passed_to_loader(monkeypatch) -> None:
     """--config передаёт выбранный путь в загрузчик."""
     config = make_config()
     loaded_paths: list[str | Path] = []
+    log_extras: list[dict[str, object]] = []
+
+    class FakeLogger:
+        def info(self, message: str, *, extra: dict[str, object]) -> None:
+            log_extras.append(extra)
 
     def fake_load_config(config_path: str | Path) -> AppConfig:
         loaded_paths.append(config_path)
         return config
 
     monkeypatch.setattr(main_module, "load_config", fake_load_config)
+    monkeypatch.setattr(
+        main_module,
+        "configure_logging",
+        lambda config: FakeLogger(),
+    )
     monkeypatch.setattr(main_module.uvicorn, "run", lambda *args, **kwargs: None)
 
     result = main_module.main(["--config", "custom/settings.yaml"])
 
     assert result == 0
     assert loaded_paths == ["custom/settings.yaml"]
+    assert log_extras == [
+        {
+            "event": "application_starting",
+            "schema_version": "1.0",
+            "host": "127.0.0.1",
+            "port": 8080,
+        }
+    ]
+    assert "custom/settings.yaml" not in repr(log_extras)
 
 
 def test_configuration_error_is_safe_and_skips_uvicorn(
@@ -94,6 +139,11 @@ def test_configuration_error_is_safe_and_skips_uvicorn(
         uvicorn_called = True
 
     monkeypatch.setattr(main_module, "load_config", fake_load_config)
+    monkeypatch.setattr(
+        main_module,
+        "configure_logging",
+        lambda config: (_ for _ in ()).throw(AssertionError("logging configured after error")),
+    )
     monkeypatch.setattr(main_module.uvicorn, "run", fake_uvicorn_run)
 
     result = main_module.main(["--config", "broken.yaml"])
@@ -118,6 +168,11 @@ def test_non_utf8_config_returns_error_without_running_uvicorn(capsys, monkeypat
             uvicorn_calls.append(args)
 
         monkeypatch.setattr(main_module.uvicorn, "run", fake_uvicorn_run)
+        monkeypatch.setattr(
+            main_module,
+            "configure_logging",
+            lambda config: (_ for _ in ()).throw(AssertionError("logging configured after error")),
+        )
 
         result = main_module.main(["--config", str(config_path)])
         captured = capsys.readouterr()
