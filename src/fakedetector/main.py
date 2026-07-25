@@ -9,6 +9,7 @@ import uvicorn
 from fakedetector.app import create_app
 from fakedetector.config.loader import ConfigurationError, load_config
 from fakedetector.logging_setup import configure_logging
+from fakedetector.runtime_setup import RuntimeSetupError, ensure_runtime_directories
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -33,6 +34,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+
+    try:
+        ensure_runtime_directories(config)
+    except RuntimeSetupError:
+        print("Runtime initialization failed.", file=sys.stderr)
+        return 3
 
     logger = configure_logging(config.logging)
     app = create_app(config)
