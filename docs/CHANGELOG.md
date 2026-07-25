@@ -344,6 +344,7 @@ YYYY-MM-DD
 
 ### Added
 
+- **[Quality] Добавлен `pre-commit` 4.6.1 в dev-зависимости.** Подключены проверки YAML, TOML, конфликтов, регистра имён, крупных файлов и приватных ключей, а также `ruff-check` и `uv-lock`; hooks не выполняют автоисправления. `pre-commit run --all-files` проходит успешно. `pytest` и `mypy` намеренно остаются отдельными проверками.
 - **[Testing] `pytest-cov` 7.1.0 добавлен в dev-зависимости.** Обычный `uv run pytest` формирует terminal coverage report с branch coverage: 49 тестов прошли, итоговое покрытие — 96% (`339` statements, `11` missed, `48` branches, `5` partial); минимальный порог не установлен, поскольку точное значение не зафиксировано.
 
 ### 2026-07-25
