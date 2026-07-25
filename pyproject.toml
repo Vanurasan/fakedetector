@@ -11,6 +11,9 @@ dependencies = [
     "uvicorn[standard]>=0.34.0",
 ]
 
+[project.scripts]
+fakedetector = "fakedetector.main:main"
+
 [dependency-groups]
 dev = [
     "httpx2>=0.28.0",
