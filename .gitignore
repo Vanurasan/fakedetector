@@ -28,6 +28,9 @@ ENV/
 .env.*
 !.env.example
 
+/config.yaml
+/config/config.yaml
+
 *.pem
 *.key
 *.pfx
