@@ -23,6 +23,7 @@ dev = [
     "types-pyyaml>=6.0.12.20260724",
     "pytest-cov>=7.1.0",
     "pre-commit>=4.6.1",
+    "poethepoet>=0.48.0",
 ]
 
 [tool.pytest.ini_options]
@@ -79,6 +80,14 @@ exclude = [
     ".pytest_cache",
     "tests/",
 ]
+
+[tool.poe.tasks]
+lint = { cmd = "ruff check ." }
+typecheck = { cmd = "mypy src" }
+test = { cmd = "pytest" }
+precommit = { cmd = "pre-commit run --all-files" }
+smoke = { cmd = "fakedetector --help" }
+check = { sequence = ["precommit", "typecheck", "test", "smoke"] }
 
 [tool.uv.sources]
 
