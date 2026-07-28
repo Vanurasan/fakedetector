@@ -8,7 +8,7 @@ import uvicorn
 
 from fakedetector.app import create_app
 from fakedetector.config.loader import ConfigurationError, load_config
-from fakedetector.logging_setup import configure_logging
+from fakedetector.logging_setup import LoggingSetupError, configure_logging
 from fakedetector.runtime_setup import RuntimeSetupError, ensure_runtime_directories
 
 
@@ -41,7 +41,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("Runtime initialization failed.", file=sys.stderr)
         return 3
 
-    logger = configure_logging(config.logging)
+    try:
+        logger = configure_logging(config.logging)
+    except LoggingSetupError:
+        print("Logging initialization failed.", file=sys.stderr)
+        return 4
+
     app = create_app(config)
     logger.info(
         "Application is starting.",

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import logging
 import tempfile
+from io import StringIO
 from pathlib import Path
 
+import yaml
 from fastapi import FastAPI
 
 from fakedetector import main as main_module
 from fakedetector.config.loader import ConfigurationError
 from fakedetector.config.models import AppConfig
+from fakedetector.logging_setup import LoggingSetupError
 from fakedetector.runtime_setup import RuntimeSetupError
 
 
@@ -255,3 +258,121 @@ def test_runtime_setup_error_is_safe_and_stops_startup(monkeypatch, capsys) -> N
     assert "Runtime initialization failed" in captured.err
     assert unsafe_path not in captured.err
     assert sentinel not in captured.err
+
+
+def test_logging_setup_error_is_safe_and_stops_startup(monkeypatch, capsys) -> None:
+    config = make_config()
+    unsafe_detail = "unsafe-system-detail"
+    calls: list[str] = []
+
+    def fail_logging_setup(logging_config) -> logging.Logger:
+        calls.append("configure_logging")
+        error = LoggingSetupError()
+        error.args = (f"unsafe path: {unsafe_detail}",)
+        raise error
+
+    monkeypatch.setattr(main_module, "load_config", lambda path: config)
+    monkeypatch.setattr(main_module, "ensure_runtime_directories", lambda config: None)
+    monkeypatch.setattr(main_module, "configure_logging", fail_logging_setup)
+    monkeypatch.setattr(
+        main_module,
+        "create_app",
+        lambda config: (_ for _ in ()).throw(AssertionError("application created")),
+    )
+    monkeypatch.setattr(
+        main_module.uvicorn,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Uvicorn started")),
+    )
+
+    result = main_module.main([])
+    captured = capsys.readouterr()
+
+    assert result == 4
+    assert calls == ["configure_logging"]
+    assert captured.out == ""
+    assert captured.err == "Logging initialization failed.\n"
+    assert unsafe_detail not in captured.err
+
+
+def test_unsupported_yaml_logging_level_exits_before_uvicorn(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    unsupported_level = "unsafe-cli-level"
+    config_data = yaml.safe_load(
+        Path("config/config.example.yaml").read_text(encoding="utf-8")
+    )
+    config_data["logging"]["level"] = unsupported_level
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(config_data), encoding="utf-8")
+
+    monkeypatch.setattr(
+        main_module,
+        "ensure_runtime_directories",
+        lambda config: (_ for _ in ()).throw(AssertionError("runtime setup")),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "create_app",
+        lambda config: (_ for _ in ()).throw(AssertionError("application created")),
+    )
+    monkeypatch.setattr(
+        main_module.uvicorn,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Uvicorn started")),
+    )
+
+    result = main_module.main(["--config", str(config_path)])
+    captured = capsys.readouterr()
+
+    assert result == 2
+    assert captured.out == ""
+    assert captured.err == (
+        "Configuration error: unable to load or validate configuration.\n"
+    )
+    assert unsupported_level not in captured.err
+
+
+def test_yaml_directory_log_target_exits_safely_before_application_start(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    config_data = yaml.safe_load(
+        Path("config/config.example.yaml").read_text(encoding="utf-8")
+    )
+    log_target = tmp_path / "existing-directory"
+    log_target.mkdir()
+    config_data["logging"]["jsonl_path"] = str(log_target)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(config_data), encoding="utf-8")
+
+    logger = logging.getLogger("fakedetector")
+    foreign_stream = StringIO()
+    foreign_handler = logging.StreamHandler(foreign_stream)
+    logger.addHandler(foreign_handler)
+    try:
+        monkeypatch.setattr(
+            main_module,
+            "create_app",
+            lambda config: (_ for _ in ()).throw(AssertionError("application created")),
+        )
+        monkeypatch.setattr(
+            main_module.uvicorn,
+            "run",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Uvicorn started")),
+        )
+
+        result = main_module.main(["--config", str(config_path)])
+        captured = capsys.readouterr()
+
+        assert result == 4
+        assert captured.out == ""
+        assert captured.err == "Logging initialization failed.\n"
+        assert str(log_target) not in captured.err
+        assert foreign_stream.getvalue() == ""
+    finally:
+        logger.removeHandler(foreign_handler)
+        foreign_handler.close()

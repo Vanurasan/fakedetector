@@ -10,7 +10,7 @@ import pytest
 from pytest import param
 
 from fakedetector.config.loader import ConfigurationError, load_config
-from fakedetector.config.models import AppConfig
+from fakedetector.config.models import AppConfig, LoggingConfig
 
 
 def test_valid_config_loads() -> None:
@@ -372,6 +372,63 @@ def test_no_env_uses_yaml_value() -> None:
         config = load_config(tmp_path, env={})
         assert config.server.host == "127.0.0.1"
         assert config.server.port == 8080
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "level",
+    ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"],
+)
+def test_standard_logging_levels_are_valid(level: str) -> None:
+    config = LoggingConfig.model_validate({"level": level})
+
+    assert config.level == level
+
+
+def test_lowercase_logging_level_is_normalized() -> None:
+    config = LoggingConfig.model_validate({"level": "debug"})
+
+    assert config.level == "DEBUG"
+
+
+def test_unsupported_yaml_logging_level_is_rejected_safely() -> None:
+    unsupported_level = "unsafe-custom-level"
+    yaml_content = _MINIMAL_YAML.replace(
+        'level: "INFO"',
+        f'level: "{unsupported_level}"',
+    )
+    tmp_path = _write_temp_yaml(yaml_content)
+    try:
+        with pytest.raises(ConfigurationError) as exc_info:
+            load_config(tmp_path, env={})
+
+        error = exc_info.value
+        traceback_text = "".join(traceback.format_exception(error))
+        assert unsupported_level not in str(error)
+        assert unsupported_level not in traceback_text
+        assert error.__cause__ is None
+        assert error.__context__ is None
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_unsupported_env_logging_level_is_rejected_safely() -> None:
+    unsupported_level = "unsafe-env-level"
+    tmp_path = _write_temp_yaml(_MINIMAL_YAML)
+    try:
+        with pytest.raises(ConfigurationError) as exc_info:
+            load_config(
+                tmp_path,
+                env={"FAKEDETECTOR_LOGGING__LEVEL": unsupported_level},
+            )
+
+        error = exc_info.value
+        traceback_text = "".join(traceback.format_exception(error))
+        assert unsupported_level not in str(error)
+        assert unsupported_level not in traceback_text
+        assert error.__cause__ is None
+        assert error.__context__ is None
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
