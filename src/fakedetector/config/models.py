@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+LoggingLevel = Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]
 
 
 class ServerConfig(BaseModel):
@@ -265,10 +267,18 @@ class LoggingConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    level: str = "INFO"
+    level: LoggingLevel = "INFO"
     jsonl_path: str = "runtime/logs/application.jsonl"
     rotation_max_bytes: int = Field(default=10_485_760, ge=1)
     rotation_backup_count: int = Field(default=5, ge=0)
+
+    @field_validator("level", mode="before")
+    @classmethod
+    def normalize_level(cls, value: object) -> object:
+        """Normalize supported textual levels before Literal validation."""
+        if isinstance(value, str):
+            return value.upper()
+        return value
 
 
 class ExternalSystemsConfig(BaseModel):
