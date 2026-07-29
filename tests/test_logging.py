@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 from io import StringIO
 from pathlib import Path
 
@@ -41,6 +42,14 @@ def _add_stream_handler(logger: logging.Logger) -> StringIO:
     return stream
 
 
+def _application_handler(logger: logging.Logger) -> logging.handlers.RotatingFileHandler:
+    return next(
+        handler
+        for handler in logger.handlers
+        if isinstance(handler, logging.handlers.RotatingFileHandler)
+    )
+
+
 def test_configure_logging_returns_named_logger(logging_config) -> None:
     logger, _ = logging_config
 
@@ -54,6 +63,21 @@ def test_configure_logging_applies_level(logging_config) -> None:
     logger = configure_logging(config)
 
     assert logger.level == logging.DEBUG
+
+
+def test_configure_logging_uses_configured_rotating_jsonl_handler(
+    logging_config,
+) -> None:
+    logger, config = logging_config
+
+    handler = _application_handler(logger)
+
+    assert handler.maxBytes == config.rotation_max_bytes
+    assert handler.backupCount == config.rotation_backup_count
+    assert handler.encoding.lower().replace("-", "") == "utf8"
+    assert handler.formatter is not None
+    assert handler.formatter.__class__.__name__ == "_JsonlFormatter"
+    assert logger.propagate is False
 
 
 def test_log_record_is_safe_jsonl_with_utc_timestamp(logging_config) -> None:
@@ -146,6 +170,63 @@ def test_logging_creates_missing_parent_and_writes_jsonl(tmp_path: Path) -> None
             handler.close()
 
 
+def test_logging_rotates_jsonl_and_preserves_safe_records(tmp_path: Path) -> None:
+    logger = logging.getLogger("fakedetector")
+    initial_handlers = list(logger.handlers)
+    log_path = tmp_path / "application.jsonl"
+    backup_count = 2
+    config = LoggingConfig(
+        jsonl_path=str(log_path),
+        rotation_max_bytes=240,
+        rotation_backup_count=backup_count,
+    )
+    sentinel = "secret-like-sentinel"
+    allowed_fields = {
+        "timestamp",
+        "level",
+        "logger",
+        "event",
+        "message",
+        "schema_version",
+        "host",
+        "port",
+    }
+
+    try:
+        configure_logging(config)
+        for index in range(20):
+            logger.info(
+                "Rollover regression event %s with portable JSONL payload.",
+                index,
+                extra={
+                    "event": "application_starting",
+                    "schema_version": "1.0",
+                    "token": sentinel,
+                    "arbitrary": sentinel,
+                },
+            )
+        for handler in logger.handlers:
+            handler.flush()
+
+        backup_paths = sorted(tmp_path.glob("application.jsonl.*"))
+        assert log_path.is_file()
+        assert backup_paths
+        assert len(backup_paths) <= backup_count
+
+        for path in [log_path, *backup_paths]:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                record = json.loads(line)
+                assert isinstance(record, dict)
+                assert set(record) <= allowed_fields
+                assert sentinel not in line
+    finally:
+        for handler in list(logger.handlers):
+            if handler in initial_handlers:
+                continue
+            logger.removeHandler(handler)
+            handler.close()
+
+
 def test_repeated_configuration_does_not_duplicate_handlers(logging_config) -> None:
     logger, config = logging_config
     initial_handlers = list(logger.handlers)
@@ -153,7 +234,46 @@ def test_repeated_configuration_does_not_duplicate_handlers(logging_config) -> N
     configure_logging(config)
 
     assert logger.handlers == initial_handlers
-    assert sum(isinstance(handler, logging.FileHandler) for handler in logger.handlers) == 1
+    assert sum(
+        isinstance(handler, logging.handlers.RotatingFileHandler)
+        for handler in logger.handlers
+    ) == 1
+
+
+@pytest.mark.parametrize(
+    ("changed_field", "changed_value"),
+    [
+        ("rotation_max_bytes", 512),
+        ("rotation_backup_count", 1),
+        ("jsonl_path", "replacement.jsonl"),
+    ],
+)
+def test_changed_rotation_configuration_replaces_and_closes_handler(
+    tmp_path: Path,
+    logging_config,
+    changed_field: str,
+    changed_value: int | str,
+) -> None:
+    logger, config = logging_config
+    old_handler = _application_handler(logger)
+    foreign_handler = logging.StreamHandler(StringIO())
+    logger.addHandler(foreign_handler)
+    changed_config = config.model_copy(deep=True)
+    if changed_field == "jsonl_path":
+        changed_value = str(tmp_path / str(changed_value))
+    setattr(changed_config, changed_field, changed_value)
+
+    configure_logging(changed_config)
+
+    new_handler = _application_handler(logger)
+    assert new_handler is not old_handler
+    assert old_handler not in logger.handlers
+    assert old_handler.stream is None
+    assert foreign_handler in logger.handlers
+    assert sum(
+        isinstance(handler, logging.handlers.RotatingFileHandler)
+        for handler in logger.handlers
+    ) == 1
 
 
 def test_repeated_configuration_preserves_foreign_handler_and_one_record(
