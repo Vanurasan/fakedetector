@@ -348,6 +348,7 @@ YYYY-MM-DD
 
 ### Fixed
 
+- **[Testing/Startup] Readiness polling настоящего server smoke сделан устойчивым к кратковременным reset/refused/timeout transport errors.** До общего 10-секундного deadline повторяются ошибки транспорта семейства `OSError`, процесс проверяется до каждой попытки и после transport error, а loopback-запросы обходят proxy; полученный non-200 HTTP status, неправильный JSON и payload, отличный от `{"status": "ok"}`, по-прежнему падают сразу. Добавлены regression-тест `ConnectionResetError → HTTP 200/ok` и проверки отсутствия retry для нарушений health contract. Результат: 75 тестов прошли, итоговое branch coverage — 97%.
 - **[Startup] Невыполнимый критерий `uv run uvicorn <app>` заменён официальной точкой запуска `uv run fakedetector --config config/config.example.yaml`.** Причина: приложение не публикует module-level ASGI-объект и создаётся только после загрузки YAML/env, подготовки runtime и логирования. Влияние: единственным владельцем startup pipeline остаётся `fakedetector.main:main`, без дублирующей factory или скрытой загрузки конфигурации.
 
 ### 2026-07-29

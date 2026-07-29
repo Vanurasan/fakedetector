@@ -10,9 +10,11 @@ import socket
 import subprocess
 import time
 from pathlib import Path
-from urllib.error import HTTPError, URLError
-from urllib.request import urlopen
+from unittest.mock import MagicMock, Mock, patch
+from urllib.error import HTTPError
+from urllib.request import ProxyHandler, build_opener
 
+import pytest
 import yaml
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +22,7 @@ _STARTUP_TIMEOUT_SECONDS = 10.0
 _REQUEST_TIMEOUT_SECONDS = 0.25
 _POLL_INTERVAL_SECONDS = 0.05
 _PROCESS_STOP_TIMEOUT_SECONDS = 3.0
+_LOOPBACK_OPENER = build_opener(ProxyHandler({}))
 _STARTUP_LOG_FIELDS = {
     "timestamp",
     "level",
@@ -77,6 +80,7 @@ def _runtime_state() -> tuple[tuple[str, bool, int, int], ...] | None:
 def _wait_for_health(process: subprocess.Popen[bytes], port: int) -> None:
     deadline = time.monotonic() + _STARTUP_TIMEOUT_SECONDS
     url = f"http://127.0.0.1:{port}/health"
+    last_transport_error: OSError | None = None
 
     while time.monotonic() < deadline:
         return_code = process.poll()
@@ -86,19 +90,47 @@ def _wait_for_health(process: subprocess.Popen[bytes], port: int) -> None:
             )
 
         try:
-            with urlopen(url, timeout=_REQUEST_TIMEOUT_SECONDS) as response:  # noqa: S310
-                status = response.status
-                payload = json.loads(response.read())
-        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
+            response = _LOOPBACK_OPENER.open(  # noqa: S310
+                url,
+                timeout=_REQUEST_TIMEOUT_SECONDS,
+            )
+        except HTTPError as error:
+            raise AssertionError(
+                f"FakeDetector health returned HTTP status {error.code}"
+            ) from None
+        except OSError as error:
+            last_transport_error = error
+            return_code = process.poll()
+            if return_code is not None:
+                raise AssertionError(
+                    f"FakeDetector exited before readiness (return code {return_code})"
+                ) from None
             time.sleep(_POLL_INTERVAL_SECONDS)
             continue
 
-        assert status == 200
-        assert payload == {"status": "ok"}
-        assert process.poll() is None, "FakeDetector exited during the health response"
+        with response:
+            assert response.status == 200, "FakeDetector health returned non-200 status"
+            try:
+                payload = json.loads(response.read())
+            except json.JSONDecodeError:
+                raise AssertionError("FakeDetector health returned invalid JSON") from None
+
+        assert payload == {"status": "ok"}, "FakeDetector health returned invalid payload"
+        return_code = process.poll()
+        if return_code is not None:
+            raise AssertionError(
+                f"FakeDetector exited during the health response (return code {return_code})"
+            )
         return
 
-    raise AssertionError("FakeDetector did not become ready within 10 seconds")
+    return_code = process.poll()
+    details = []
+    if return_code is not None:
+        details.append(f"return code {return_code}")
+    if last_transport_error is not None:
+        details.append(type(last_transport_error).__name__)
+    suffix = f" ({', '.join(details)})" if details else ""
+    raise AssertionError(f"FakeDetector did not become ready within 10 seconds{suffix}")
 
 
 def _stop_process(process: subprocess.Popen[bytes]) -> None:
@@ -114,6 +146,57 @@ def _stop_process(process: subprocess.Popen[bytes]) -> None:
 
 def test_console_entry_point_targets_main() -> None:
     assert _console_scripts().get("fakedetector") == "fakedetector.main:main"
+
+
+def test_wait_for_health_retries_connection_reset() -> None:
+    process = Mock(spec=subprocess.Popen)
+    process.poll.return_value = None
+    response = MagicMock()
+    response.status = 200
+    response.read.return_value = b'{"status": "ok"}'
+
+    with (
+        patch(
+            f"{__name__}._LOOPBACK_OPENER.open",
+            side_effect=[ConnectionResetError(), response],
+        ) as mocked_urlopen,
+        patch(f"{__name__}.time.sleep"),
+    ):
+        _wait_for_health(process, 12345)
+
+    assert mocked_urlopen.call_count == 2
+    assert process.poll.call_count >= 3
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "expected_message"),
+    [
+        (503, b'{"status": "ok"}', "non-200 status"),
+        (200, b"not-json", "invalid JSON"),
+        (200, b'{"status": "starting"}', "invalid payload"),
+    ],
+)
+def test_wait_for_health_does_not_retry_contract_errors(
+    status: int,
+    body: bytes,
+    expected_message: str,
+) -> None:
+    process = Mock(spec=subprocess.Popen)
+    process.poll.return_value = None
+    response = MagicMock()
+    response.status = status
+    response.read.return_value = body
+
+    with (
+        patch(
+            f"{__name__}._LOOPBACK_OPENER.open",
+            return_value=response,
+        ) as mocked_urlopen,
+        pytest.raises(AssertionError, match=expected_message),
+    ):
+        _wait_for_health(process, 12345)
+
+    mocked_urlopen.assert_called_once()
 
 
 def test_installed_server_starts_and_serves_health(tmp_path: Path) -> None:
