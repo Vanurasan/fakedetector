@@ -113,7 +113,7 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 1 — Каркас проекта и конфигурация
 Статус этапа: IN_PROGRESS
-Ближайшее действие: исправить критерий запуска и добавить ограниченный server startup smoke-тест
+Ближайшее действие: синхронизировать имя startup event и закрыть оставшиеся regression gaps
 Критические блокеры: небезопасная инициализация логирования — устранён
 Реализация программы: первый инкремент завершён (минимальный запускаемый каркас)
 Документационная база: сформирована
@@ -251,7 +251,9 @@ AFTER_MVP
 - [x] устранить несоответствие по `pydantic-settings`: владелец явно утвердил
   PyYAML + Pydantic v2 `BaseModel` + собственный env-overlay для MVP,
   документация синхронизирована с фактической реализацией;
-- [ ] исправить критерий запуска через Uvicorn;
+- [x] исправить критерий запуска через официальный console script
+  `uv run fakedetector --config config/config.example.yaml` и добавить целевую
+  проверку `uv run poe server-smoke` с ограниченным запуском настоящего сервера;
 - [ ] синхронизировать naming startup events;
 - [ ] добавить недостающие regression-тесты findings аудита;
 - [ ] добавить validation для `token_env_var`.
@@ -263,7 +265,8 @@ uv sync
 uv run pytest
 uv run ruff check .
 uv run mypy src
-uv run uvicorn <app>
+uv run fakedetector --config config/config.example.yaml
+uv run poe server-smoke
 ```
 
 выполняются без критических ошибок, приложение запускается и валидирует конфигурацию.
