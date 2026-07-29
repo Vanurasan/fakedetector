@@ -340,6 +340,16 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-07-30
+
+### Added
+
+- **[Testing/Startup] Добавлен настоящий ограниченный server smoke через установленный console script.** Команда `uv run poe server-smoke` выбирает свободный loopback-порт, запускает `fakedetector --config <temporary-config>` отдельным процессом, проверяет bind, точный ответ `GET /health` и безопасный startup JSONL, а затем гарантированно завершает только созданный процесс. Временные конфигурация и журнал изолированы в pytest `tmp_path`; внешние `FAKEDETECTOR_` overrides исключаются из окружения subprocess. Результат: 71 тест прошёл, итоговое branch coverage — 97%.
+
+### Fixed
+
+- **[Startup] Невыполнимый критерий `uv run uvicorn <app>` заменён официальной точкой запуска `uv run fakedetector --config config/config.example.yaml`.** Причина: приложение не публикует module-level ASGI-объект и создаётся только после загрузки YAML/env, подготовки runtime и логирования. Влияние: единственным владельцем startup pipeline остаётся `fakedetector.main:main`, без дублирующей factory или скрытой загрузки конфигурации.
+
 ### 2026-07-29
 
 ### Fixed
