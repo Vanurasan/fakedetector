@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,15 +50,21 @@ class _JsonlFormatter(logging.Formatter):
 def _remove_configured_handlers(
     logger: logging.Logger,
     jsonl_path: str,
-) -> logging.FileHandler | None:
-    """Return the existing handler for *jsonl_path* and remove stale ones."""
-    existing_handler: logging.FileHandler | None = None
+    rotation_max_bytes: int,
+    rotation_backup_count: int,
+) -> logging.handlers.RotatingFileHandler | None:
+    """Return a matching rotating handler and remove stale application handlers."""
+    existing_handler: logging.handlers.RotatingFileHandler | None = None
+    expected_path = Path(jsonl_path).absolute()
     for handler in list(logger.handlers):
         if not getattr(handler, _HANDLER_MARKER, False):
             continue
-        if not isinstance(handler, logging.FileHandler):
-            continue
-        if Path(handler.baseFilename) == Path(jsonl_path).absolute():
+        if (
+            isinstance(handler, logging.handlers.RotatingFileHandler)
+            and Path(handler.baseFilename) == expected_path
+            and handler.maxBytes == rotation_max_bytes
+            and handler.backupCount == rotation_backup_count
+        ):
             existing_handler = handler
             continue
         logger.removeHandler(handler)
@@ -68,17 +75,24 @@ def _remove_configured_handlers(
 def configure_logging(config: LoggingConfig) -> logging.Logger:
     """Configure and return the named application logger."""
     logger = logging.getLogger(_LOGGER_NAME)
-    new_handler: logging.FileHandler | None = None
+    new_handler: logging.handlers.RotatingFileHandler | None = None
     setup_failed = False
 
     try:
         logger.setLevel(config.level)
         log_path = Path(config.jsonl_path)
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        handler = _remove_configured_handlers(logger, str(log_path))
+        handler = _remove_configured_handlers(
+            logger,
+            str(log_path),
+            config.rotation_max_bytes,
+            config.rotation_backup_count,
+        )
         if handler is None:
-            new_handler = logging.FileHandler(
+            new_handler = logging.handlers.RotatingFileHandler(
                 log_path,
+                maxBytes=config.rotation_max_bytes,
+                backupCount=config.rotation_backup_count,
                 encoding="utf-8",
             )
             new_handler.setLevel(logging.NOTSET)

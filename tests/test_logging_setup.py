@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import traceback
 from io import StringIO
 from pathlib import Path
@@ -27,7 +28,7 @@ def application_logger():
             handler.close()
 
 
-def test_file_handler_oserror_is_converted_without_leaking_details(
+def test_rotating_file_handler_oserror_is_converted_without_leaking_details(
     tmp_path: Path,
     monkeypatch,
     application_logger: logging.Logger,
@@ -36,10 +37,17 @@ def test_file_handler_oserror_is_converted_without_leaking_details(
     log_path = tmp_path / "private" / "application.jsonl"
     initial_handlers = list(application_logger.handlers)
 
-    def fail_file_handler(*args: object, **kwargs: object) -> logging.FileHandler:
+    def fail_rotating_file_handler(
+        *args: object,
+        **kwargs: object,
+    ) -> logging.handlers.RotatingFileHandler:
         raise OSError(f"cannot open {log_path}: {unsafe_detail}")
 
-    monkeypatch.setattr(logging, "FileHandler", fail_file_handler)
+    monkeypatch.setattr(
+        logging.handlers,
+        "RotatingFileHandler",
+        fail_rotating_file_handler,
+    )
 
     with pytest.raises(LoggingSetupError) as exc_info:
         configure_logging(LoggingConfig(jsonl_path=str(log_path)))
@@ -84,25 +92,33 @@ def test_partially_configured_handler_is_closed_and_not_registered(
     monkeypatch,
     application_logger: logging.Logger,
 ) -> None:
-    created_handlers: list[logging.FileHandler] = []
-    original_file_handler = logging.FileHandler
+    created_handlers: list[logging.handlers.RotatingFileHandler] = []
+    original_rotating_file_handler = logging.handlers.RotatingFileHandler
 
-    def tracking_file_handler(
+    def tracking_rotating_file_handler(
         *args: object,
         **kwargs: object,
-    ) -> logging.FileHandler:
-        handler = original_file_handler(*args, **kwargs)
+    ) -> logging.handlers.RotatingFileHandler:
+        handler = original_rotating_file_handler(*args, **kwargs)
         created_handlers.append(handler)
         return handler
 
     def fail_set_formatter(
-        self: logging.FileHandler,
+        self: logging.handlers.RotatingFileHandler,
         fmt: logging.Formatter | None,
     ) -> None:
         raise ValueError("unsafe formatter detail")
 
-    monkeypatch.setattr(logging, "FileHandler", tracking_file_handler)
-    monkeypatch.setattr(original_file_handler, "setFormatter", fail_set_formatter)
+    monkeypatch.setattr(
+        logging.handlers,
+        "RotatingFileHandler",
+        tracking_rotating_file_handler,
+    )
+    monkeypatch.setattr(
+        original_rotating_file_handler,
+        "setFormatter",
+        fail_set_formatter,
+    )
 
     with pytest.raises(LoggingSetupError):
         configure_logging(
