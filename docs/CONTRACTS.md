@@ -1631,7 +1631,7 @@ Authorization: Bearer <token>
 ### 19.2. Канонические события MVP
 
 ```text
-application_started
+application_starting
 configuration_loaded
 analysis_registered
 validation_started
@@ -1651,6 +1651,15 @@ analysis_completed
 analysis_partial
 analysis_failed
 ```
+
+Официальное имя стартового события — `application_starting`. Оно записывается
+после успешных загрузки конфигурации, подготовки runtime, настройки
+журналирования и создания FastAPI-приложения, непосредственно перед передачей
+управления `uvicorn.run()`. Событие означает начало серверного запуска, но не
+подтверждает привязку Uvicorn к порту или готовность приложения принимать
+HTTP-запросы. HTTP readiness проверяется отдельно через `GET /health`.
+
+JSONL whitelist и обязательные поля события остаются без изменений.
 
 События не являются пользовательским аудитом действий и не заменяют отдельную модель аудита, если она понадобится позднее.
 
