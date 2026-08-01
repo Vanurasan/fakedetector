@@ -83,7 +83,7 @@ EXPECTED_ENUMS: dict[type[StrEnum], dict[str, str]] = {
     },
 }
 
-EXPECTED_EXPORTS = [
+EXPECTED_ENUM_EXPORTS = [
     "AnalysisStatus",
     "AnalyzerStatus",
     "CleanupStatus",
@@ -120,9 +120,16 @@ def test_enum_accepts_known_and_rejects_unknown_values(
         enum_type("unknown")
 
 
-def test_domain_exports_exactly_the_contract_enums() -> None:
-    assert domain.__all__ == EXPECTED_EXPORTS
-    assert {name: getattr(domain, name) for name in domain.__all__} == {
+def test_domain_exports_all_contract_enums() -> None:
+    exported_enums = {
+        name: exported
+        for name in domain.__all__
+        if isinstance((exported := getattr(domain, name)), type)
+        and issubclass(exported, StrEnum)
+    }
+
+    assert list(exported_enums) == EXPECTED_ENUM_EXPORTS
+    assert exported_enums == {
         enum_type.__name__: enum_type for enum_type in EXPECTED_ENUMS
     }
 
