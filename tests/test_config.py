@@ -7,10 +7,11 @@ import traceback
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 from pytest import param
 
 from fakedetector.config.loader import ConfigurationError, load_config
-from fakedetector.config.models import AppConfig, LoggingConfig
+from fakedetector.config.models import APIConfig, AppConfig, LoggingConfig
 
 
 def test_valid_config_loads() -> None:
@@ -372,6 +373,81 @@ def test_no_env_uses_yaml_value() -> None:
         config = load_config(tmp_path, env={})
         assert config.server.host == "127.0.0.1"
         assert config.server.port == 8080
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "token_env_var",
+    [
+        "OPENAI_API_KEY",
+        "TOKEN",
+        "TOKEN_2",
+        "_PRIVATE_TOKEN",
+    ],
+)
+def test_valid_token_env_var_name_is_preserved(token_env_var: str) -> None:
+    config = APIConfig.model_validate({"token_env_var": token_env_var})
+
+    assert config.token_env_var == token_env_var
+
+
+@pytest.mark.parametrize(
+    "token_env_var",
+    [
+        param("", id="empty"),
+        param("2TOKEN", id="leading-digit"),
+        param("api_token", id="lowercase"),
+        param("API-TOKEN", id="hyphen"),
+        param("API.TOKEN", id="dot"),
+        param("API TOKEN", id="space"),
+        param("API_TOKEN=value", id="equals"),
+        param("API/TOKEN", id="slash"),
+        param("API\\TOKEN", id="backslash"),
+        param("ТОКЕН", id="unicode-letters"),
+        param("sk-live-secret-value", id="literal-token-value"),
+    ],
+)
+def test_invalid_token_env_var_name_is_rejected(token_env_var: str) -> None:
+    with pytest.raises(PydanticValidationError):
+        APIConfig.model_validate({"token_env_var": token_env_var})
+
+
+def test_invalid_token_env_var_is_rejected_without_leaking_config() -> None:
+    literal_token = "sk-live-secret-value"
+    yaml_content = _MINIMAL_YAML.replace(
+        'token_env_var: "MEDIA_ANALYZER_API_TOKEN"',
+        f'token_env_var: "{literal_token}"',
+    )
+    tmp_path = _write_temp_yaml(yaml_content)
+    try:
+        with pytest.raises(ConfigurationError) as exc_info:
+            load_config(tmp_path, env={})
+
+        error = exc_info.value
+        traceback_text = "".join(traceback.format_exception(error))
+        assert str(error) == "Configuration validation failed"
+        assert literal_token not in repr(error)
+        assert literal_token not in traceback_text
+        assert error.__cause__ is None
+        assert error.__context__ is None
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_token_env_var_name_can_be_overridden_by_env() -> None:
+    tmp_path = _write_temp_yaml(_MINIMAL_YAML)
+    try:
+        config = load_config(
+            tmp_path,
+            env={
+                "FAKEDETECTOR_ACCESS_CHANNELS__API__TOKEN_ENV_VAR": (
+                    "OPENAI_API_KEY"
+                )
+            },
+        )
+
+        assert config.access_channels.api.token_env_var == "OPENAI_API_KEY"
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 

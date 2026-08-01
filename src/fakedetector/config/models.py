@@ -39,7 +39,12 @@ class APIConfig(BaseModel):
 
     enabled: bool = True
     require_token: bool = True
-    token_env_var: str = "MEDIA_ANALYZER_API_TOKEN"
+    token_env_var: str = Field(
+        default="MEDIA_ANALYZER_API_TOKEN",
+        min_length=1,
+        pattern=r"^[A-Z_][A-Z0-9_]*$",
+        description="Name of the environment variable containing the API token",
+    )
 
 
 class AccessChannelsConfig(BaseModel):
