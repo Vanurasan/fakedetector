@@ -21,7 +21,7 @@ _SECRET_FIELD_NAMES = {
     "private_key",
     "secret_key",
 }
-_ENV_VAR_NAME_PATTERN = re.compile(r"[A-Z0-9_]+\Z")
+_ENV_VAR_NAME_PATTERN = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 
 
 def _find_literal_secret_fields(value: object, path: str = "root") -> list[str]:
