@@ -340,6 +340,12 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-08-01
+
+### Added
+
+- **[Testing/Regression] Закрыты оставшиеся regression gaps финального аудита Этапа 1.** Pytest теперь через `subprocess.run` проверяет установленный `fakedetector --help`; help завершается до загрузки конфигурации и не запускает runtime pipeline или Uvicorn. Одиночный тест отсутствующего `external_systems` заменён параметризованной проверкой удаления каждого из 14 явно зафиксированных обязательных top-level полей `AppConfig` с безопасным `ConfigurationError`. Результат: 106 тестов прошли, итоговое branch coverage — 97%.
+
 ### 2026-07-30
 
 ### Added

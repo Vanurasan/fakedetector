@@ -2,16 +2,35 @@
 
 from __future__ import annotations
 
+import copy
 import tempfile
 import traceback
 from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import ValidationError as PydanticValidationError
 from pytest import param
 
 from fakedetector.config.loader import ConfigurationError, load_config
 from fakedetector.config.models import APIConfig, AppConfig, LoggingConfig
+
+_REQUIRED_TOP_LEVEL_FIELDS = (
+    "schema_version",
+    "server",
+    "access_channels",
+    "limits",
+    "allowed_formats",
+    "validation",
+    "temporary_storage",
+    "preprocessing",
+    "analyzers",
+    "risk_assessment",
+    "result",
+    "error_handling",
+    "logging",
+    "external_systems",
+)
 
 
 def test_valid_config_loads() -> None:
@@ -901,118 +920,51 @@ schema_version: "1.0"
         Path(tmp_path).unlink(missing_ok=True)
 
 
-def test_missing_required_section_rejected() -> None:
-    """A YAML file missing a required top-level section raises ConfigurationError."""
-    yaml_content = """\
-schema_version: "1.0"
-server:
-  host: "127.0.0.1"
-  port: 8080
-access_channels:
-  webui:
-    enabled: true
-    require_authentication: true
-  api:
-    enabled: true
-    require_token: true
-    token_env_var: "MEDIA_ANALYZER_API_TOKEN"
-limits:
-  max_file_size_mb:
-    image: 20
-    audio: 50
-    video: 200
-  max_parallel_tasks:
-    image: 4
-    audio: 2
-    video: 1
-  processing_timeout_seconds: 600
-allowed_formats:
-  image:
-    extensions: ["jpg", "jpeg", "png", "webp"]
-    mime_types: ["image/jpeg", "image/png", "image/webp"]
-  audio:
-    extensions: ["wav", "mp3", "flac", "m4a"]
-    mime_types: ["audio/wav", "audio/mpeg", "audio/flac", "audio/mp4"]
-  video:
-    extensions: ["mp4", "mov", "avi", "mkv"]
-    mime_types: ["video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska"]
-validation:
-  check_extension: true
-  check_mime_type: true
-  check_file_signature: true
-  reject_if_type_mismatch: true
-  calculate_sha256: true
-  safe_decode: true
-temporary_storage:
-  root_path: "runtime/temp"
-  ttl_minutes: 60
-  cleanup_retries: 3
-  quarantine_enabled: true
-  quarantine_ttl_hours: 24
-preprocessing:
-  image:
-    extract_metadata: true
-    normalize_for_analysis: true
-  audio:
-    extract_metadata: true
-    fragment_duration_seconds: 10
-    build_spectrogram: true
-  video:
-    extract_metadata: true
-    keyframe_interval_seconds: 2
-    extract_audio_track: true
-analyzers:
-  defaults:
-    timeout_seconds: 120
-    continue_on_error: true
-  image:
-    enabled: []
-  audio:
-    enabled: []
-  video:
-    enabled: []
-  settings: {}
-risk_assessment:
-  model_id: "score_model_v1"
-  model_version: "0.1.0"
-  thresholds:
-    low_max: 29
-    medium_max: 60
-  severity_scores:
-    weak: 5
-    significant: 25
-  critical_override:
-    enabled: false
-    allowed_finding_types: []
-  completeness:
-    minimum_for_assessment: 0.5
-result:
-  directory: "runtime/results"
-  atomic_write: true
-  include_raw_metrics: false
-  store_original_name: true
-error_handling:
-  continue_if_analyzer_fails: true
-  mark_partial_on_analyzer_failure: true
-  hide_internal_error_details: true
-logging:
-  level: "INFO"
-  jsonl_path: "runtime/logs/application.jsonl"
-  rotation_max_bytes: 10485760
-  rotation_backup_count: 5
-# external_systems is missing
-"""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
-    ) as f:
-        f.write(yaml_content)
-        tmp_path = f.name
+@pytest.mark.parametrize(
+    "missing_field",
+    _REQUIRED_TOP_LEVEL_FIELDS,
+    ids=lambda field: f"missing-{field}",
+)
+def test_each_required_top_level_field_is_rejected_when_missing(
+    missing_field: str,
+    tmp_path: Path,
+) -> None:
+    """Every contract-required AppConfig root field remains mandatory."""
+    example_path = Path("config/config.example.yaml")
+    original_yaml = example_path.read_text(encoding="utf-8")
+    config_data = yaml.safe_load(original_yaml)
 
-    try:
-        with pytest.raises(ConfigurationError, match="validation failed"):
-            load_config(tmp_path)
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+    assert isinstance(config_data, dict), "example config root must be a mapping"
+    assert set(config_data) == set(_REQUIRED_TOP_LEVEL_FIELDS), (
+        "example config must contain exactly the canonical required top-level fields"
+    )
+    assert isinstance(load_config(example_path, env={}), AppConfig)
+
+    incomplete_config = copy.deepcopy(config_data)
+    incomplete_config.pop(missing_field)
+    secret_like_sentinel = "sk-live-value-must-not-leak"
+    temporary_yaml = yaml.safe_dump(
+        incomplete_config,
+        allow_unicode=True,
+        sort_keys=False,
+    )
+    temporary_yaml += f"\n# {secret_like_sentinel}\n"
+    config_path = tmp_path / f"missing-{missing_field}.yaml"
+    config_path.write_text(temporary_yaml, encoding="utf-8")
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        load_config(config_path, env={})
+
+    error = exc_info.value
+    traceback_text = "".join(traceback.format_exception(error))
+    assert str(error) == "Configuration validation failed"
+    assert secret_like_sentinel not in repr(error)
+    assert secret_like_sentinel not in traceback_text
+    assert temporary_yaml not in traceback_text
+    assert "pydantic" not in traceback_text.casefold()
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert example_path.read_text(encoding="utf-8") == original_yaml
 
 
 def test_unsupported_schema_version_rejected() -> None:
