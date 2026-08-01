@@ -1,4 +1,4 @@
-"""Public domain enumerations for FakeDetector."""
+"""Public domain contracts for FakeDetector."""
 
 from fakedetector.domain.enums import (
     AnalysisStatus,
@@ -11,6 +11,7 @@ from fakedetector.domain.enums import (
     RiskLevel,
     SourceChannel,
 )
+from fakedetector.domain.models import SourceContext
 
 __all__ = [
     "AnalysisStatus",
@@ -22,4 +23,5 @@ __all__ = [
     "ProcessingStage",
     "RiskLevel",
     "SourceChannel",
+    "SourceContext",
 ]
