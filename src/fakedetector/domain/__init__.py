@@ -11,7 +11,7 @@ from fakedetector.domain.enums import (
     RiskLevel,
     SourceChannel,
 )
-from fakedetector.domain.models import SourceContext
+from fakedetector.domain.models import InputFileDescriptor, SourceContext
 
 __all__ = [
     "AnalysisStatus",
@@ -19,6 +19,7 @@ __all__ = [
     "CleanupStatus",
     "CompletenessStatus",
     "FindingSeverity",
+    "InputFileDescriptor",
     "MediaType",
     "ProcessingStage",
     "RiskLevel",
