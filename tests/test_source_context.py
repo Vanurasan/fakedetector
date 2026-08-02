@@ -15,6 +15,7 @@ EXPECTED_DOMAIN_EXPORTS = [
     "CleanupStatus",
     "CompletenessStatus",
     "FindingSeverity",
+    "InputFileDescriptor",
     "MediaType",
     "ProcessingStage",
     "RiskLevel",
