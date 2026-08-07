@@ -16,15 +16,19 @@ from fakedetector.domain.models import InputFileDescriptor as ModelsInputFileDes
 EXPECTED_DOMAIN_EXPORTS = [
     "AnalysisStatus",
     "AnalyzerStatus",
+    "AudioTechnicalParameters",
     "CleanupStatus",
     "CompletenessStatus",
     "FindingSeverity",
+    "ImageTechnicalParameters",
     "InputFileDescriptor",
     "MediaType",
     "ProcessingStage",
     "RiskLevel",
     "SourceChannel",
     "SourceContext",
+    "ValidatedFileDescriptor",
+    "VideoTechnicalParameters",
 ]
 
 VALID_DESCRIPTOR: dict[str, Any] = {

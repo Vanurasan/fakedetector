@@ -1,10 +1,11 @@
 """Canonical Pydantic models for the FakeDetector domain."""
 
 from datetime import datetime, timedelta
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, field_serializer, field_validator, model_validator
 
-from fakedetector.domain.enums import SourceChannel
+from fakedetector.domain.enums import MediaType, SourceChannel
 
 
 class SourceContext(BaseModel):
@@ -40,3 +41,78 @@ class InputFileDescriptor(BaseModel):
     def serialize_received_at(self, value: datetime) -> str:
         """Serialize the validated UTC timestamp with the canonical Z suffix."""
         return value.isoformat().replace("+00:00", "Z")
+
+
+class ImageTechnicalParameters(BaseModel):
+    """Technical parameters extracted from a validated image."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    width: int
+    height: int
+    format: str
+    color_mode: str
+    frame_count: int | None = None
+    has_metadata: bool
+
+
+class AudioTechnicalParameters(BaseModel):
+    """Technical parameters extracted from validated audio."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    duration_seconds: float
+    sample_rate_hz: int
+    channels: int
+    codec: str
+    bitrate_bps: int | None = None
+
+
+class VideoTechnicalParameters(BaseModel):
+    """Technical parameters extracted from validated video."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    duration_seconds: float
+    container: str
+    video_codec: str
+    audio_codec: str | None = None
+    width: int
+    height: int
+    fps: float
+    bitrate_bps: int | None = None
+    has_audio: bool
+
+
+class ValidatedFileDescriptor(BaseModel):
+    """Validated file metadata and media-specific technical parameters."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    original_name: str
+    extension: str
+    declared_mime_type: str | None
+    detected_mime_type: str
+    media_type: MediaType
+    size_bytes: int
+    sha256: str
+    signature_match: bool
+    safe_read: bool
+    technical_parameters: (
+        ImageTechnicalParameters | AudioTechnicalParameters | VideoTechnicalParameters
+    )
+
+    @model_validator(mode="after")
+    def validate_technical_parameters_match_media_type(self) -> Self:
+        """Require technical parameters for the descriptor's media type."""
+        parameters_match = (
+            self.media_type is MediaType.IMAGE
+            and isinstance(self.technical_parameters, ImageTechnicalParameters)
+            or self.media_type is MediaType.AUDIO
+            and isinstance(self.technical_parameters, AudioTechnicalParameters)
+            or self.media_type is MediaType.VIDEO
+            and isinstance(self.technical_parameters, VideoTechnicalParameters)
+        )
+        if not parameters_match:
+            raise ValueError("technical_parameters must match media_type")
+        return self
