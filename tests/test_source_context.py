@@ -12,15 +12,19 @@ from fakedetector.domain.models import SourceContext as ModelsSourceContext
 EXPECTED_DOMAIN_EXPORTS = [
     "AnalysisStatus",
     "AnalyzerStatus",
+    "AudioTechnicalParameters",
     "CleanupStatus",
     "CompletenessStatus",
     "FindingSeverity",
+    "ImageTechnicalParameters",
     "InputFileDescriptor",
     "MediaType",
     "ProcessingStage",
     "RiskLevel",
     "SourceChannel",
     "SourceContext",
+    "ValidatedFileDescriptor",
+    "VideoTechnicalParameters",
 ]
 
 
