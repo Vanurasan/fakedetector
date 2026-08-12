@@ -113,7 +113,7 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 2 — Доменные модели и репозитории
 Статус этапа: IN_PROGRESS
-Ближайшее действие: реализовать AnalyzerResult
+Ближайшее действие: реализовать RiskAssessment
 Критические блокеры: отсутствуют
 Реализация программы: Этап 1 завершён (минимальный запускаемый каркас)
 Документационная база: сформирована
@@ -326,9 +326,9 @@ uv run poe server-smoke
   - [x] реализовать `InputFileDescriptor`;
   - [x] реализовать `ValidatedFileDescriptor` с техническими параметрами;
 - [x] реализовать `ValidationResult`;
-- [ ] реализовать `AnalyzerResult`;
-- [ ] реализовать `Finding` и виды локализации;
-- [ ] реализовать `AnalysisCompleteness`;
+- [x] реализовать `AnalyzerResult`;
+- [x] реализовать `Finding` и виды локализации;
+- [x] реализовать `AnalysisCompleteness`;
 - [ ] реализовать `RiskAssessment`;
 - [ ] реализовать `Recommendation`;
 - [ ] реализовать `CleanupResult`;

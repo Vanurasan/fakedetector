@@ -1,7 +1,7 @@
 """Canonical Pydantic models for the FakeDetector domain."""
 
 from datetime import datetime, timedelta
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -13,7 +13,13 @@ from pydantic import (
     model_validator,
 )
 
-from fakedetector.domain.enums import MediaType, SourceChannel
+from fakedetector.domain.enums import (
+    AnalyzerStatus,
+    CompletenessStatus,
+    FindingSeverity,
+    MediaType,
+    SourceChannel,
+)
 
 
 class SourceContext(BaseModel):
@@ -171,3 +177,158 @@ class ValidationResult(BaseModel):
     checks: list[ValidationCheck]
     errors: list[ErrorDetail]
     validated_file: ValidatedFileDescriptor | None
+
+
+class AnalyzerResult(BaseModel):
+    """Structured result returned by one analyzer execution."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    analyzer_id: str
+    analyzer_version: str
+    media_type: MediaType
+    group: str
+    status: AnalyzerStatus
+    applicable: bool
+    started_at: datetime | None
+    finished_at: datetime | None
+    duration_ms: int | None = Field(ge=0)
+    score: float | None
+    score_name: str | None
+    summary: str
+    raw_metrics: dict[str, JsonValue]
+    candidate_findings: list[JsonValue]
+    warnings: list[str]
+    errors: list[ErrorDetail]
+
+    @field_validator("started_at", "finished_at")
+    @classmethod
+    def validate_datetime_is_utc(cls, value: datetime | None) -> datetime | None:
+        """Require aware UTC datetimes without converting another timezone."""
+        if value is not None and value.utcoffset() != timedelta(0):
+            raise ValueError("analyzer datetimes must be timezone-aware UTC")
+        return value
+
+    @field_serializer("started_at", "finished_at", when_used="json")
+    def serialize_datetime(self, value: datetime | None) -> str | None:
+        """Serialize validated UTC timestamps with the canonical Z suffix."""
+        if value is None:
+            return None
+        return value.isoformat().replace("+00:00", "Z")
+
+    @model_validator(mode="after")
+    def validate_status_and_score(self) -> Self:
+        """Enforce only the cross-field invariants fixed by the contract."""
+        if self.score is not None and self.score_name is None:
+            raise ValueError("score_name is required when score is provided")
+        if self.status is AnalyzerStatus.NOT_APPLICABLE and self.applicable:
+            raise ValueError("not_applicable status requires applicable=false")
+        if self.status in {AnalyzerStatus.ERROR, AnalyzerStatus.TIMEOUT} and not self.errors:
+            raise ValueError("error and timeout statuses require at least one error")
+        if self.status is AnalyzerStatus.SKIPPED and not (
+            self.summary.strip() or any(warning.strip() for warning in self.warnings)
+        ):
+            raise ValueError("skipped status requires a safe reason")
+        return self
+
+
+class FileLocalization(BaseModel):
+    """Localization covering the complete media file."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["file"]
+
+
+class BoundingBoxLocalization(BaseModel):
+    """Normalized rectangular localization within an image or frame."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["bounding_box"]
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(ge=0, le=1)
+    height: float = Field(ge=0, le=1)
+    coordinate_space: Literal["normalized"]
+
+
+class TimeIntervalLocalization(BaseModel):
+    """Localization expressed as an inclusive time interval in seconds."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["time_interval"]
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_interval_order(self) -> Self:
+        """Require the interval start not to follow its end."""
+        if self.start_seconds > self.end_seconds:
+            raise ValueError("start_seconds must be less than or equal to end_seconds")
+        return self
+
+
+class FrameIntervalLocalization(BaseModel):
+    """Localization expressed as an inclusive frame interval."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["frame_interval"]
+    start_frame: int = Field(ge=0)
+    end_frame: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_interval_order(self) -> Self:
+        """Require the interval start not to follow its end."""
+        if self.start_frame > self.end_frame:
+            raise ValueError("start_frame must be less than or equal to end_frame")
+        return self
+
+
+Localization = Annotated[
+    FileLocalization
+    | BoundingBoxLocalization
+    | TimeIntervalLocalization
+    | FrameIntervalLocalization,
+    Field(discriminator="type"),
+]
+
+
+class Finding(BaseModel):
+    """Normalized finding formed from an analyzer result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    finding_id: str
+    group: str
+    type: str
+    severity: FindingSeverity
+    source_analyzer_id: str
+    source_analyzer_version: str
+    description: str
+    localization: Localization | None
+    source_score: float | None
+    score_impact: float | None
+    critical_override_eligible: bool
+    correlation_group: str | None
+    evidence_refs: list[str]
+
+
+class AnalysisCompleteness(BaseModel):
+    """Declared coverage and status of an analysis execution."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: CompletenessStatus
+    planned_analyzers: int = Field(ge=0)
+    applicable_analyzers: int = Field(ge=0)
+    completed_analyzers: int = Field(ge=0)
+    failed_analyzers: int = Field(ge=0)
+    timed_out_analyzers: int = Field(ge=0)
+    skipped_analyzers: int = Field(ge=0)
+    not_applicable_analyzers: int = Field(ge=0)
+    coverage_ratio: float = Field(ge=0, le=1)
+    missing_capabilities: list[str]
+    explanation: str
