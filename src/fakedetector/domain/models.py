@@ -1,8 +1,9 @@
 """Canonical Pydantic models for the FakeDetector domain."""
 
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from math import isfinite
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -13,6 +14,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic_core import PydanticSerializationError
 
 from fakedetector.domain.enums import (
     AnalysisStatus,
@@ -54,10 +56,76 @@ def _validate_finite_json_value(value: JsonValue) -> JsonValue:
     return value
 
 
+def _validate_finite_serializable_state(value: object, seen: set[int] | None = None) -> None:
+    """Reject non-finite floats in the current mutable domain object graph."""
+    if isinstance(value, float):
+        if not isfinite(value):
+            raise PydanticSerializationError("JSON numbers must be finite")
+        return
+
+    if isinstance(value, (BaseModel, dict, list, tuple, set, frozenset)):
+        if seen is None:
+            seen = set()
+        identity = id(value)
+        if identity in seen:
+            return
+        seen.add(identity)
+
+    if isinstance(value, BaseModel):
+        for field_name in type(value).model_fields:
+            _validate_finite_serializable_state(getattr(value, field_name), seen)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _validate_finite_serializable_state(key, seen)
+            _validate_finite_serializable_state(item, seen)
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        for item in value:
+            _validate_finite_serializable_state(item, seen)
+
+
 class _DomainModel(BaseModel):
     """Internal base enforcing finite JSON numbers across domain models."""
 
     model_config = ConfigDict(allow_inf_nan=False)
+
+    def model_dump_json(
+        self,
+        *,
+        indent: int | None = None,
+        ensure_ascii: bool = False,
+        include: Any = None,
+        exclude: Any = None,
+        context: Any | None = None,
+        by_alias: bool | None = None,
+        exclude_unset: bool = False,
+        exclude_defaults: bool = False,
+        exclude_none: bool = False,
+        exclude_computed_fields: bool = False,
+        round_trip: bool = False,
+        warnings: bool | Literal["none", "warn", "error"] = True,
+        fallback: Callable[[Any], Any] | None = None,
+        serialize_as_any: bool = False,
+        polymorphic_serialization: bool | None = None,
+    ) -> str:
+        """Serialize only after validating the current mutable object graph."""
+        _validate_finite_serializable_state(self)
+        return super().model_dump_json(
+            indent=indent,
+            ensure_ascii=ensure_ascii,
+            include=include,
+            exclude=exclude,
+            context=context,
+            by_alias=by_alias,
+            exclude_unset=exclude_unset,
+            exclude_defaults=exclude_defaults,
+            exclude_none=exclude_none,
+            exclude_computed_fields=exclude_computed_fields,
+            round_trip=round_trip,
+            warnings=warnings,
+            fallback=fallback,
+            serialize_as_any=serialize_as_any,
+            polymorphic_serialization=polymorphic_serialization,
+        )
 
 
 class SourceContext(_DomainModel):
@@ -545,7 +613,7 @@ class AnalysisResult(_DomainModel):
             if self.risk_assessment.final_level is None:
                 raise ValueError("partial result requires a final risk level")
             limitation_is_explained = (
-                bool(self.warnings)
+                any(warning.strip() for warning in self.warnings)
                 or bool(self.errors)
                 or bool(self.completeness.explanation.strip())
                 or any(limitation.strip() for limitation in self.risk_assessment.limitations)

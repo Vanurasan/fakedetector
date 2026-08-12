@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from pydantic import BaseModel, ValidationError
+from pydantic_core import PydanticSerializationError
 
 from fakedetector.domain import (
     AnalysisCompleteness,
@@ -285,3 +286,103 @@ def test_finite_json_numbers_and_standard_json_values_round_trip_exactly() -> No
     assert restored_error == error
     assert restored_analyzer == analyzer
     assert json.loads(error.model_dump_json())["safe_details"] == structured_value
+
+
+@pytest.mark.parametrize("non_finite", NON_FINITE_VALUES)
+@pytest.mark.parametrize(
+    ("field_name", "model_factory"),
+    [
+        (
+            "duration_seconds",
+            lambda: AudioTechnicalParameters(
+                duration_seconds=1.0,
+                sample_rate_hz=48_000,
+                channels=2,
+                codec="aac",
+            ),
+        ),
+        ("score", lambda: RiskAssessment.model_validate(risk_data())),
+    ],
+    ids=["non_nullable_audio_duration", "nullable_risk_score"],
+)
+def test_model_dump_json_rejects_non_finite_direct_mutation(
+    field_name: str,
+    model_factory: Callable[[], BaseModel],
+    non_finite: float,
+) -> None:
+    model = model_factory()
+    setattr(model, field_name, non_finite)
+
+    with pytest.raises(PydanticSerializationError, match="JSON numbers must be finite"):
+        model.model_dump_json()
+
+
+@pytest.mark.parametrize("non_finite", NON_FINITE_VALUES)
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda error, _analyzer, value: error.safe_details.__setitem__("x", value),
+        lambda error, _analyzer, value: error.safe_details.__setitem__(
+            "deep", {"a": [{"b": value}]}
+        ),
+        lambda _error, analyzer, value: analyzer.raw_metrics.__setitem__("x", value),
+        lambda _error, analyzer, value: analyzer.raw_metrics.__setitem__(
+            "deep", {"a": [{"b": value}]}
+        ),
+        lambda _error, analyzer, value: analyzer.candidate_findings.append({"x": value}),
+        lambda _error, analyzer, value: analyzer.candidate_findings.append(
+            {"a": [{"b": value}]}
+        ),
+    ],
+    ids=[
+        "safe_details_direct",
+        "safe_details_deep",
+        "raw_metrics_direct",
+        "raw_metrics_deep",
+        "candidate_findings_direct",
+        "candidate_findings_deep",
+    ],
+)
+def test_model_dump_json_rejects_non_finite_in_place_nested_mutation(
+    mutation: Callable[[ErrorDetail, AnalyzerResult, float], object],
+    non_finite: float,
+) -> None:
+    error = ErrorDetail(
+        code="finite_test",
+        category="internal",
+        message="Safe.",
+        retryable=False,
+    )
+    analyzer = AnalyzerResult.model_validate(analyzer_data())
+    mutation(error, analyzer, non_finite)
+    mutated_model = error if error.safe_details else analyzer
+
+    with pytest.raises(PydanticSerializationError, match="JSON numbers must be finite"):
+        mutated_model.model_dump_json()
+
+
+@pytest.mark.parametrize("non_finite", NON_FINITE_VALUES)
+def test_model_dump_json_checks_nested_domain_models_after_mutation(non_finite: float) -> None:
+    analyzer = AnalyzerResult.model_validate(analyzer_data())
+    error = ErrorDetail(
+        code="finite_test",
+        category="internal",
+        message="Safe.",
+        retryable=False,
+        safe_details={"finite": 1.0},
+    )
+    analyzer.errors.append(error)
+    error.safe_details["deep"] = {"a": [{"b": non_finite}]}
+
+    with pytest.raises(PydanticSerializationError, match="JSON numbers must be finite"):
+        analyzer.model_dump_json()
+
+
+def test_model_dump_json_preserves_signature_options_and_finite_round_trip() -> None:
+    assessment = RiskAssessment.model_validate(risk_data())
+
+    dumped = assessment.model_dump_json(indent=2, ensure_ascii=True, exclude_none=True)
+    restored = RiskAssessment.model_validate_json(dumped)
+
+    assert restored == assessment
+    assert json.loads(dumped)["probability"] == 0.25

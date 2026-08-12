@@ -334,6 +334,22 @@ def test_partial_result_accepts_each_top_level_limitation_source(
     assert result.status is AnalysisStatus.PARTIAL
 
 
+@pytest.mark.parametrize("warnings", [["meaningful limitation"], ["   ", "meaningful limitation"]])
+def test_partial_result_accepts_at_least_one_meaningful_warning(warnings: list[str]) -> None:
+    data = completed_result_data()
+    data.update(
+        {
+            "status": "partial",
+            "completeness": {**completeness_data("partial"), "explanation": ""},
+            "warnings": warnings,
+            "errors": [],
+            "risk_assessment": {**risk_data(), "limitations": []},
+        }
+    )
+
+    assert AnalysisResult.model_validate(data).status is AnalysisStatus.PARTIAL
+
+
 def test_analysis_result_accepts_rejected_result_with_input_descriptor() -> None:
     result = AnalysisResult.model_validate(rejected_result_data())
 
@@ -576,6 +592,23 @@ def test_partial_result_requires_explicit_top_level_limitation() -> None:
                 "warnings": [],
                 "errors": [],
                 "risk_assessment": {**risk_data(), "limitations": ["   "]},
+            }
+        )
+
+
+@pytest.mark.parametrize("warnings", [[""], ["   "], ["", "   "]])
+def test_partial_result_rejects_only_empty_or_whitespace_warnings(
+    warnings: list[str],
+) -> None:
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate(
+            {
+                **completed_result_data(),
+                "status": "partial",
+                "completeness": {**completeness_data("partial"), "explanation": ""},
+                "warnings": warnings,
+                "errors": [],
+                "risk_assessment": {**risk_data(), "limitations": []},
             }
         )
 
