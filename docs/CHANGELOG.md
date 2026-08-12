@@ -354,6 +354,7 @@ YYYY-MM-DD
 
 - **[Stage 2 audit remediation] Устранены `S2-AUD-001`…`S2-AUD-005` перед повторным финальным аудитом.** Усилены terminal invariants `completed`/`partial`, добавлена безопасная повторная pre-save validation, запрещены non-finite JSON numbers, на всех платформах отклоняются Windows reserved result names, а запрет чтения symlink доказан deterministic-тестами; hardening против concurrent symlink substitution/TOCTOU зафиксирован незавершённой задачей безопасности Этапа 9. Этап 2 остаётся `IN_PROGRESS` до независимого повторного аудита.
 - **[Stage 2 audit remediation R2] Устранены остаточные `S2-AUD-001-R1` и `S2-AUD-003-R1` перед контрольным read-only аудитом.** Для `partial` только top-level warning с содержательным после `.strip()` текстом считается объяснением ограничения; общий внутренний domain base теперь перед стандартным `model_dump_json()` проверяет актуальное mutable state, включая вложенные модели и in-place изменения JSON-структур, и отклоняет `NaN`/`Infinity` вместо скрытой сериализации в `null`. Этап 2 остаётся `IN_PROGRESS`.
+- **[Roadmap/Stage 2] Этап 2 «Доменные модели и репозитории» завершён после успешного контрольного финального аудита.** Все findings `S2-AUD-001`…`S2-AUD-005`, `S2-AUD-001-R1` и `S2-AUD-003-R1` закрыты; итог аудита — PASS, BLOCKER 0, MAJOR 0, MINOR 0. Production code и tests больше не требуют изменений, Stage 2 переведён в `DONE`.
 
 ### 2026-08-02
 
