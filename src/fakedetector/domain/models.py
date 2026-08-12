@@ -1,6 +1,7 @@
 """Canonical Pydantic models for the FakeDetector domain."""
 
 from datetime import datetime, timedelta
+from math import isfinite
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -40,7 +41,26 @@ def _serialize_utc_datetime(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z")
 
 
-class SourceContext(BaseModel):
+def _validate_finite_json_value(value: JsonValue) -> JsonValue:
+    """Reject non-finite floats recursively in otherwise JSON-safe values."""
+    if isinstance(value, float) and not isfinite(value):
+        raise ValueError("JSON numbers must be finite")
+    if isinstance(value, list):
+        for item in value:
+            _validate_finite_json_value(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _validate_finite_json_value(item)
+    return value
+
+
+class _DomainModel(BaseModel):
+    """Internal base enforcing finite JSON numbers across domain models."""
+
+    model_config = ConfigDict(allow_inf_nan=False)
+
+
+class SourceContext(_DomainModel):
     """Context describing how media entered the FakeDetector core."""
 
     model_config = ConfigDict(extra="forbid")
@@ -51,7 +71,7 @@ class SourceContext(BaseModel):
     external_reference: str | None = None
 
 
-class InputFileDescriptor(BaseModel):
+class InputFileDescriptor(_DomainModel):
     """Metadata supplied when an input file is received."""
 
     model_config = ConfigDict(extra="forbid")
@@ -77,7 +97,7 @@ class InputFileDescriptor(BaseModel):
         return serialized
 
 
-class ImageTechnicalParameters(BaseModel):
+class ImageTechnicalParameters(_DomainModel):
     """Technical parameters extracted from a validated image."""
 
     model_config = ConfigDict(extra="forbid")
@@ -90,7 +110,7 @@ class ImageTechnicalParameters(BaseModel):
     has_metadata: bool
 
 
-class AudioTechnicalParameters(BaseModel):
+class AudioTechnicalParameters(_DomainModel):
     """Technical parameters extracted from validated audio."""
 
     model_config = ConfigDict(extra="forbid")
@@ -102,7 +122,7 @@ class AudioTechnicalParameters(BaseModel):
     bitrate_bps: int | None = None
 
 
-class VideoTechnicalParameters(BaseModel):
+class VideoTechnicalParameters(_DomainModel):
     """Technical parameters extracted from validated video."""
 
     model_config = ConfigDict(extra="forbid")
@@ -118,7 +138,7 @@ class VideoTechnicalParameters(BaseModel):
     has_audio: bool
 
 
-class ValidatedFileDescriptor(BaseModel):
+class ValidatedFileDescriptor(_DomainModel):
     """Validated file metadata and media-specific technical parameters."""
 
     model_config = ConfigDict(extra="forbid")
@@ -152,7 +172,7 @@ class ValidatedFileDescriptor(BaseModel):
         return self
 
 
-class ValidationCheck(BaseModel):
+class ValidationCheck(_DomainModel):
     """Outcome of one primary file validation check."""
 
     model_config = ConfigDict(extra="forbid")
@@ -162,7 +182,7 @@ class ValidationCheck(BaseModel):
     message: str
 
 
-class ErrorDetail(BaseModel):
+class ErrorDetail(_DomainModel):
     """Safe structured details describing a domain or processing error."""
 
     model_config = ConfigDict(extra="forbid")
@@ -187,8 +207,17 @@ class ErrorDetail(BaseModel):
     analyzer_id: str | None = None
     safe_details: dict[str, JsonValue] = Field(default_factory=dict)
 
+    @field_validator("safe_details")
+    @classmethod
+    def validate_safe_details_numbers_are_finite(
+        cls, value: dict[str, JsonValue]
+    ) -> dict[str, JsonValue]:
+        """Require every number in safe structured details to be finite."""
+        _validate_finite_json_value(value)
+        return value
 
-class ValidationResult(BaseModel):
+
+class ValidationResult(_DomainModel):
     """Contract result of primary validation before specialized analysis."""
 
     model_config = ConfigDict(extra="forbid")
@@ -199,7 +228,7 @@ class ValidationResult(BaseModel):
     validated_file: ValidatedFileDescriptor | None
 
 
-class AnalyzerResult(BaseModel):
+class AnalyzerResult(_DomainModel):
     """Structured result returned by one analyzer execution."""
 
     model_config = ConfigDict(extra="forbid")
@@ -220,6 +249,15 @@ class AnalyzerResult(BaseModel):
     candidate_findings: list[JsonValue]
     warnings: list[str]
     errors: list[ErrorDetail]
+
+    @field_validator("raw_metrics", "candidate_findings")
+    @classmethod
+    def validate_structured_result_numbers_are_finite(
+        cls, value: dict[str, JsonValue] | list[JsonValue]
+    ) -> dict[str, JsonValue] | list[JsonValue]:
+        """Require every number in analyzer structured results to be finite."""
+        _validate_finite_json_value(value)
+        return value
 
     @field_validator("started_at", "finished_at")
     @classmethod
@@ -248,7 +286,7 @@ class AnalyzerResult(BaseModel):
         return self
 
 
-class FileLocalization(BaseModel):
+class FileLocalization(_DomainModel):
     """Localization covering the complete media file."""
 
     model_config = ConfigDict(extra="forbid")
@@ -256,7 +294,7 @@ class FileLocalization(BaseModel):
     type: Literal["file"]
 
 
-class BoundingBoxLocalization(BaseModel):
+class BoundingBoxLocalization(_DomainModel):
     """Normalized rectangular localization within an image or frame."""
 
     model_config = ConfigDict(extra="forbid")
@@ -269,7 +307,7 @@ class BoundingBoxLocalization(BaseModel):
     coordinate_space: Literal["normalized"]
 
 
-class TimeIntervalLocalization(BaseModel):
+class TimeIntervalLocalization(_DomainModel):
     """Localization expressed as an inclusive time interval in seconds."""
 
     model_config = ConfigDict(extra="forbid")
@@ -286,7 +324,7 @@ class TimeIntervalLocalization(BaseModel):
         return self
 
 
-class FrameIntervalLocalization(BaseModel):
+class FrameIntervalLocalization(_DomainModel):
     """Localization expressed as an inclusive frame interval."""
 
     model_config = ConfigDict(extra="forbid")
@@ -312,7 +350,7 @@ Localization = Annotated[
 ]
 
 
-class Finding(BaseModel):
+class Finding(_DomainModel):
     """Normalized finding formed from an analyzer result."""
 
     model_config = ConfigDict(extra="forbid")
@@ -332,7 +370,7 @@ class Finding(BaseModel):
     evidence_refs: list[str]
 
 
-class AnalysisCompleteness(BaseModel):
+class AnalysisCompleteness(_DomainModel):
     """Declared coverage and status of an analysis execution."""
 
     model_config = ConfigDict(extra="forbid")
@@ -350,7 +388,7 @@ class AnalysisCompleteness(BaseModel):
     explanation: str
 
 
-class RiskAssessment(BaseModel):
+class RiskAssessment(_DomainModel):
     """Declared risk assessment produced by a separately configured algorithm."""
 
     model_config = ConfigDict(extra="forbid")
@@ -392,7 +430,7 @@ _RecommendationAction = Literal[
 ]
 
 
-class Recommendation(BaseModel):
+class Recommendation(_DomainModel):
     """Canonical non-automated action recommendation for an analysis result."""
 
     model_config = ConfigDict(extra="forbid")
@@ -403,7 +441,7 @@ class Recommendation(BaseModel):
     requires_manual_review: bool
 
 
-class CleanupResult(BaseModel):
+class CleanupResult(_DomainModel):
     """Recorded outcome of temporary media cleanup."""
 
     model_config = ConfigDict(extra="forbid")
@@ -427,7 +465,7 @@ class CleanupResult(BaseModel):
         return _serialize_utc_datetime(value)
 
 
-class AnalysisProcessing(BaseModel):
+class AnalysisProcessing(_DomainModel):
     """Timing and version context embedded in an analysis result."""
 
     model_config = ConfigDict(extra="forbid")
@@ -451,7 +489,7 @@ class AnalysisProcessing(BaseModel):
         return _serialize_utc_datetime(value)
 
 
-class AnalysisResult(BaseModel):
+class AnalysisResult(_DomainModel):
     """Versioned top-level result of the FakeDetector analysis flow."""
 
     model_config = ConfigDict(extra="forbid")
@@ -492,6 +530,28 @@ class AnalysisResult(BaseModel):
     @model_validator(mode="after")
     def validate_terminal_result(self) -> Self:
         """Enforce fixed structural invariants for terminal result statuses."""
+        if self.status is AnalysisStatus.COMPLETED:
+            if not isinstance(self.file, ValidatedFileDescriptor):
+                raise ValueError("completed result requires a validated file")
+            if self.completeness.status is not CompletenessStatus.COMPLETE:
+                raise ValueError("completed result requires completeness=complete")
+            if self.risk_assessment.final_level is None:
+                raise ValueError("completed result requires a final risk level")
+        if self.status is AnalysisStatus.PARTIAL:
+            if not isinstance(self.file, ValidatedFileDescriptor):
+                raise ValueError("partial result requires a validated file")
+            if self.completeness.status is not CompletenessStatus.PARTIAL:
+                raise ValueError("partial result requires completeness=partial")
+            if self.risk_assessment.final_level is None:
+                raise ValueError("partial result requires a final risk level")
+            limitation_is_explained = (
+                bool(self.warnings)
+                or bool(self.errors)
+                or bool(self.completeness.explanation.strip())
+                or any(limitation.strip() for limitation in self.risk_assessment.limitations)
+            )
+            if not limitation_is_explained:
+                raise ValueError("partial result requires an explicit limitation")
         if self.status is AnalysisStatus.REJECTED:
             if self.analyzers:
                 raise ValueError("rejected result cannot contain analyzer results")
@@ -509,11 +569,6 @@ class AnalysisResult(BaseModel):
             if not self.errors:
                 raise ValueError("failed result requires at least one error")
         if (
-            self.status is AnalysisStatus.PARTIAL
-            and self.completeness.status is not CompletenessStatus.PARTIAL
-        ):
-            raise ValueError("partial result requires completeness=partial")
-        if (
             self.completeness.status is CompletenessStatus.INSUFFICIENT
             and self.risk_assessment.final_level is not None
         ):
@@ -521,7 +576,7 @@ class AnalysisResult(BaseModel):
         return self
 
 
-class AnalysisResultSummary(BaseModel):
+class AnalysisResultSummary(_DomainModel):
     """Minimal safe projection of a validated analysis result for listing."""
 
     model_config = ConfigDict(extra="forbid")
