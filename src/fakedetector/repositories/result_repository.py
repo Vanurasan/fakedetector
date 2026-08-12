@@ -9,6 +9,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Protocol, runtime_checkable
 
 from pydantic import ValidationError
+from pydantic_core import PydanticSerializationError
 
 from fakedetector.domain import AnalysisResult, AnalysisResultSummary
 
@@ -54,8 +55,15 @@ class JsonFileResultRepository:
 
     def save(self, result: AnalysisResult) -> None:
         """Atomically save a Pydantic-serialized result under its analysis ID."""
-        target_path = self._target_path(result.analysis_id)
-        payload = result.model_dump_json(indent=2).encode("utf-8")
+        try:
+            validated_result = AnalysisResult.model_validate(
+                result.model_dump(mode="python", round_trip=True, warnings="error")
+            )
+            target_path = self._target_path(validated_result.analysis_id)
+            payload = validated_result.model_dump_json(indent=2, warnings="error").encode("utf-8")
+        except (ValidationError, PydanticSerializationError):
+            raise ResultRepositoryError("Result could not be saved.") from None
+
         temporary_path: Path | None = None
 
         try:
@@ -83,7 +91,7 @@ class JsonFileResultRepository:
     def get(self, analysis_id: str) -> AnalysisResult | None:
         """Read and validate only the expected UTF-8 result JSON file."""
         target_path = self._target_path(analysis_id)
-        if not target_path.is_file() or target_path.is_symlink():
+        if target_path.is_symlink() or not target_path.is_file():
             return None
 
         try:
@@ -105,7 +113,7 @@ class JsonFileResultRepository:
     def exists(self, analysis_id: str) -> bool:
         """Check only the expected regular result file for an analysis ID."""
         target_path = self._target_path(analysis_id)
-        return target_path.is_file() and not target_path.is_symlink()
+        return not target_path.is_symlink() and target_path.is_file()
 
     def list_recent(self, limit: int) -> list[AnalysisResultSummary]:
         """List valid direct result files using deterministic domain ordering."""
@@ -156,6 +164,7 @@ class JsonFileResultRepository:
 
     def _target_path(self, analysis_id: str) -> Path:
         """Build a target path from one unchanged, safe analysis ID component."""
+        windows_target = PureWindowsPath(f"{analysis_id}.json")
         if (
             not analysis_id
             or analysis_id in {".", ".."}
@@ -164,6 +173,7 @@ class JsonFileResultRepository:
             or ":" in analysis_id
             or "\0" in analysis_id
             or PureWindowsPath(analysis_id).drive
+            or windows_target.is_reserved()
         ):
             raise InvalidAnalysisIdError("Analysis ID is not a safe path component.")
 

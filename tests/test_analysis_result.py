@@ -300,6 +300,56 @@ def test_analysis_result_accepts_partial_result_with_partial_completeness() -> N
     assert result.completeness.status.value == "partial"
 
 
+@pytest.mark.parametrize(
+    ("explanation_source", "value"),
+    [
+        ("warning", "Результат ограничен."),
+        ("error", error_data()),
+        ("completeness_explanation", "Покрытие анализа снижено."),
+        ("risk_limitation", "Один метод недоступен."),
+    ],
+)
+def test_partial_result_accepts_each_top_level_limitation_source(
+    explanation_source: str,
+    value: str | dict[str, Any],
+) -> None:
+    data = completed_result_data()
+    data["status"] = "partial"
+    data["completeness"] = {**completeness_data("partial"), "explanation": ""}
+    data["warnings"] = []
+    data["errors"] = []
+    data["risk_assessment"] = {**risk_data(), "limitations": []}
+
+    if explanation_source == "warning":
+        data["warnings"] = [value]
+    elif explanation_source == "error":
+        data["errors"] = [value]
+    elif explanation_source == "completeness_explanation":
+        data["completeness"]["explanation"] = value
+    else:
+        data["risk_assessment"]["limitations"] = [value]
+
+    result = AnalysisResult.model_validate(data)
+
+    assert result.status is AnalysisStatus.PARTIAL
+
+
+@pytest.mark.parametrize("warnings", [["meaningful limitation"], ["   ", "meaningful limitation"]])
+def test_partial_result_accepts_at_least_one_meaningful_warning(warnings: list[str]) -> None:
+    data = completed_result_data()
+    data.update(
+        {
+            "status": "partial",
+            "completeness": {**completeness_data("partial"), "explanation": ""},
+            "warnings": warnings,
+            "errors": [],
+            "risk_assessment": {**risk_data(), "limitations": []},
+        }
+    )
+
+    assert AnalysisResult.model_validate(data).status is AnalysisStatus.PARTIAL
+
+
 def test_analysis_result_accepts_rejected_result_with_input_descriptor() -> None:
     result = AnalysisResult.model_validate(rejected_result_data())
 
@@ -489,6 +539,80 @@ def test_failed_result_requires_errors() -> None:
         AnalysisResult.model_validate({**failed_result_data(), "errors": []})
 
 
+def test_completed_result_requires_complete_completeness() -> None:
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate(
+            {**completed_result_data(), "completeness": completeness_data("partial")}
+        )
+
+
+def test_completed_result_requires_validated_file() -> None:
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate({**completed_result_data(), "file": input_file_data()})
+
+
+def test_completed_result_requires_final_risk_level() -> None:
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate(
+            {**completed_result_data(), "risk_assessment": risk_data(None)}
+        )
+
+
+def test_partial_result_requires_validated_file() -> None:
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate(
+            {
+                **completed_result_data(),
+                "status": "partial",
+                "file": input_file_data(),
+                "completeness": completeness_data("partial"),
+            }
+        )
+
+
+def test_partial_result_requires_final_risk_level() -> None:
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate(
+            {
+                **completed_result_data(),
+                "status": "partial",
+                "completeness": completeness_data("partial"),
+                "risk_assessment": risk_data(None),
+            }
+        )
+
+
+def test_partial_result_requires_explicit_top_level_limitation() -> None:
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate(
+            {
+                **completed_result_data(),
+                "status": "partial",
+                "completeness": {**completeness_data("partial"), "explanation": "   "},
+                "warnings": [],
+                "errors": [],
+                "risk_assessment": {**risk_data(), "limitations": ["   "]},
+            }
+        )
+
+
+@pytest.mark.parametrize("warnings", [[""], ["   "], ["", "   "]])
+def test_partial_result_rejects_only_empty_or_whitespace_warnings(
+    warnings: list[str],
+) -> None:
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate(
+            {
+                **completed_result_data(),
+                "status": "partial",
+                "completeness": {**completeness_data("partial"), "explanation": ""},
+                "warnings": warnings,
+                "errors": [],
+                "risk_assessment": {**risk_data(), "limitations": []},
+            }
+        )
+
+
 def test_insufficient_completeness_rejects_final_level() -> None:
     with pytest.raises(ValidationError):
         AnalysisResult.model_validate(
@@ -500,6 +624,7 @@ def test_insufficient_completeness_accepts_absent_final_level() -> None:
     result = AnalysisResult.model_validate(
         {
             **completed_result_data(),
+            "status": "running",
             "completeness": completeness_data("insufficient"),
             "risk_assessment": risk_data(None),
         }

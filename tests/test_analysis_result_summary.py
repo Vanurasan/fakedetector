@@ -78,7 +78,7 @@ def result_data(*, validated_file: bool) -> dict[str, Any]:
         "analysis_id": "projection-001",
         "created_at": created_at,
         "updated_at": updated_at,
-        "status": "completed",
+        "status": "completed" if validated_file else "running",
         "stage": "finished",
         "source": {
             "channel": "api",

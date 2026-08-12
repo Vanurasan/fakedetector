@@ -31,6 +31,16 @@ UNSAFE_ANALYSIS_IDS = [
     "..",
 ]
 
+WINDOWS_RESERVED_ANALYSIS_IDS = [
+    "CON",
+    "con",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+]
+
 
 def make_result(
     analysis_id: str = "analysis-safe-001",
@@ -39,11 +49,11 @@ def make_result(
     warning: str | None = None,
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
-    validated_file: bool = False,
+    validated_file: bool = True,
     external_reference: str = "../external/reference",
     final_level: str | None = "low",
 ) -> AnalysisResult:
-    """Build a compact valid completed AnalysisResult for repository tests."""
+    """Build a compact valid terminal AnalysisResult for repository tests."""
     timestamp = created_at or datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
     last_updated = updated_at or timestamp
     input_file: dict[str, Any] = {
@@ -77,7 +87,7 @@ def make_result(
             "analysis_id": analysis_id,
             "created_at": timestamp,
             "updated_at": last_updated,
-            "status": "completed",
+            "status": "completed" if validated_file else "failed",
             "stage": "finished",
             "source": {
                 "channel": "api",
@@ -97,7 +107,7 @@ def make_result(
             "analyzers": [],
             "findings": [],
             "completeness": {
-                "status": "complete",
+                "status": "complete" if validated_file else "not_assessed",
                 "planned_analyzers": 0,
                 "applicable_analyzers": 0,
                 "completed_analyzers": 0,
@@ -116,7 +126,7 @@ def make_result(
                 "score_based_level": "low",
                 "critical_override_applied": False,
                 "critical_finding_ids": [],
-                "final_level": final_level,
+                "final_level": final_level if validated_file else None,
                 "probability": None,
                 "probability_method": None,
                 "summary": "Значимые признаки не выявлены.",
@@ -138,7 +148,16 @@ def make_result(
                 "errors": [],
             },
             "warnings": [] if warning is None else [warning],
-            "errors": [],
+            "errors": []
+            if validated_file
+            else [
+                {
+                    "code": "internal_error",
+                    "category": "internal",
+                    "message": "Результат анализа недоступен.",
+                    "retryable": False,
+                }
+            ],
         }
     )
 
@@ -285,6 +304,58 @@ def test_failed_first_save_leaves_no_partial_target_or_temp_file(
     assert repository.exists(result.analysis_id) is False
 
 
+def test_save_revalidates_mutated_result_before_any_filesystem_side_effect(
+    tmp_path: Path,
+) -> None:
+    result_directory = tmp_path / "results"
+    repository = JsonFileResultRepository(result_directory)
+    result = make_result()
+    result.status = "PRIVATE_INVALID_STATUS"  # type: ignore[assignment]
+
+    with pytest.raises(ResultRepositoryError) as error_info:
+        repository.save(result)
+
+    assert str(error_info.value) == "Result could not be saved."
+    assert "PRIVATE_INVALID_STATUS" not in str(error_info.value)
+    assert str(tmp_path) not in str(error_info.value)
+    assert not result_directory.exists()
+
+
+def test_failed_pre_save_validation_preserves_existing_target_and_creates_no_temp(
+    tmp_path: Path,
+) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    initial = make_result(warning="Сохранённый результат.")
+    repository.save(initial)
+    target = tmp_path / f"{initial.analysis_id}.json"
+    original_payload = target.read_bytes()
+    replacement = make_result(warning="PRIVATE INVALID REPLACEMENT")
+    replacement.risk_assessment.final_level = None
+
+    with pytest.raises(ResultRepositoryError) as error_info:
+        repository.save(replacement)
+
+    assert str(error_info.value) == "Result could not be saved."
+    assert "PRIVATE" not in str(error_info.value)
+    assert target.read_bytes() == original_payload
+    assert repository.get(initial.analysis_id) == initial
+    assert [path.name for path in tmp_path.iterdir()] == [target.name]
+
+
+def test_save_rejects_mutated_non_finite_number_without_self_corrupting_json(
+    tmp_path: Path,
+) -> None:
+    result_directory = tmp_path / "results"
+    repository = JsonFileResultRepository(result_directory)
+    result = make_result()
+    result.risk_assessment.score = float("nan")
+
+    with pytest.raises(ResultRepositoryError, match="^Result could not be saved\\.$"):
+        repository.save(result)
+
+    assert not result_directory.exists()
+
+
 @pytest.mark.parametrize("analysis_id", UNSAFE_ANALYSIS_IDS)
 @pytest.mark.parametrize("operation", ["save", "get", "exists"])
 def test_all_operations_reject_unsafe_analysis_ids_without_writing(
@@ -319,6 +390,27 @@ def test_cross_platform_unsafe_path_components_are_rejected(
 
     with pytest.raises(InvalidAnalysisIdError):
         repository.exists(analysis_id)
+
+
+@pytest.mark.parametrize("analysis_id", WINDOWS_RESERVED_ANALYSIS_IDS)
+@pytest.mark.parametrize("operation", ["save", "get", "exists"])
+def test_windows_reserved_device_names_are_rejected_on_every_platform(
+    tmp_path: Path,
+    analysis_id: str,
+    operation: str,
+) -> None:
+    result_directory = tmp_path / "results"
+    repository = JsonFileResultRepository(result_directory)
+
+    with pytest.raises(InvalidAnalysisIdError):
+        if operation == "save":
+            repository.save(make_result(analysis_id))
+        elif operation == "get":
+            repository.get(analysis_id)
+        else:
+            repository.exists(analysis_id)
+
+    assert not result_directory.exists()
 
 
 def test_target_path_depends_only_on_opaque_analysis_id(tmp_path: Path) -> None:
@@ -453,6 +545,7 @@ def test_list_recent_input_descriptor_does_not_guess_media_type_or_risk(tmp_path
     result = make_result(
         "unvalidated-id",
         original_name="looks-like-video.mp4",
+        validated_file=False,
         final_level=None,
     )
     repository.save(result)
@@ -461,6 +554,25 @@ def test_list_recent_input_descriptor_does_not_guess_media_type_or_risk(tmp_path
 
     assert summary.media_type is None
     assert summary.final_risk_level is None
+
+
+def test_list_recent_filters_windows_reserved_device_name_without_reading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    reserved_entry = tmp_path / "NUL.json"
+
+    monkeypatch.setattr(Path, "iterdir", lambda _path: iter([reserved_entry]))
+    monkeypatch.setattr(Path, "is_symlink", lambda _path: False)
+    monkeypatch.setattr(Path, "is_file", lambda _path: True)
+
+    def fail_read(_path: Path, *args: Any, **kwargs: Any) -> NoReturn:
+        raise AssertionError("reserved entry must be rejected before reading")
+
+    monkeypatch.setattr(Path, "read_text", fail_read)
+
+    assert repository.list_recent(5) == []
 
 
 def test_list_recent_sorts_by_created_at_then_id_and_ignores_updated_at_and_mtime(
@@ -611,6 +723,54 @@ def test_list_recent_ignores_symlink_without_reading_target(
         return real_read_text(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", guard_target_read)
+
+    assert repository.list_recent(5) == []
+
+
+@pytest.mark.parametrize("operation", ["get", "exists"])
+def test_addressed_operations_deterministically_reject_symlink_before_file_stat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    link = tmp_path / "linked.json"
+
+    monkeypatch.setattr(Path, "is_symlink", lambda path: path == link)
+
+    def fail_file_stat(_path: Path) -> NoReturn:
+        raise AssertionError("symlink must be rejected before regular-file stat")
+
+    def fail_read(_path: Path, *args: Any, **kwargs: Any) -> NoReturn:
+        raise AssertionError("symlink payload or target must not be read")
+
+    monkeypatch.setattr(Path, "is_file", fail_file_stat)
+    monkeypatch.setattr(Path, "read_text", fail_read)
+
+    if operation == "get":
+        assert repository.get("linked") is None
+    else:
+        assert repository.exists("linked") is False
+
+
+def test_list_recent_deterministically_rejects_symlink_before_file_stat_or_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    link = tmp_path / "linked.json"
+
+    monkeypatch.setattr(Path, "iterdir", lambda _path: iter([link]))
+    monkeypatch.setattr(Path, "is_symlink", lambda path: path == link)
+
+    def fail_file_stat(_path: Path) -> NoReturn:
+        raise AssertionError("symlink must be rejected before regular-file stat")
+
+    def fail_read(_path: Path, *args: Any, **kwargs: Any) -> NoReturn:
+        raise AssertionError("symlink payload or target must not be read")
+
+    monkeypatch.setattr(Path, "is_file", fail_file_stat)
+    monkeypatch.setattr(Path, "read_text", fail_read)
 
     assert repository.list_recent(5) == []
 
