@@ -13,6 +13,11 @@ def ensure_runtime_directories(config: AppConfig) -> None:
     """Create directories required by modules active during application startup."""
     setup_error: RuntimeSetupError | None = None
     try:
+        Path(config.temporary_storage.root_path).mkdir(
+            mode=0o700,
+            parents=True,
+            exist_ok=True,
+        )
         Path(config.logging.jsonl_path).parent.mkdir(parents=True, exist_ok=True)
     except OSError:
         setup_error = RuntimeSetupError("Runtime initialization failed.")

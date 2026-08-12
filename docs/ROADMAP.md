@@ -112,8 +112,8 @@ AFTER_MVP
 ```text
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 3 — Безопасный приём, временное владение и первичная проверка файлов
-Статус этапа: NOT_STARTED
-Ближайшее действие: реализовать controlled intake и временное владение input
+Статус этапа: IN_PROGRESS
+Ближайшее действие: реализовать Increment 2 — primary validation
 Критические блокеры: отсутствуют
 Реализация программы: Этапы 1 и 2 завершены
 Документационная база: сформирована
@@ -406,7 +406,7 @@ symlink substitution / TOCTOU и no-follow остаётся задачей бе�
 
 ---
 
-# Этап 3. Безопасный приём, временное владение и первичная проверка файлов — NOT_STARTED
+# Этап 3. Безопасный приём, временное владение и первичная проверка файлов — IN_PROGRESS
 
 ## Цель
 
@@ -417,28 +417,28 @@ ownership либо завершить `rejected`/`failed` с фактическ�
 
 ## Обязательные задачи
 
-### Increment 1 — Controlled intake and temporary ownership
+### Increment 1 — Controlled intake and temporary ownership — DONE
 
-- [ ] определить прикладной сервис приёма файла;
-- [ ] определить adapter-neutral потоковый вход, общий для будущих WebUI и API;
-- [ ] создать `analysis_id` и `SourceContext`;
-- [ ] зафиксировать registration/received time;
-- [ ] создать изолированный `runtime/temp/<analysis_id>` для исходного input;
-- [ ] применить минимальную безопасную политику создания/доступа к каталогу без
+- [x] определить прикладной сервис приёма файла;
+- [x] определить adapter-neutral потоковый вход, общий для будущих WebUI и API;
+- [x] создать `analysis_id` и `SourceContext`;
+- [x] зафиксировать registration/received time;
+- [x] создать изолированный `runtime/temp/<analysis_id>` для исходного input;
+- [x] применить минимальную безопасную политику создания/доступа к каталогу без
   преждевременного Stage 9 TOCTOU/no-follow hardening;
-- [ ] использовать в системном пути и workspace только проверенный системный
+- [x] использовать в системном пути и workspace только проверенный системный
   `analysis_id`;
-- [ ] создать внутреннее имя input без `original_name`, extension, MIME и
+- [x] создать внутреннее имя input без `original_name`, extension, MIME и
   external identifiers;
-- [ ] потоково читать и записывать input порциями без полной загрузки в память;
-- [ ] до определения `MediaType` применять hard limit, равный максимальному из
+- [x] потоково читать и записывать input порциями без полной загрузки в память;
+- [x] до определения `MediaType` применять hard limit, равный максимальному из
   настроенных per-media limits;
-- [ ] измерять фактический размер независимо от `Content-Length`;
-- [ ] рассчитывать SHA-256 в том же intake pass;
-- [ ] предоставить validator непрозрачный controlled-source handle;
-- [ ] определить минимальную ownership-семантику без универсального storage
+- [x] измерять фактический размер независимо от `Content-Length`;
+- [x] рассчитывать SHA-256 в том же intake pass;
+- [x] предоставить validator непрозрачный controlled-source handle;
+- [x] определить минимальную ownership-семантику без универсального storage
   framework и без полного `AnalysisContext`;
-- [ ] очищать принадлежащий Stage 3 input/workspace при системном исключении до
+- [x] очищать принадлежащий Stage 3 input/workspace при системном исключении до
   handoff.
 
 После инкремента FakeDetector принимает недоверенный поток, ограничивает его
