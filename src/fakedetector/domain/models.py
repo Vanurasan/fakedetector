@@ -1,9 +1,17 @@
 """Canonical Pydantic models for the FakeDetector domain."""
 
 from datetime import datetime, timedelta
-from typing import Self
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, field_serializer, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from fakedetector.domain.enums import MediaType, SourceChannel
 
@@ -116,3 +124,50 @@ class ValidatedFileDescriptor(BaseModel):
         if not parameters_match:
             raise ValueError("technical_parameters must match media_type")
         return self
+
+
+class ValidationCheck(BaseModel):
+    """Outcome of one primary file validation check."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    passed: bool
+    message: str
+
+
+class ErrorDetail(BaseModel):
+    """Safe structured details describing a domain or processing error."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    category: Literal[
+        "authentication",
+        "authorization",
+        "validation",
+        "unsupported_media",
+        "resource_limit",
+        "processing",
+        "analyzer",
+        "storage",
+        "cleanup",
+        "configuration",
+        "internal",
+    ]
+    message: str
+    retryable: bool
+    field: str | None = None
+    analyzer_id: str | None = None
+    safe_details: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class ValidationResult(BaseModel):
+    """Contract result of primary validation before specialized analysis."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    accepted: bool
+    checks: list[ValidationCheck]
+    errors: list[ErrorDetail]
+    validated_file: ValidatedFileDescriptor | None
