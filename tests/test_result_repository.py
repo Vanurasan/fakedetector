@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import pytest
 
 import fakedetector.repositories.result_repository as repository_module
-from fakedetector.domain import AnalysisResult
+from fakedetector.domain import AnalysisResult, AnalysisResultSummary, MediaType, RiskLevel
 from fakedetector.repositories import (
     CorruptedResultError,
     InvalidAnalysisIdError,
@@ -37,33 +37,59 @@ def make_result(
     *,
     original_name: str = "проверка.jpg",
     warning: str | None = None,
+    created_at: datetime | None = None,
+    updated_at: datetime | None = None,
+    validated_file: bool = False,
+    external_reference: str = "../external/reference",
+    final_level: str | None = "low",
 ) -> AnalysisResult:
     """Build a compact valid completed AnalysisResult for repository tests."""
-    timestamp = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+    timestamp = created_at or datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+    last_updated = updated_at or timestamp
+    input_file: dict[str, Any] = {
+        "original_name": original_name,
+        "declared_content_type": "image/jpeg",
+        "size_bytes": 128,
+        "received_at": timestamp,
+    }
+    validated_descriptor: dict[str, Any] = {
+        "original_name": original_name,
+        "extension": "jpg",
+        "declared_mime_type": "image/jpeg",
+        "detected_mime_type": "image/jpeg",
+        "media_type": "image",
+        "size_bytes": 128,
+        "sha256": "repository-test-digest",
+        "signature_match": True,
+        "safe_read": True,
+        "technical_parameters": {
+            "width": 16,
+            "height": 16,
+            "format": "JPEG",
+            "color_mode": "RGB",
+            "frame_count": None,
+            "has_metadata": False,
+        },
+    }
     return AnalysisResult.model_validate(
         {
             "schema_version": "1.0",
             "analysis_id": analysis_id,
             "created_at": timestamp,
-            "updated_at": timestamp,
+            "updated_at": last_updated,
             "status": "completed",
             "stage": "finished",
             "source": {
                 "channel": "api",
                 "connector": None,
                 "external_system": None,
-                "external_reference": "../external/reference",
+                "external_reference": external_reference,
             },
-            "file": {
-                "original_name": original_name,
-                "declared_content_type": "image/jpeg",
-                "size_bytes": 128,
-                "received_at": timestamp,
-            },
+            "file": validated_descriptor if validated_file else input_file,
             "processing": {
                 "queued_at": timestamp,
                 "started_at": timestamp,
-                "finished_at": timestamp,
+                "finished_at": last_updated,
                 "duration_ms": 0,
                 "config_snapshot_id": "config-test",
                 "application_version": "0.1.0",
@@ -90,7 +116,7 @@ def make_result(
                 "score_based_level": "low",
                 "critical_override_applied": False,
                 "critical_finding_ids": [],
-                "final_level": "low",
+                "final_level": final_level,
                 "probability": None,
                 "probability_method": None,
                 "summary": "Значимые признаки не выявлены.",
@@ -344,3 +370,294 @@ def test_corrupted_and_schema_invalid_json_raise_safe_error_without_deletion(
     assert "DO_NOT_LEAK" not in str(error_info.value)
     assert str(tmp_path) not in str(error_info.value)
     assert target.read_text(encoding="utf-8") == payload
+
+
+def test_get_rejects_filename_payload_id_mismatch_without_deletion(tmp_path: Path) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    target = tmp_path / "requested-id.json"
+    payload = make_result("payload-id").model_dump_json()
+    target.write_text(payload, encoding="utf-8")
+
+    with pytest.raises(CorruptedResultError) as error_info:
+        repository.get("requested-id")
+
+    assert str(error_info.value) == "Stored result is corrupted or invalid."
+    assert "requested-id" not in str(error_info.value)
+    assert "payload-id" not in str(error_info.value)
+    assert str(tmp_path) not in str(error_info.value)
+    assert target.read_text(encoding="utf-8") == payload
+
+
+def test_list_recent_protocol_missing_directory_and_empty_directory(tmp_path: Path) -> None:
+    result_directory = tmp_path / "results"
+    repository = JsonFileResultRepository(result_directory)
+
+    assert isinstance(repository, ResultRepository)
+    assert repository.list_recent(10) == []
+    assert not result_directory.exists()
+
+    result_directory.mkdir()
+    assert repository.list_recent(10) == []
+
+
+@pytest.mark.parametrize("limit", [0, -1, -100])
+def test_list_recent_rejects_non_positive_limit_before_filesystem_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    limit: int,
+) -> None:
+    result_directory = tmp_path / "results"
+    repository = JsonFileResultRepository(result_directory)
+
+    def fail_if_scanned(_path: Path) -> NoReturn:
+        raise AssertionError("invalid limit must not scan the result directory")
+
+    monkeypatch.setattr(Path, "iterdir", fail_if_scanned)
+
+    with pytest.raises(ValueError, match="^limit must be greater than zero$"):
+        repository.list_recent(limit)
+
+    assert not result_directory.exists()
+
+
+def test_list_recent_returns_exact_safe_summary_for_validated_result(tmp_path: Path) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    result = make_result(
+        "validated-id",
+        original_name="PRIVATE-NAME.jpg",
+        validated_file=True,
+        external_reference="PRIVATE-REFERENCE",
+    )
+    repository.save(result)
+
+    summaries = repository.list_recent(1)
+
+    assert summaries == [
+        AnalysisResultSummary(
+            analysis_id="validated-id",
+            created_at=result.created_at,
+            updated_at=result.updated_at,
+            status=result.status,
+            media_type=MediaType.IMAGE,
+            final_risk_level=RiskLevel.LOW,
+            completeness_status=result.completeness.status,
+        )
+    ]
+    serialized = summaries[0].model_dump_json()
+    assert "PRIVATE-NAME" not in serialized
+    assert "PRIVATE-REFERENCE" not in serialized
+
+
+def test_list_recent_input_descriptor_does_not_guess_media_type_or_risk(tmp_path: Path) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    result = make_result(
+        "unvalidated-id",
+        original_name="looks-like-video.mp4",
+        final_level=None,
+    )
+    repository.save(result)
+
+    summary = repository.list_recent(1)[0]
+
+    assert summary.media_type is None
+    assert summary.final_risk_level is None
+
+
+def test_list_recent_sorts_by_created_at_then_id_and_ignores_updated_at_and_mtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    base_time = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+    results = [
+        make_result(
+            "tie-z",
+            created_at=base_time,
+            updated_at=base_time + timedelta(days=20),
+        ),
+        make_result(
+            "newest",
+            created_at=base_time + timedelta(minutes=1),
+            updated_at=base_time - timedelta(days=20),
+        ),
+        make_result(
+            "tie-a",
+            created_at=base_time,
+            updated_at=base_time + timedelta(days=30),
+        ),
+        make_result(
+            "oldest",
+            created_at=base_time - timedelta(minutes=1),
+            updated_at=base_time + timedelta(days=40),
+        ),
+    ]
+    for index, result in enumerate(results):
+        repository.save(result)
+        path = tmp_path / f"{result.analysis_id}.json"
+        os.utime(path, (100 + index, 100 + index))
+
+    real_iterdir = Path.iterdir
+
+    def reverse_iterdir(path: Path) -> Any:
+        return iter(reversed(list(real_iterdir(path))))
+
+    monkeypatch.setattr(Path, "iterdir", reverse_iterdir)
+
+    assert [summary.analysis_id for summary in repository.list_recent(10)] == [
+        "newest",
+        "tie-a",
+        "tie-z",
+        "oldest",
+    ]
+    assert [summary.analysis_id for summary in repository.list_recent(2)] == [
+        "newest",
+        "tie-a",
+    ]
+
+
+def test_list_recent_filters_corruption_before_applying_limit_and_is_read_only(
+    tmp_path: Path,
+) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    valid_results = [
+        make_result(
+            "valid-new",
+            created_at=datetime(2026, 8, 12, 13, 0, tzinfo=UTC),
+        ),
+        make_result(
+            "valid-old",
+            created_at=datetime(2026, 8, 12, 12, 0, tzinfo=UTC),
+        ),
+    ]
+    for result in valid_results:
+        repository.save(result)
+
+    corrupted_payloads: dict[str, bytes] = {
+        "invalid-utf8.json": b"\xff\xfePRIVATE_UTF8",
+        "invalid-json.json": b'{"private": "PRIVATE_JSON"',
+        "schema-invalid.json": b'{"private": "PRIVATE_SCHEMA"}',
+    }
+    unsupported = json.loads(make_result("unsupported").model_dump_json())
+    unsupported["schema_version"] = "2.0"
+    corrupted_payloads["unsupported.json"] = json.dumps(unsupported).encode()
+    nested_invalid = json.loads(make_result("nested-invalid").model_dump_json())
+    nested_invalid["risk_assessment"]["final_level"] = "critical"
+    corrupted_payloads["nested-invalid.json"] = json.dumps(nested_invalid).encode()
+    mismatch_payload = make_result("payload-id").model_dump_json().encode()
+    corrupted_payloads["filename-id.json"] = mismatch_payload
+
+    for filename, payload in corrupted_payloads.items():
+        (tmp_path / filename).write_bytes(payload)
+    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+
+    summaries = repository.list_recent(2)
+
+    assert [summary.analysis_id for summary in summaries] == ["valid-new", "valid-old"]
+    assert "filename-id" not in {summary.analysis_id for summary in summaries}
+    assert "payload-id" not in {summary.analysis_id for summary in summaries}
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
+
+
+def test_list_recent_returns_empty_when_all_result_candidates_are_corrupted(
+    tmp_path: Path,
+) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    target = tmp_path / "broken.json"
+    target.write_text('{"private": "DO_NOT_LEAK"', encoding="utf-8")
+
+    assert repository.list_recent(5) == []
+    assert target.exists()
+
+
+def test_list_recent_ignores_non_candidates_and_does_not_recurse(tmp_path: Path) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    valid = make_result("direct-valid")
+    repository.save(valid)
+    payload = valid.model_dump_json()
+    (tmp_path / ".result-random.tmp").write_text(payload, encoding="utf-8")
+    (tmp_path / "upper.JSON").write_text(payload, encoding="utf-8")
+    (tmp_path / "double.json.tmp").write_text(payload, encoding="utf-8")
+    (tmp_path / "directory.json").mkdir()
+    (tmp_path / "..json").write_text(payload, encoding="utf-8")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "nested-valid.json").write_text(
+        make_result("nested-valid").model_dump_json(), encoding="utf-8"
+    )
+
+    assert [summary.analysis_id for summary in repository.list_recent(20)] == [
+        "direct-valid"
+    ]
+
+
+def test_list_recent_ignores_symlink_without_reading_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    target = tmp_path / "outside-target.txt"
+    target.write_text(make_result("linked").model_dump_json(), encoding="utf-8")
+    link = tmp_path / "linked.json"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlink creation is not available in this environment")
+
+    real_read_text = Path.read_text
+
+    def guard_target_read(path: Path, *args: Any, **kwargs: Any) -> str:
+        if path in (link, target):
+            raise AssertionError("listing followed or read a symlink")
+        return real_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guard_target_read)
+
+    assert repository.list_recent(5) == []
+
+
+def test_list_recent_directory_enumeration_error_is_safe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result_directory = tmp_path / "PRIVATE-DIRECTORY"
+    result_directory.mkdir()
+    repository = JsonFileResultRepository(result_directory)
+
+    def fail_iterdir(_path: Path) -> NoReturn:
+        raise OSError("PRIVATE OS ENUMERATION ERROR")
+
+    monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+
+    with pytest.raises(ResultRepositoryError) as error_info:
+        repository.list_recent(1)
+
+    assert str(error_info.value) == "Stored results could not be listed."
+    assert "PRIVATE" not in str(error_info.value)
+    assert str(tmp_path) not in str(error_info.value)
+
+
+def test_list_recent_candidate_read_error_is_safe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    target = tmp_path / "private-entry.json"
+    payload = make_result("private-entry").model_dump_json()
+    target.write_text(payload, encoding="utf-8")
+    real_read_text = Path.read_text
+
+    def fail_candidate_read(path: Path, *args: Any, **kwargs: Any) -> str:
+        if path == target:
+            raise OSError("PRIVATE OS READ ERROR")
+        return real_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_candidate_read)
+
+    with pytest.raises(ResultRepositoryError) as error_info:
+        repository.list_recent(1)
+
+    assert str(error_info.value) == "Stored results could not be listed."
+    assert "private-entry" not in str(error_info.value)
+    assert "PRIVATE OS" not in str(error_info.value)
+    assert payload not in str(error_info.value)
+    assert str(tmp_path) not in str(error_info.value)

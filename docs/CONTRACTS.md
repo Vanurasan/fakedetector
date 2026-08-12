@@ -1149,7 +1149,82 @@ class ResultRepository(Protocol):
 JsonFileResultRepository
 ```
 
-### 15.2. Требования
+### 15.2. Краткое представление результата `AnalysisResultSummary`
+
+`list_recent` возвращает минимальную содержательную проекцию валидного
+`AnalysisResult`:
+
+```python
+class AnalysisResultSummary(BaseModel):
+    analysis_id: str
+    created_at: datetime
+    updated_at: datetime
+    status: AnalysisStatus
+    media_type: MediaType | None
+    final_risk_level: RiskLevel | None
+    completeness_status: CompletenessStatus
+```
+
+Все семь полей обязательны. `media_type` и `final_risk_level` допускают `null`,
+но не имеют значения по умолчанию. Неизвестные поля запрещены. Временные
+отметки принимаются только как timezone-aware UTC и сериализуются с суффиксом
+`Z`.
+
+Правила формирования:
+
+- `analysis_id = result.analysis_id`;
+- `created_at = result.created_at`;
+- `updated_at = result.updated_at`;
+- `status = result.status`;
+- для `ValidatedFileDescriptor` используется `media_type = result.file.media_type`;
+- для `InputFileDescriptor` используется `media_type = null`;
+- `final_risk_level = result.risk_assessment.final_level`;
+- `completeness_status = result.completeness.status`.
+
+Тип медиа нельзя угадывать по имени, расширению или MIME. Риск и полнота не
+рассчитываются повторно. Отсутствующий риск не заменяется на `low`, а `null` не
+заменяется строкой `"unknown"`.
+
+В summary не входят `schema_version`, `stage`, исходное имя файла, source и
+external references, ошибки, findings, результаты и метрики анализаторов,
+рекомендация, cleanup и другие поля полного результата.
+
+### 15.3. Семантика `list_recent`
+
+- `limit <= 0` отклоняется с `ValueError` до обращения к файловой системе;
+- отсутствующий каталог результатов означает пустой список и не создаётся;
+- рассматриваются только непосредственные дочерние обычные файлы без перехода
+  по symlink;
+- имя кандидата имеет точный lowercase-вид `<analysis_id>.json`, а
+  `analysis_id` проходит те же проверки безопасного компонента пути, что и
+  остальные операции repository;
+- каталоги, symlink, временные файлы, `.JSON`, `.json.tmp`, неканонические JSON
+  и вложенные файлы игнорируются;
+- каждый кандидат читается как UTF-8 и полностью валидируется как
+  `AnalysisResult` поддерживаемой версии;
+- имя файла обязано быть равно `f"{payload.analysis_id}.json"`;
+- invalid UTF-8/JSON, schema-invalid или domain-invalid payload,
+  неподдерживаемая версия схемы и несовпадение ID пропускаются без placeholder,
+  не расходуют limit и не мешают чтению остальных записей;
+- повреждённые записи не удаляются, не исправляются и не раскрываются
+  потребителю;
+- невозможность перечислить существующий каталог или прочитать существующий
+  обычный кандидат из-за `OSError` приводит к безопасному
+  `ResultRepositoryError` без пути, имени записи, payload и исходного сообщения
+  операционной системы;
+- после фильтрации summary сортируются по `created_at` по убыванию, а при равном
+  времени — по `analysis_id` лексикографически по возрастанию;
+- `updated_at`, filesystem timestamps, processing timestamps и порядок обхода
+  каталога не влияют на сортировку;
+- limit применяется после полной фильтрации и сортировки;
+- операция является read-only и не создаёт каталог, индекс или cache.
+
+Адресное чтение также проверяет identity-инвариант:
+`result.analysis_id == requested analysis_id`. Несовпадение считается
+повреждённой записью, приводит к безопасному `CorruptedResultError` и не
+изменяет файл.
+
+### 15.4. Требования
 
 - атомарная запись;
 - проверка схемы до сохранения;

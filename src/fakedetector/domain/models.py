@@ -519,3 +519,48 @@ class AnalysisResult(BaseModel):
         ):
             raise ValueError("insufficient completeness cannot contain a final risk level")
         return self
+
+
+class AnalysisResultSummary(BaseModel):
+    """Minimal safe projection of a validated analysis result for listing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    analysis_id: str
+    created_at: datetime
+    updated_at: datetime
+    status: AnalysisStatus
+    media_type: MediaType | None
+    final_risk_level: RiskLevel | None
+    completeness_status: CompletenessStatus
+
+    @field_validator("created_at", "updated_at")
+    @classmethod
+    def validate_datetime_is_utc(cls, value: datetime) -> datetime:
+        """Require UTC for summary timestamps."""
+        validated = _validate_utc_datetime(value, "analysis result summary datetimes")
+        assert validated is not None
+        return validated
+
+    @field_serializer("created_at", "updated_at", when_used="json")
+    def serialize_datetime(self, value: datetime) -> str:
+        """Serialize summary timestamps with the canonical Z suffix."""
+        serialized = _serialize_utc_datetime(value)
+        assert serialized is not None
+        return serialized
+
+    @classmethod
+    def from_result(cls, result: AnalysisResult) -> Self:
+        """Copy only contracted summary fields without deriving domain values."""
+        media_type = (
+            result.file.media_type if isinstance(result.file, ValidatedFileDescriptor) else None
+        )
+        return cls(
+            analysis_id=result.analysis_id,
+            created_at=result.created_at,
+            updated_at=result.updated_at,
+            status=result.status,
+            media_type=media_type,
+            final_risk_level=result.risk_assessment.final_level,
+            completeness_status=result.completeness.status,
+        )

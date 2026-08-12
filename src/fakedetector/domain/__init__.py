@@ -14,6 +14,7 @@ from fakedetector.domain.enums import (
 from fakedetector.domain.models import (
     AnalysisCompleteness,
     AnalysisResult,
+    AnalysisResultSummary,
     AnalyzerResult,
     AudioTechnicalParameters,
     BoundingBoxLocalization,
@@ -38,6 +39,7 @@ from fakedetector.domain.models import (
 __all__ = [
     "AnalysisCompleteness",
     "AnalysisResult",
+    "AnalysisResultSummary",
     "AnalysisStatus",
     "AnalyzerResult",
     "AnalyzerStatus",

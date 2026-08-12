@@ -10,7 +10,7 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import ValidationError
 
-from fakedetector.domain import AnalysisResult
+from fakedetector.domain import AnalysisResult, AnalysisResultSummary
 
 
 class ResultRepositoryError(Exception):
@@ -27,11 +27,7 @@ class CorruptedResultError(ResultRepositoryError):
 
 @runtime_checkable
 class ResultRepository(Protocol):
-    """Currently typeable operations of the canonical result repository.
-
-    ``list_recent`` remains outside this protocol until CONTRACTS.md defines
-    ``AnalysisResultSummary`` and its ordering semantics.
-    """
+    """Canonical operations of the result repository."""
 
     def save(self, result: AnalysisResult) -> None:
         """Persist a validated analysis result."""
@@ -43,6 +39,10 @@ class ResultRepository(Protocol):
 
     def exists(self, analysis_id: str) -> bool:
         """Return whether the expected stored result file exists."""
+        ...
+
+    def list_recent(self, limit: int) -> list[AnalysisResultSummary]:
+        """Return safe summaries ordered by creation time and analysis ID."""
         ...
 
 
@@ -94,14 +94,65 @@ class JsonFileResultRepository:
             raise ResultRepositoryError("Stored result could not be read.") from None
 
         try:
-            return AnalysisResult.model_validate_json(payload)
+            result = AnalysisResult.model_validate_json(payload)
         except ValidationError:
             raise CorruptedResultError("Stored result is corrupted or invalid.") from None
+
+        if result.analysis_id != analysis_id:
+            raise CorruptedResultError("Stored result is corrupted or invalid.")
+        return result
 
     def exists(self, analysis_id: str) -> bool:
         """Check only the expected regular result file for an analysis ID."""
         target_path = self._target_path(analysis_id)
         return target_path.is_file() and not target_path.is_symlink()
+
+    def list_recent(self, limit: int) -> list[AnalysisResultSummary]:
+        """List valid direct result files using deterministic domain ordering."""
+        if limit <= 0:
+            raise ValueError("limit must be greater than zero")
+
+        try:
+            entries = list(self._result_directory.iterdir())
+        except FileNotFoundError:
+            return []
+        except OSError:
+            raise ResultRepositoryError("Stored results could not be listed.") from None
+
+        summaries: list[AnalysisResultSummary] = []
+        for entry in entries:
+            try:
+                is_candidate_file = not entry.is_symlink() and entry.is_file()
+            except OSError:
+                raise ResultRepositoryError("Stored results could not be listed.") from None
+            if not is_candidate_file or entry.suffix != ".json":
+                continue
+
+            analysis_id = entry.stem
+            try:
+                self._target_path(analysis_id)
+            except InvalidAnalysisIdError:
+                continue
+
+            try:
+                payload = entry.read_text(encoding="utf-8")
+            except UnicodeError:
+                continue
+            except OSError:
+                raise ResultRepositoryError("Stored results could not be listed.") from None
+
+            try:
+                result = AnalysisResult.model_validate_json(payload)
+            except ValidationError:
+                continue
+            if result.analysis_id != analysis_id:
+                continue
+
+            summaries.append(AnalysisResultSummary.from_result(result))
+
+        summaries.sort(key=lambda summary: summary.analysis_id)
+        summaries.sort(key=lambda summary: summary.created_at, reverse=True)
+        return summaries[:limit]
 
     def _target_path(self, analysis_id: str) -> Path:
         """Build a target path from one unchanged, safe analysis ID component."""
