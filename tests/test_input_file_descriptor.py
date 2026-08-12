@@ -16,6 +16,7 @@ from fakedetector.domain.models import InputFileDescriptor as ModelsInputFileDes
 EXPECTED_DOMAIN_EXPORTS = [
     "AnalysisCompleteness",
     "AnalysisResult",
+    "AnalysisResultSummary",
     "AnalysisStatus",
     "AnalyzerResult",
     "AnalyzerStatus",

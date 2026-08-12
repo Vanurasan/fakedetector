@@ -30,6 +30,7 @@ from fakedetector.domain.models import (
 EXPECTED_DOMAIN_EXPORTS = [
     "AnalysisCompleteness",
     "AnalysisResult",
+    "AnalysisResultSummary",
     "AnalysisStatus",
     "AnalyzerResult",
     "AnalyzerStatus",

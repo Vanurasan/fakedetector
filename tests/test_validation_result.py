@@ -22,6 +22,7 @@ from fakedetector.domain.models import ValidationResult as ModelsValidationResul
 EXPECTED_DOMAIN_EXPORTS = [
     "AnalysisCompleteness",
     "AnalysisResult",
+    "AnalysisResultSummary",
     "AnalysisStatus",
     "AnalyzerResult",
     "AnalyzerStatus",

@@ -12,6 +12,7 @@ from fakedetector.domain.models import SourceContext as ModelsSourceContext
 EXPECTED_DOMAIN_EXPORTS = [
     "AnalysisCompleteness",
     "AnalysisResult",
+    "AnalysisResultSummary",
     "AnalysisStatus",
     "AnalyzerResult",
     "AnalyzerStatus",

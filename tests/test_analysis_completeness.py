@@ -15,6 +15,7 @@ from fakedetector.domain.models import AnalysisCompleteness as ModelsAnalysisCom
 EXPECTED_DOMAIN_EXPORTS = [
     "AnalysisCompleteness",
     "AnalysisResult",
+    "AnalysisResultSummary",
     "AnalysisStatus",
     "AnalyzerResult",
     "AnalyzerStatus",
