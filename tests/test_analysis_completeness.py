@@ -14,11 +14,13 @@ from fakedetector.domain.models import AnalysisCompleteness as ModelsAnalysisCom
 
 EXPECTED_DOMAIN_EXPORTS = [
     "AnalysisCompleteness",
+    "AnalysisResult",
     "AnalysisStatus",
     "AnalyzerResult",
     "AnalyzerStatus",
     "AudioTechnicalParameters",
     "BoundingBoxLocalization",
+    "CleanupResult",
     "CleanupStatus",
     "CompletenessStatus",
     "ErrorDetail",
@@ -31,6 +33,8 @@ EXPECTED_DOMAIN_EXPORTS = [
     "Localization",
     "MediaType",
     "ProcessingStage",
+    "Recommendation",
+    "RiskAssessment",
     "RiskLevel",
     "SourceChannel",
     "SourceContext",

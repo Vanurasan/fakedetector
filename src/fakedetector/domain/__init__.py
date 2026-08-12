@@ -13,9 +13,11 @@ from fakedetector.domain.enums import (
 )
 from fakedetector.domain.models import (
     AnalysisCompleteness,
+    AnalysisResult,
     AnalyzerResult,
     AudioTechnicalParameters,
     BoundingBoxLocalization,
+    CleanupResult,
     ErrorDetail,
     FileLocalization,
     Finding,
@@ -23,6 +25,8 @@ from fakedetector.domain.models import (
     ImageTechnicalParameters,
     InputFileDescriptor,
     Localization,
+    Recommendation,
+    RiskAssessment,
     SourceContext,
     TimeIntervalLocalization,
     ValidatedFileDescriptor,
@@ -33,11 +37,13 @@ from fakedetector.domain.models import (
 
 __all__ = [
     "AnalysisCompleteness",
+    "AnalysisResult",
     "AnalysisStatus",
     "AnalyzerResult",
     "AnalyzerStatus",
     "AudioTechnicalParameters",
     "BoundingBoxLocalization",
+    "CleanupResult",
     "CleanupStatus",
     "CompletenessStatus",
     "ErrorDetail",
@@ -50,6 +56,8 @@ __all__ = [
     "Localization",
     "MediaType",
     "ProcessingStage",
+    "Recommendation",
+    "RiskAssessment",
     "RiskLevel",
     "SourceChannel",
     "SourceContext",

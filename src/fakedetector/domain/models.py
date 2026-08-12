@@ -14,12 +14,30 @@ from pydantic import (
 )
 
 from fakedetector.domain.enums import (
+    AnalysisStatus,
     AnalyzerStatus,
+    CleanupStatus,
     CompletenessStatus,
     FindingSeverity,
     MediaType,
+    ProcessingStage,
+    RiskLevel,
     SourceChannel,
 )
+
+
+def _validate_utc_datetime(value: datetime | None, field_group: str) -> datetime | None:
+    """Require an aware UTC value without silently converting another timezone."""
+    if value is not None and value.utcoffset() != timedelta(0):
+        raise ValueError(f"{field_group} must be timezone-aware UTC")
+    return value
+
+
+def _serialize_utc_datetime(value: datetime | None) -> str | None:
+    """Serialize a validated UTC timestamp with the canonical Z suffix."""
+    if value is None:
+        return None
+    return value.isoformat().replace("+00:00", "Z")
 
 
 class SourceContext(BaseModel):
@@ -47,14 +65,16 @@ class InputFileDescriptor(BaseModel):
     @classmethod
     def validate_received_at_is_utc(cls, value: datetime) -> datetime:
         """Require an aware UTC value without converting another timezone."""
-        if value.utcoffset() != timedelta(0):
-            raise ValueError("received_at must be a timezone-aware UTC datetime")
-        return value
+        validated = _validate_utc_datetime(value, "received_at")
+        assert validated is not None
+        return validated
 
     @field_serializer("received_at", when_used="json")
     def serialize_received_at(self, value: datetime) -> str:
         """Serialize the validated UTC timestamp with the canonical Z suffix."""
-        return value.isoformat().replace("+00:00", "Z")
+        serialized = _serialize_utc_datetime(value)
+        assert serialized is not None
+        return serialized
 
 
 class ImageTechnicalParameters(BaseModel):
@@ -205,16 +225,12 @@ class AnalyzerResult(BaseModel):
     @classmethod
     def validate_datetime_is_utc(cls, value: datetime | None) -> datetime | None:
         """Require aware UTC datetimes without converting another timezone."""
-        if value is not None and value.utcoffset() != timedelta(0):
-            raise ValueError("analyzer datetimes must be timezone-aware UTC")
-        return value
+        return _validate_utc_datetime(value, "analyzer datetimes")
 
     @field_serializer("started_at", "finished_at", when_used="json")
     def serialize_datetime(self, value: datetime | None) -> str | None:
         """Serialize validated UTC timestamps with the canonical Z suffix."""
-        if value is None:
-            return None
-        return value.isoformat().replace("+00:00", "Z")
+        return _serialize_utc_datetime(value)
 
     @model_validator(mode="after")
     def validate_status_and_score(self) -> Self:
@@ -332,3 +348,174 @@ class AnalysisCompleteness(BaseModel):
     coverage_ratio: float = Field(ge=0, le=1)
     missing_capabilities: list[str]
     explanation: str
+
+
+class RiskAssessment(BaseModel):
+    """Declared risk assessment produced by a separately configured algorithm."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_id: str
+    model_version: str
+    score: float | None
+    score_based_level: RiskLevel | None
+    critical_override_applied: bool
+    critical_finding_ids: list[str]
+    final_level: RiskLevel | None
+    probability: float | None
+    probability_method: str | None
+    summary: str
+    explanation: str
+    limitations: list[str]
+
+    @model_validator(mode="after")
+    def validate_declared_assessment(self) -> Self:
+        """Enforce only fixed evidence requirements without calculating risk."""
+        if self.probability is not None and not (
+            self.probability_method is not None and self.probability_method.strip()
+        ):
+            raise ValueError("probability requires a non-empty probability_method")
+        if self.critical_override_applied and not self.critical_finding_ids:
+            raise ValueError("critical override requires at least one finding ID")
+        return self
+
+
+_RecommendationAction = Literal[
+    "no_additional_action",
+    "manual_review",
+    "verify_source",
+    "verify_source_via_independent_channel",
+    "request_better_quality_source",
+    "retry_analysis",
+    "escalate_to_security",
+    "send_to_incident_response",
+]
+
+
+class Recommendation(BaseModel):
+    """Canonical non-automated action recommendation for an analysis result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    primary_action: _RecommendationAction
+    additional_actions: list[_RecommendationAction]
+    text: str
+    requires_manual_review: bool
+
+
+class CleanupResult(BaseModel):
+    """Recorded outcome of temporary media cleanup."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: CleanupStatus
+    original_file_deleted: bool
+    intermediate_files_deleted: bool
+    quarantine_used: bool
+    finished_at: datetime | None
+    errors: list[ErrorDetail]
+
+    @field_validator("finished_at")
+    @classmethod
+    def validate_finished_at_is_utc(cls, value: datetime | None) -> datetime | None:
+        """Require UTC when cleanup has a finish timestamp."""
+        return _validate_utc_datetime(value, "cleanup finished_at")
+
+    @field_serializer("finished_at", when_used="json")
+    def serialize_finished_at(self, value: datetime | None) -> str | None:
+        """Serialize cleanup completion time with the canonical Z suffix."""
+        return _serialize_utc_datetime(value)
+
+
+class AnalysisProcessing(BaseModel):
+    """Timing and version context embedded in an analysis result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    queued_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    duration_ms: int | None = Field(ge=0)
+    config_snapshot_id: str
+    application_version: str
+
+    @field_validator("queued_at", "started_at", "finished_at")
+    @classmethod
+    def validate_datetime_is_utc(cls, value: datetime | None) -> datetime | None:
+        """Require UTC for every processing timestamp that is present."""
+        return _validate_utc_datetime(value, "processing datetimes")
+
+    @field_serializer("queued_at", "started_at", "finished_at", when_used="json")
+    def serialize_datetime(self, value: datetime | None) -> str | None:
+        """Serialize processing timestamps with the canonical Z suffix."""
+        return _serialize_utc_datetime(value)
+
+
+class AnalysisResult(BaseModel):
+    """Versioned top-level result of the FakeDetector analysis flow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["1.0"] = "1.0"
+    analysis_id: str
+    created_at: datetime
+    updated_at: datetime
+    status: AnalysisStatus
+    stage: ProcessingStage
+    source: SourceContext
+    file: InputFileDescriptor | ValidatedFileDescriptor
+    processing: AnalysisProcessing
+    analyzers: list[AnalyzerResult]
+    findings: list[Finding]
+    completeness: AnalysisCompleteness
+    risk_assessment: RiskAssessment
+    recommendation: Recommendation
+    cleanup: CleanupResult
+    warnings: list[str]
+    errors: list[ErrorDetail]
+
+    @field_validator("created_at", "updated_at")
+    @classmethod
+    def validate_datetime_is_utc(cls, value: datetime) -> datetime:
+        """Require UTC for top-level result timestamps."""
+        validated = _validate_utc_datetime(value, "analysis result datetimes")
+        assert validated is not None
+        return validated
+
+    @field_serializer("created_at", "updated_at", when_used="json")
+    def serialize_datetime(self, value: datetime) -> str:
+        """Serialize result timestamps with the canonical Z suffix."""
+        serialized = _serialize_utc_datetime(value)
+        assert serialized is not None
+        return serialized
+
+    @model_validator(mode="after")
+    def validate_terminal_result(self) -> Self:
+        """Enforce fixed structural invariants for terminal result statuses."""
+        if self.status is AnalysisStatus.REJECTED:
+            if self.analyzers:
+                raise ValueError("rejected result cannot contain analyzer results")
+            if self.findings:
+                raise ValueError("rejected result cannot contain findings")
+            if self.risk_assessment.final_level is not None:
+                raise ValueError("rejected result cannot contain a final risk level")
+            if self.completeness.status is not CompletenessStatus.NOT_ASSESSED:
+                raise ValueError("rejected result requires completeness=not_assessed")
+            if not self.errors:
+                raise ValueError("rejected result requires at least one error")
+        if self.status is AnalysisStatus.FAILED:
+            if self.risk_assessment.final_level is not None:
+                raise ValueError("failed result cannot contain a final risk level")
+            if not self.errors:
+                raise ValueError("failed result requires at least one error")
+        if (
+            self.status is AnalysisStatus.PARTIAL
+            and self.completeness.status is not CompletenessStatus.PARTIAL
+        ):
+            raise ValueError("partial result requires completeness=partial")
+        if (
+            self.completeness.status is CompletenessStatus.INSUFFICIENT
+            and self.risk_assessment.final_level is not None
+        ):
+            raise ValueError("insufficient completeness cannot contain a final risk level")
+        return self
