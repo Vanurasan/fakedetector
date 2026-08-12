@@ -339,8 +339,23 @@ queued
 
 - `original_name` используется только для отображения и диагностики;
 - имя не используется для формирования системного пути;
-- расширение извлекается безопасно и нормализуется;
+- для MVP `original_name` обязан содержать расширение;
+- `file.mp4` и `archive.tar.mp4` дают нормализованное расширение `mp4`;
+- `file`, `file.` и `.mp4` считаются именами без расширения и отклоняются с
+  кодом `missing_extension`;
+- ведущая точка не входит в значение расширения, обычное расширение приводится
+  к lowercase;
+- расширение извлекается безопасно, но не используется в системном пути или
+  внутреннем имени временного input;
+- `declared_content_type=null` является допустимым входом и само по себе не
+  приводит к отклонению;
+- `size_bytes` равен фактически измеренному при потоковом intake размеру, а не
+  недоверенному `Content-Length`;
 - содержимое файла передаётся отдельно от дескриптора.
+
+Внешний адаптер передаёт поток и доступные исходные сведения, но не определяет
+`size_bytes`. Intake service формирует `InputFileDescriptor` после фактического
+измерения controlled input.
 
 ### 5.2. Проверенный дескриптор `ValidatedFileDescriptor`
 
@@ -406,6 +421,12 @@ queued
 
 Неизвестные параметры не заполняются вымышленными значениями.
 
+Естественно необязательные metadata и технические параметры могут отсутствовать
+только там, где соответствующее поле допускает `null`. Отсутствие EXIF или иных
+необязательных metadata само по себе не является validation failure, finding или
+основанием для изменения риска. Если обязательный параметр невозможно получить
+при безопасном probe/decode, `ValidatedFileDescriptor` сформировать нельзя.
+
 ---
 
 ## 6. Контракт первичной проверки
@@ -438,16 +459,120 @@ queued
 
 ### 6.2. Обязательные проверки
 
-- максимальный размер;
+- непустой файл;
+- наличие расширения;
 - допустимое расширение;
-- допустимый MIME;
+- допустимый обнаруженный MIME;
 - фактическая сигнатура;
-- соответствие заявленного и фактического типа;
+- соответствие заявленного и фактического типа, только если заявленный MIME
+  присутствует;
 - безопасное чтение/декодирование;
+- обязательные технические параметры;
 - поддерживаемый тип медиа;
+- максимальный размер для определённого типа медиа;
 - SHA-256 для принятого файла.
 
 Специализированный анализ не запускается при `accepted=false`.
+
+`declared_content_type=null` и `declared_mime_type=null` не являются причиной
+отклонения. В этом случае consistency check между заявленным и обнаруженным MIME
+логически неприменим, а остальные проверки выполняются. Allowed MIME проверяется
+по обнаруженному фактическому типу, а не по недоверенному declared MIME.
+
+### 6.3. MVP allowlist и нормативная матрица форматов
+
+MVP принимает только следующие согласованные сочетания. Дополнительные
+расширения или MIME-алиасы не входят в allowlist без отдельного изменения
+контракта.
+
+| MediaType | Extension | Detected MIME | Фактическая сигнатура/контейнер | Safe reader/decode |
+|---|---|---|---|---|
+| image | `jpg`, `jpeg` | `image/jpeg` | JPEG markers | полный image decode |
+| image | `png` | `image/png` | PNG signature | полный image decode |
+| image | `webp` | `image/webp` | RIFF/WEBP | полный image decode |
+| audio | `wav` | `audio/wav` | RIFF/WAVE | controlled audio probe и bounded decode |
+| audio | `mp3` | `audio/mpeg` | ID3 или MPEG audio frames | controlled audio probe и bounded decode |
+| audio | `flac` | `audio/flac` | FLAC marker | controlled audio probe и bounded decode |
+| audio | `m4a` | `audio/mp4` | совместимый ISO BMFF/M4A container | controlled audio probe и bounded decode |
+| video | `mp4` | `video/mp4` | совместимый ISO BMFF/MP4 container | controlled video probe и bounded decode |
+| video | `mov` | `video/quicktime` | совместимый QuickTime container | controlled video probe и bounded decode |
+| video | `avi` | `video/x-msvideo` | RIFF/AVI | controlled video probe и bounded decode |
+| video | `mkv` | `video/x-matroska` | Matroska/EBML | controlled video probe и bounded decode |
+
+Принимаются только сочетания extension, detected MIME, сигнатуры/контейнера и
+`MediaType`, согласованные одной строкой матрицы. Declared MIME не заменяет
+detected MIME и, если передан, отдельно проверяется на согласованность.
+
+### 6.4. Ограничение размера и SHA-256
+
+До определения фактического `MediaType` hard limit равен максимальному из
+настроенных `max_file_size_mb.image`, `audio` и `video`. После определения типа
+к фактически измеренному размеру применяется соответствующий per-media limit.
+Превышение любого применимого лимита является controlled rejection с
+`file_too_large`.
+
+Extension, declared MIME, `original_name` и `Content-Length` не выбирают
+первоначальный лимит и не задают фактический `size_bytes`. Вход читается порциями;
+фактический размер и SHA-256 рассчитываются в том же intake pass. Конкретные
+числовые лимиты остаются конфигурацией.
+
+### 6.5. Семантика безопасного чтения
+
+Для image `safe_read=true` означает полное безопасное декодирование и получение
+всех обязательных технических параметров.
+
+Для audio и video полный decode всего файла на первичной проверке не требуется.
+`safe_read=true` означает controlled safe open/probe, получение обязательных
+технических параметров и ограниченное декодирование, достаточное для
+подтверждения читаемости. Внешние процессы имеют timeout. Для video это не
+означает, что каждый кадр файла уже декодирован.
+
+Конкретные пределы bounded decode являются конфигурацией или implementation
+detail. Первичная проверка не создаёт нормализованные копии, key frames,
+аудиофрагменты, спектрограммы, извлечённые аудиодорожки или иные preprocessing-
+артефакты.
+
+### 6.6. Внутренний контракт временного владения
+
+Логическая цепочка безопасного intake:
+
+```text
+external adapter
+→ intake application service
+→ temporary input owner
+→ file validator
+→ accepted ownership handoff
+  или rejected / failed + cleanup
+```
+
+Temporary input owner создаёт `runtime/temp/<analysis_id>`, формирует внутреннее
+имя input без пользовательских строк, потоково записывает controlled source,
+предоставляет validator непрозрачную внутреннюю ссылку и удаляет принадлежащий
+ему ресурс по команде intake service. Validator не владеет workspace и не
+выполняет cleanup.
+
+Каталог создаётся с минимально необходимой для текущего локального runtime
+политикой доступа и изолируется от workspace других `analysis_id`. Hardening
+против concurrent path substitution, TOCTOU и полный no-follow redesign
+относятся к Stage 9 и не являются частью этого контракта Stage 3.
+
+Успешный внутренний handoff логически содержит:
+
+```text
+ValidatedFileDescriptor
++ opaque owned-source / lease / controlled handle
+```
+
+Точная Python-форма handle является implementation detail. Handle и внутренний
+путь не входят в `ValidatedFileDescriptor`, `ValidationResult` или внешний JSON.
+Полный `AnalysisContext` для Stage 3 не требуется. До handoff достаточно
+`analysis_id`, `SourceContext`, времени регистрации/приёма и temporary ownership
+handle.
+
+До успешного handoff owner отвечает за cleanup при rejection и exception. После
+handoff Stage 4 принимает ownership и отвечает за дальнейший lifecycle и
+последующую очистку accepted input. Если handoff не состоялся, ownership остаётся
+у Stage 3.
 
 ---
 
@@ -870,6 +995,7 @@ internal
 | `file_missing` | validation | Файл не передан |
 | `file_empty` | validation | Пустой файл |
 | `file_too_large` | resource_limit | Превышен лимит |
+| `missing_extension` | unsupported_media | В `original_name` отсутствует обязательное расширение |
 | `unsupported_extension` | unsupported_media | Расширение не поддерживается |
 | `unsupported_mime_type` | unsupported_media | MIME не поддерживается |
 | `file_signature_mismatch` | validation | Несоответствие сигнатуры |
@@ -970,18 +1096,34 @@ internal
 
 #### `rejected`
 
+- ожидаемое нарушение требований к входу обнаружено на validation/routing;
 - анализаторы не запускались;
 - `findings=[]`;
 - `risk_assessment.final_level=null`;
 - `completeness.status=not_assessed`;
-- причина отклонения присутствует в `errors`.
+- причина отклонения присутствует в `errors` стабильным машинным кодом;
+- cleanup временного input до ownership handoff выполняется и его фактический
+  результат отражается существующим блоком `cleanup`.
 
 #### `failed`
 
+- внутренняя системная ошибка FakeDetector, а не нормативное свойство входа, не
+  позволила продолжить обработку;
 - пригодная риск-оценка отсутствует;
 - `risk_assessment.final_level=null`;
 - причина сбоя отражена безопасно;
 - очистка всё равно выполняется и фиксируется.
+
+К `rejected` относятся, в частности, отсутствие или неподдерживаемость
+расширения, неподдерживаемый фактический MIME/тип, несоответствие сигнатуры или
+типов, пустой или слишком большой файл и повреждённый/безопасно недекодируемый
+input. Невозможность создать workspace, внутренняя ошибка записи и неожиданный
+системный exception относятся к `failed` и не маскируются как invalid input.
+
+Cleanup не добавляется в `ValidationResult`: фактическое удаление отражается
+существующими `CleanupResult` и terminal `AnalysisResult`. Если промежуточные
+артефакты не создавались, `intermediate_files_deleted=true` означает, что после
+cleanup промежуточных файлов не осталось; это не утверждение об их создании.
 
 ### 14.5. Полный пример
 
@@ -1333,6 +1475,12 @@ external_systems
 - `extensions`;
 - `mime_types`.
 
+Для MVP значения этой секции должны соответствовать нормативному allowlist из
+раздела 6.3: image — `jpg`, `jpeg`, `png`, `webp`; audio — `wav`, `mp3`, `flac`,
+`m4a`; video — `mp4`, `mov`, `avi`, `mkv`. MIME-набор должен оставаться
+согласованным с той же матрицей. Это не делает конкретные числовые лимиты или
+настройки будущих модулей архитектурными константами.
+
 #### `validation`
 
 - `check_extension`;
@@ -1401,7 +1549,8 @@ external_systems
 
 ### 16.3. Пример минимальной конфигурации
 
-Значения являются **EXAMPLE**.
+Значения являются **EXAMPLE**, кроме `allowed_formats`, который для MVP обязан
+соответствовать нормативному allowlist раздела 6.3.
 
 ```yaml
 schema_version: "1.0"
@@ -1837,7 +1986,10 @@ JSONL whitelist и обязательные поля события остают
 ```text
 WebUI / API
 → InputFileDescriptor + SourceContext
-→ ValidationResult + ValidatedFileDescriptor
+→ temporary owned source
+→ ValidationResult
+→ accepted: ValidatedFileDescriptor + opaque owned-source handoff
+  | rejected / failed: cleanup + terminal result
 → AnalysisContext
 → PreparedMedia
 → AnalyzerRequest

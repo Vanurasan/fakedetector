@@ -340,6 +340,20 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-08-13
+
+### Changed
+
+- **[Stage 3/4 boundary] Безопасный intake оформлен как законченный use case с
+  минимальным временным владением input в Stage 3.** Зафиксированы обязательное
+  расширение MVP и `missing_extension`, допустимый nullable declared MIME,
+  нормативный MVP allowlist image/audio/video, двухфазные size limits с
+  фактическим измерением, safe-read профиль по модальности, opaque ownership
+  handoff и различие ожидаемого `rejected` от системного `failed`. Причина —
+  исключить одноразовую Stage 3 buffering architecture. Влияние: Stage 3
+  завершается accepted handoff либо terminal cleanup, а Stage 4 начинает
+  дальнейший lifecycle уже с принятым controlled source.
+
 ### 2026-08-12
 
 ### Added
