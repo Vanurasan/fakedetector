@@ -13,10 +13,13 @@ from fakedetector.domain.enums import (
 )
 from fakedetector.domain.models import (
     AudioTechnicalParameters,
+    ErrorDetail,
     ImageTechnicalParameters,
     InputFileDescriptor,
     SourceContext,
     ValidatedFileDescriptor,
+    ValidationCheck,
+    ValidationResult,
     VideoTechnicalParameters,
 )
 
@@ -26,6 +29,7 @@ __all__ = [
     "AudioTechnicalParameters",
     "CleanupStatus",
     "CompletenessStatus",
+    "ErrorDetail",
     "FindingSeverity",
     "ImageTechnicalParameters",
     "InputFileDescriptor",
@@ -35,5 +39,7 @@ __all__ = [
     "SourceChannel",
     "SourceContext",
     "ValidatedFileDescriptor",
+    "ValidationCheck",
+    "ValidationResult",
     "VideoTechnicalParameters",
 ]

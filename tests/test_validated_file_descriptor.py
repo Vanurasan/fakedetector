@@ -33,6 +33,7 @@ EXPECTED_DOMAIN_EXPORTS = [
     "AudioTechnicalParameters",
     "CleanupStatus",
     "CompletenessStatus",
+    "ErrorDetail",
     "FindingSeverity",
     "ImageTechnicalParameters",
     "InputFileDescriptor",
@@ -42,6 +43,8 @@ EXPECTED_DOMAIN_EXPORTS = [
     "SourceChannel",
     "SourceContext",
     "ValidatedFileDescriptor",
+    "ValidationCheck",
+    "ValidationResult",
     "VideoTechnicalParameters",
 ]
 
