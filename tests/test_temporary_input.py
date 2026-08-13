@@ -12,6 +12,7 @@ import pytest
 
 import fakedetector.intake.temporary_input as temporary_input_module
 from fakedetector.intake import (
+    AcceptedSource,
     FileTooLargeError,
     IntakeSystemError,
     LocalTemporaryInputOwner,
@@ -186,6 +187,47 @@ def test_trusted_local_path_operation_rejects_foreign_and_released_handles(
     owner.cleanup(owned_source)
     with pytest.raises(IntakeSystemError):
         owner.with_local_source_path(owned_source, lambda path: path)
+
+
+def test_transfer_moves_ownership_and_invalidates_stale_handle(tmp_path: Path) -> None:
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    owned_source = owner.create("moved-source")
+    owner.ingest(owned_source, BytesIO(b"content"), 100)
+
+    accepted_source = owner.transfer(owned_source)
+
+    assert isinstance(accepted_source, AcceptedSource)
+    assert owned_source.is_handed_off
+    assert not accepted_source.is_released
+    with accepted_source.open_for_read() as source:
+        assert source.read() == b"content"
+    with pytest.raises(IntakeSystemError):
+        owner.open_for_read(owned_source).__enter__()
+    with pytest.raises(IntakeSystemError):
+        owner.cleanup(owned_source)
+    with pytest.raises(IntakeSystemError):
+        owner.transfer(owned_source)
+
+    accepted_source.cleanup()
+    accepted_source.cleanup()
+    assert accepted_source.is_released
+    assert owned_source.is_released
+    assert not (tmp_path / "temp" / "moved-source").exists()
+
+
+def test_transfer_rejects_foreign_and_released_handles(tmp_path: Path) -> None:
+    owner = LocalTemporaryInputOwner(tmp_path / "first")
+    foreign_owner = LocalTemporaryInputOwner(tmp_path / "second")
+    foreign_source = foreign_owner.create("foreign")
+    released_source = owner.create("released")
+    owner.cleanup(released_source)
+
+    with pytest.raises(IntakeSystemError):
+        owner.transfer(foreign_source)
+    with pytest.raises(IntakeSystemError):
+        owner.transfer(released_source)
+
+    foreign_owner.cleanup(foreign_source)
 
 
 def test_cleanup_failure_keeps_ownership_active_and_does_not_remove_foreign_data(
