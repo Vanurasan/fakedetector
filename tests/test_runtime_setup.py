@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import subprocess
 import traceback
 from pathlib import Path
 
 import pytest
 
+import fakedetector.runtime_setup as runtime_setup_module
 from fakedetector.config.models import AppConfig
 from fakedetector.runtime_setup import RuntimeSetupError, ensure_runtime_directories
 
@@ -156,3 +158,68 @@ def test_mkdir_error_is_safe_and_has_no_unsafe_exception_chain(
     assert sentinel not in rendered_traceback
     assert error.__cause__ is None
     assert error.__context__ is None
+
+
+def test_verifies_ffmpeg_and_ffprobe_with_safe_bounded_calls(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(arguments: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        calls.append((arguments, kwargs))
+        return subprocess.CompletedProcess(arguments, 0)
+
+    monkeypatch.setattr(runtime_setup_module.subprocess, "run", fake_run)
+    config = make_config(
+        temporary_storage_path=tmp_path / "temp",
+        result_directory=tmp_path / "results",
+        log_path=tmp_path / "logs" / "application.jsonl",
+    )
+
+    ensure_runtime_directories(config)
+
+    assert [arguments for arguments, _kwargs in calls] == [
+        ["ffmpeg", "-version"],
+        ["ffprobe", "-version"],
+    ]
+    for _arguments, kwargs in calls:
+        assert kwargs == {
+            "shell": False,
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "timeout": 5.0,
+            "check": False,
+        }
+
+
+@pytest.mark.parametrize("failure", ["missing", "timeout", "nonzero"])
+def test_media_dependency_failure_is_safe_runtime_failure(
+    tmp_path: Path,
+    monkeypatch,
+    failure: str,
+) -> None:
+    sentinel = "PRIVATE INSTALLATION PATH"
+
+    def fake_run(arguments: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if failure == "missing":
+            raise FileNotFoundError(sentinel)
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(sentinel, 5.0)
+        return subprocess.CompletedProcess(arguments, 1, stderr=sentinel.encode())
+
+    monkeypatch.setattr(runtime_setup_module.subprocess, "run", fake_run)
+    config = make_config(
+        temporary_storage_path=tmp_path / "temp",
+        result_directory=tmp_path / "results",
+        log_path=tmp_path / "logs" / "application.jsonl",
+    )
+
+    with pytest.raises(RuntimeSetupError) as error_info:
+        ensure_runtime_directories(config)
+
+    assert str(error_info.value) == "Runtime initialization failed."
+    assert sentinel not in str(error_info.value)
+    assert error_info.value.__cause__ is None
+    assert error_info.value.__context__ is None

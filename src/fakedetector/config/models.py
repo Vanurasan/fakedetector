@@ -7,9 +7,16 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 LoggingLevel = Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]
+
+_IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp"]
+_IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"]
+_AUDIO_EXTENSIONS = ["wav", "mp3", "flac", "m4a"]
+_AUDIO_MIME_TYPES = ["audio/wav", "audio/mpeg", "audio/flac", "audio/mp4"]
+_VIDEO_EXTENSIONS = ["mp4", "mov", "avi", "mkv"]
+_VIDEO_MIME_TYPES = ["video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska"]
 
 
 class ServerConfig(BaseModel):
@@ -100,9 +107,42 @@ class AllowedFormatsConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    image: FormatGroup = Field(default_factory=FormatGroup)
-    audio: FormatGroup = Field(default_factory=FormatGroup)
-    video: FormatGroup = Field(default_factory=FormatGroup)
+    image: FormatGroup = Field(
+        default_factory=lambda: FormatGroup(
+            extensions=_IMAGE_EXTENSIONS.copy(),
+            mime_types=_IMAGE_MIME_TYPES.copy(),
+        )
+    )
+    audio: FormatGroup = Field(
+        default_factory=lambda: FormatGroup(
+            extensions=_AUDIO_EXTENSIONS.copy(),
+            mime_types=_AUDIO_MIME_TYPES.copy(),
+        )
+    )
+    video: FormatGroup = Field(
+        default_factory=lambda: FormatGroup(
+            extensions=_VIDEO_EXTENSIONS.copy(),
+            mime_types=_VIDEO_MIME_TYPES.copy(),
+        )
+    )
+
+    @model_validator(mode="after")
+    def require_canonical_mvp_matrix(self) -> AllowedFormatsConfig:
+        """Reject configuration that diverges from the fixed MVP format matrix."""
+        expected = (
+            (self.image, _IMAGE_EXTENSIONS, _IMAGE_MIME_TYPES),
+            (self.audio, _AUDIO_EXTENSIONS, _AUDIO_MIME_TYPES),
+            (self.video, _VIDEO_EXTENSIONS, _VIDEO_MIME_TYPES),
+        )
+        if any(
+            len(group.extensions) != len(extensions)
+            or set(group.extensions) != set(extensions)
+            or len(group.mime_types) != len(mime_types)
+            or set(group.mime_types) != set(mime_types)
+            for group, extensions, mime_types in expected
+        ):
+            raise ValueError("allowed_formats must match the canonical MVP matrix")
+        return self
 
 
 class ValidationConfig(BaseModel):
@@ -116,6 +156,22 @@ class ValidationConfig(BaseModel):
     reject_if_type_mismatch: bool = True
     calculate_sha256: bool = True
     safe_decode: bool = True
+
+    @model_validator(mode="after")
+    def require_primary_validation_checks(self) -> ValidationConfig:
+        """Keep every mandatory Stage 3 primary-validation check enabled."""
+        if not all(
+            (
+                self.check_extension,
+                self.check_mime_type,
+                self.check_file_signature,
+                self.reject_if_type_mismatch,
+                self.calculate_sha256,
+                self.safe_decode,
+            )
+        ):
+            raise ValueError("all primary validation checks must be enabled")
+        return self
 
 
 class TemporaryStorageConfig(BaseModel):

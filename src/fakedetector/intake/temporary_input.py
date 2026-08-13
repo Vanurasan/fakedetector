@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
-from typing import BinaryIO, Protocol
+from typing import BinaryIO, Protocol, TypeVar
 
 _SOURCE_NAME = "source"
 _DEFAULT_CHUNK_SIZE = 64 * 1024
+_OperationResult = TypeVar("_OperationResult")
 
 
 class ReadableBinaryStream(Protocol):
@@ -180,6 +181,15 @@ class LocalTemporaryInputOwner:
         with source:
             yield source
 
+    def with_local_source_path(
+        self,
+        owned_source: OwnedSource,
+        trusted_operation: Callable[[Path], _OperationResult],
+    ) -> _OperationResult:
+        """Run a trusted seekable-file operation without publishing the source path."""
+        self._require_active_handle(owned_source)
+        return trusted_operation(owned_source._source_path)
+
     def cleanup(self, owned_source: OwnedSource) -> None:
         """Remove only the fixed source and its now-empty owned workspace."""
         self._require_own_handle(owned_source)
@@ -216,7 +226,7 @@ class LocalTemporaryInputOwner:
         return workspace_path
 
     def _open_output(self, owned_source: OwnedSource) -> int:
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
         try:
             return os.open(owned_source._source_path, flags, 0o600)
         except OSError:
