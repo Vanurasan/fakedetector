@@ -348,6 +348,7 @@ YYYY-MM-DD
 
 ### Changed
 
+- **[Stage 3/Final audit] Финальная независимая проверка Stage 3 завершена с `PASS`.** Все completion criteria и полный quality barrier прошли; все пять прежних audit findings (`S3-AUD-001`–`S3-AUD-003`, `S3-RERUN-001`, `S3-RERUN-002`) независимо перепроверены. Stage 3 закрыт; следующее действие — планирование Stage 4 без перевода Stage 4 в `IN_PROGRESS`.
 - **[Stage 3/Lifecycle] Реализован единый adapter-neutral intake lifecycle.** `FileIntakeService` связывает регистрацию, bounded intake и primary validation, возвращает `Stage3Accepted` после move-style ownership handoff либо factual `Stage3Terminal` с безопасным `rejected`/`failed` и одной pre-handoff cleanup attempt; primary и cleanup failures сохраняются раздельно. Функциональные критерии Stage 3 реализованы, окончательный статус остаётся `IN_PROGRESS` до отдельного final audit.
 - **[Stage 3/Contracts] Зафиксирован внутренний application boundary `Stage3Outcome = Stage3Accepted | Stage3Terminal`.** Stage 3 не фабрикует `AnalysisResult`: pre-registration failure является безопасным typed exception, cleanup равен `null` только при отсутствии временного resource, primary `rejected`/`failed` сохраняется при cleanup failure, а accepted source передаётся move-style handoff; после последнего functional increment Stage 3 проходит отдельный final audit до статуса `DONE`. Внешняя schema `1.0`, Stage 2 models и enums не изменены.
 - **[Stage 3/Primary validation] Реализована первичная проверка controlled source
