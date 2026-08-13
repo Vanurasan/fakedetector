@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
-from typing import BinaryIO, Protocol, TypeVar
+from typing import BinaryIO, Literal, Protocol, TypeVar
 
 _SOURCE_NAME = "source"
 _DEFAULT_CHUNK_SIZE = 64 * 1024
@@ -46,8 +46,15 @@ class IntakeSystemError(Exception):
 class TemporaryInputCleanupError(Exception):
     """Safe failure raised when owned temporary data could not be removed."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        original_file_deleted: bool = False,
+        intermediate_files_deleted: bool = False,
+    ) -> None:
         super().__init__("Temporary input cleanup did not complete.")
+        self.original_file_deleted = original_file_deleted
+        self.intermediate_files_deleted = intermediate_files_deleted
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,16 +65,10 @@ class IntakeMeasurements:
     sha256: str
 
 
-class OwnedSource:
-    """Opaque internal handle for one source owned by temporary intake."""
+class _OwnedResource:
+    """Shared private lifecycle state for capabilities referencing one source."""
 
-    __slots__ = (
-        "_analysis_id",
-        "_owner_token",
-        "_released",
-        "_source_path",
-        "_workspace_path",
-    )
+    __slots__ = ("analysis_id", "owner_token", "source_path", "state", "workspace_path")
 
     def __init__(
         self,
@@ -77,21 +78,79 @@ class OwnedSource:
         source_path: Path,
         owner_token: object,
     ) -> None:
-        self._analysis_id = analysis_id
-        self._workspace_path = workspace_path
-        self._source_path = source_path
-        self._owner_token = owner_token
-        self._released = False
+        self.analysis_id = analysis_id
+        self.workspace_path = workspace_path
+        self.source_path = source_path
+        self.owner_token = owner_token
+        self.state: Literal["owned", "handed_off", "released"] = "owned"
+
+
+class OwnedSource:
+    """Opaque internal handle for one source owned by temporary intake."""
+
+    __slots__ = ("_active", "_resource")
+
+    def __init__(
+        self,
+        *,
+        analysis_id: str,
+        workspace_path: Path,
+        source_path: Path,
+        owner_token: object,
+        resource: _OwnedResource | None = None,
+    ) -> None:
+        self._resource = resource or _OwnedResource(
+            analysis_id=analysis_id,
+            workspace_path=workspace_path,
+            source_path=source_path,
+            owner_token=owner_token,
+        )
+        self._active = True
 
     @property
     def analysis_id(self) -> str:
         """Return the non-path system identifier associated with this source."""
-        return self._analysis_id
+        return self._resource.analysis_id
 
     @property
     def is_released(self) -> bool:
         """Return whether cleanup has factually released this ownership."""
-        return self._released
+        return self._resource.state == "released"
+
+    @property
+    def is_handed_off(self) -> bool:
+        """Return whether this stale capability has been moved downstream."""
+        return self._resource.state == "handed_off"
+
+
+class AcceptedSource:
+    """Opaque move-only capability accepted by the downstream lifecycle."""
+
+    __slots__ = ("_owned_source", "_owner")
+
+    def __init__(self, owner: LocalTemporaryInputOwner, owned_source: OwnedSource) -> None:
+        self._owner = owner
+        self._owned_source = owned_source
+
+    @property
+    def analysis_id(self) -> str:
+        """Return the system identifier without exposing a filesystem path."""
+        return self._owned_source.analysis_id
+
+    @property
+    def is_released(self) -> bool:
+        """Return whether downstream cleanup factually released the source."""
+        return self._owned_source.is_released
+
+    @contextmanager
+    def open_for_read(self) -> Iterator[BinaryIO]:
+        """Open the active downstream source through controlled ownership."""
+        with self._owner.open_for_read(self._owned_source) as source:
+            yield source
+
+    def cleanup(self) -> None:
+        """Release the downstream source without exposing physical storage."""
+        self._owner.cleanup(self._owned_source)
 
 
 class LocalTemporaryInputOwner:
@@ -119,6 +178,12 @@ class LocalTemporaryInputOwner:
             source_path=workspace_path / _SOURCE_NAME,
             owner_token=self._owner_token,
         )
+
+    def validate_analysis_id(self, analysis_id: object) -> None:
+        """Validate a generated identifier before registration is established."""
+        if not isinstance(analysis_id, str):
+            raise IntakeSystemError("analysis_id")
+        self._safe_workspace_path(analysis_id)
 
     def ingest(
         self,
@@ -157,7 +222,7 @@ class LocalTemporaryInputOwner:
                 self._write_all(descriptor, chunk)
                 size_bytes += len(chunk)
                 digest.update(chunk)
-        except Exception:
+        except BaseException:
             with suppress(OSError):
                 os.close(descriptor)
             raise
@@ -174,7 +239,7 @@ class LocalTemporaryInputOwner:
         """Open an active controlled source without exposing its filesystem path."""
         self._require_active_handle(owned_source)
         try:
-            source = owned_source._source_path.open("rb")
+            source = owned_source._resource.source_path.open("rb")
         except OSError:
             raise IntakeSystemError("controlled_source_read") from None
 
@@ -188,22 +253,45 @@ class LocalTemporaryInputOwner:
     ) -> _OperationResult:
         """Run a trusted seekable-file operation without publishing the source path."""
         self._require_active_handle(owned_source)
-        return trusted_operation(owned_source._source_path)
+        return trusted_operation(owned_source._resource.source_path)
+
+    def transfer(self, owned_source: OwnedSource) -> AcceptedSource:
+        """Move one active Stage 3 handle into a downstream capability."""
+        self._require_active_handle(owned_source)
+        transferred = OwnedSource(
+            analysis_id=owned_source._resource.analysis_id,
+            workspace_path=owned_source._resource.workspace_path,
+            source_path=owned_source._resource.source_path,
+            owner_token=self._owner_token,
+            resource=owned_source._resource,
+        )
+        owned_source._resource.state = "handed_off"
+        owned_source._active = False
+        return AcceptedSource(self, transferred)
 
     def cleanup(self, owned_source: OwnedSource) -> None:
         """Remove only the fixed source and its now-empty owned workspace."""
         self._require_own_handle(owned_source)
-        if owned_source._released:
+        if not owned_source._active:
+            raise IntakeSystemError("ownership")
+        if owned_source._resource.state == "released":
             return
+        if owned_source._resource.state not in {"owned", "handed_off"}:
+            raise IntakeSystemError("ownership")
 
+        original_file_deleted = False
         try:
-            owned_source._source_path.unlink(missing_ok=True)
+            owned_source._resource.source_path.unlink(missing_ok=True)
+            original_file_deleted = True
             with suppress(FileNotFoundError):
-                owned_source._workspace_path.rmdir()
+                owned_source._resource.workspace_path.rmdir()
         except OSError:
-            raise TemporaryInputCleanupError() from None
+            raise TemporaryInputCleanupError(
+                original_file_deleted=original_file_deleted,
+                intermediate_files_deleted=False,
+            ) from None
 
-        owned_source._released = True
+        owned_source._resource.state = "released"
 
     def _safe_workspace_path(self, analysis_id: str) -> Path:
         """Build one unchanged direct child after cross-platform lexical checks."""
@@ -228,7 +316,7 @@ class LocalTemporaryInputOwner:
     def _open_output(self, owned_source: OwnedSource) -> int:
         flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
         try:
-            return os.open(owned_source._source_path, flags, 0o600)
+            return os.open(owned_source._resource.source_path, flags, 0o600)
         except OSError:
             raise IntakeSystemError("output_open") from None
 
@@ -245,10 +333,10 @@ class LocalTemporaryInputOwner:
             remaining = remaining[written:]
 
     def _require_own_handle(self, owned_source: OwnedSource) -> None:
-        if owned_source._owner_token is not self._owner_token:
+        if owned_source._resource.owner_token is not self._owner_token:
             raise IntakeSystemError("ownership")
 
     def _require_active_handle(self, owned_source: OwnedSource) -> None:
         self._require_own_handle(owned_source)
-        if owned_source._released:
+        if not owned_source._active or owned_source._resource.state == "released":
             raise IntakeSystemError("ownership")

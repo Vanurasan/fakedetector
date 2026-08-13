@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 3 — Безопасный приём, временное владение и первичная проверка файлов
 Статус этапа: IN_PROGRESS
-Ближайшее действие: реализовать Increment 3 — integrated Stage 3 lifecycle
+Ближайшее действие: провести отдельный финальный аудит Stage 3
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1 и 2 завершены
+Реализация программы: Этапы 1 и 2 завершены; функциональные критерии Этапа 3 реализованы
 Документационная база: сформирована
 ```
 
@@ -474,26 +474,26 @@ SHA-256 и удаляет данные при системном сбое до h
 безопасно читаемым image/audio/video, и формирует `ValidatedFileDescriptor` либо
 нормативный validation rejection.
 
-### Increment 3 — Integrated Stage 3 lifecycle
+### Increment 3 — Integrated Stage 3 lifecycle — DONE
 
-- [ ] WebUI/API adapters передают transport data одному intake service и не
+- [x] WebUI/API adapters передают transport data одному intake service и не
   владеют validation business logic;
-- [ ] при accepted логически передавать `ValidatedFileDescriptor` вместе с
+- [x] при accepted логически передавать `ValidatedFileDescriptor` вместе с
   opaque owned-source/lease/controlled handle;
-- [ ] после успешного handoff передавать ownership Stage 4 и не удалять accepted
+- [x] после успешного handoff передавать ownership Stage 4 и не удалять accepted
   input в Stage 3;
-- [ ] если handoff не состоялся, сохранять ownership в Stage 3 и выполнять
+- [x] если handoff не состоялся, сохранять ownership в Stage 3 и выполнять
   cleanup;
-- [ ] ожидаемые validation failures завершать как `rejected` со стабильным
+- [x] ожидаемые validation failures завершать как `rejected` со стабильным
   машинным кодом;
-- [ ] ошибки workspace, записи и неожиданные системные исключения завершать как
+- [x] ошибки workspace, записи и неожиданные системные исключения завершать как
   `failed`, не маскируя их как invalid input;
-- [ ] при `rejected` не запускать анализаторы, не создавать findings и
+- [x] при `rejected` не запускать анализаторы, не создавать findings и
   `RiskLevel`, сохранять completeness=`not_assessed`;
-- [ ] при `rejected` и `failed` до handoff выполнять cleanup и отражать его
+- [x] при `rejected` и `failed` до handoff выполнять cleanup и отражать его
   фактический outcome;
-- [ ] возвращать безопасные сообщения без внутренних путей;
-- [ ] не создавать preprocessing-артефакты Stage 5.
+- [x] возвращать безопасные сообщения без внутренних путей;
+- [x] не создавать preprocessing-артефакты Stage 5.
 
 После инкремента FakeDetector выполняет весь Stage 3 от входного потока до
 accepted ownership handoff либо controlled `rejected`/`failed` outcome с
@@ -501,33 +501,33 @@ cleanup.
 
 ## Обязательные тесты
 
-- [ ] все форматы утверждённого image/audio/video MVP allowlist проходят при
+- [x] все форматы утверждённого image/audio/video MVP allowlist проходят при
   согласованной сигнатуре и safe read;
-- [ ] отсутствие declared Content-Type допустимо;
-- [ ] отсутствие необязательных metadata допустимо;
-- [ ] `file`, `file.` и `.mp4` отклоняются с `missing_extension`;
-- [ ] расширение нормализуется в lowercase;
-- [ ] архив отклоняется;
-- [ ] офисный документ отклоняется;
-- [ ] переименованный файл с неверной сигнатурой отклоняется;
-- [ ] declared MIME mismatch отклоняется, а отсутствующий declared MIME не
+- [x] отсутствие declared Content-Type допустимо;
+- [x] отсутствие необязательных metadata допустимо;
+- [x] `file`, `file.` и `.mp4` отклоняются с `missing_extension`;
+- [x] расширение нормализуется в lowercase;
+- [x] архив отклоняется;
+- [x] офисный документ отклоняется;
+- [x] переименованный файл с неверной сигнатурой отклоняется;
+- [x] declared MIME mismatch отклоняется, а отсутствующий declared MIME не
   мешает проверке;
-- [ ] превышение pre-detection hard limit прекращает intake;
-- [ ] превышение per-media limit после определения типа отклоняется;
-- [ ] недоверенный `Content-Length` не определяет фактический размер;
-- [ ] повреждённый файл отклоняется;
-- [ ] image проходит полный decode, audio/video — controlled probe и bounded
+- [x] превышение pre-detection hard limit прекращает intake;
+- [x] превышение per-media limit после определения типа отклоняется;
+- [x] недоверенный `Content-Length` не определяет фактический размер;
+- [x] повреждённый файл отклоняется;
+- [x] image проходит полный decode, audio/video — controlled probe и bounded
   decode с timeout;
-- [ ] SHA-256 стабилен;
-- [ ] разные `analysis_id` получают изолированные каталоги;
-- [ ] path traversal и `original_name` не влияют на путь или внутреннее имя
+- [x] SHA-256 стабилен;
+- [x] разные `analysis_id` получают изолированные каталоги;
+- [x] path traversal и `original_name` не влияют на путь или внутреннее имя
   input;
-- [ ] rejection и exception до handoff очищают input/workspace;
-- [ ] cleanup failure отражается фактически;
-- [ ] accepted handoff передаёт ownership и не удаляется Stage 3;
-- [ ] несостоявшийся handoff сохраняет ownership и запускает cleanup;
-- [ ] отклонение не создаёт analyzers, findings или риск `low`/`high`;
-- [ ] internal intake failure формирует `failed`, а validation failure —
+- [x] rejection и exception до handoff очищают input/workspace;
+- [x] cleanup failure отражается фактически;
+- [x] accepted handoff передаёт ownership и не удаляется Stage 3;
+- [x] несостоявшийся handoff сохраняет ownership и запускает cleanup;
+- [x] отклонение не создаёт analyzers, findings или риск `low`/`high`;
+- [x] internal intake failure формирует `failed`, а validation failure —
   `rejected`.
 
 ## Критерий завершения
@@ -546,6 +546,8 @@ audit Stage 3 в отдельной audit-ветке. Audit implementation и au
 
 Только после final audit PASS Stage 3 переводится в `DONE`, а ближайшим действием
 становится Stage 4.
+
+Функциональный Increment 3 завершён; отдельный final audit Stage 3 ожидается.
 
 ---
 
