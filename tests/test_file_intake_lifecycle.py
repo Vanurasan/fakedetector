@@ -11,6 +11,7 @@ from typing import NoReturn
 
 import pytest
 
+import fakedetector.intake.media_tools as media_tools_module
 import fakedetector.intake.temporary_input as temporary_input_module
 from fakedetector.config.models import AppConfig
 from fakedetector.domain import (
@@ -257,6 +258,94 @@ def test_terminal_outcome_enforces_status_and_primary_error(tmp_path: Path) -> N
         replace(outcome, status=AnalysisStatus.RUNNING)
     with pytest.raises(ValueError, match="primary error"):
         replace(outcome, errors=[])
+
+
+def test_terminal_outcome_enforces_factual_validation_relationships(
+    tmp_path: Path,
+    media_files: dict[str, Path],
+) -> None:
+    rejection_service, _owner, _receiver = make_service(tmp_path / "rejection")
+    rejected = rejection_service.process(
+        BytesIO(b""),
+        original_name="empty.png",
+        declared_content_type=None,
+        source=source_context(),
+    )
+    assert isinstance(rejected, Stage3Terminal)
+    assert rejected.validation is not None and not rejected.validation.accepted
+
+    accepted_service, _owner, _receiver = make_service(tmp_path / "accepted")
+    accepted = accepted_service.process(
+        BytesIO(media_files["png"].read_bytes()),
+        original_name="sample.png",
+        declared_content_type=None,
+        source=source_context(),
+    )
+    assert isinstance(accepted, Stage3Accepted)
+    different_descriptor = accepted.validated_file.model_copy(update={"original_name": "other.png"})
+
+    assert replace(
+        rejected,
+        validation=None,
+        validated_file=None,
+        status=AnalysisStatus.REJECTED,
+    )
+    assert replace(
+        rejected,
+        validation=None,
+        validated_file=None,
+        status=AnalysisStatus.FAILED,
+    )
+    assert replace(
+        rejected,
+        validation=rejected.validation,
+        validated_file=None,
+        status=AnalysisStatus.REJECTED,
+    )
+    assert replace(
+        rejected,
+        validation=accepted.validation,
+        validated_file=accepted.validated_file,
+        status=AnalysisStatus.FAILED,
+    )
+
+    contradictory_states = [
+        {
+            "validation": None,
+            "validated_file": accepted.validated_file,
+            "status": AnalysisStatus.FAILED,
+        },
+        {
+            "validation": rejected.validation,
+            "validated_file": accepted.validated_file,
+            "status": AnalysisStatus.REJECTED,
+        },
+        {
+            "validation": accepted.validation,
+            "validated_file": None,
+            "status": AnalysisStatus.FAILED,
+        },
+        {
+            "validation": accepted.validation,
+            "validated_file": different_descriptor,
+            "status": AnalysisStatus.FAILED,
+        },
+        {
+            "validation": accepted.validation,
+            "validated_file": accepted.validated_file,
+            "status": AnalysisStatus.REJECTED,
+        },
+        {
+            "validation": rejected.validation,
+            "validated_file": None,
+            "status": AnalysisStatus.FAILED,
+        },
+    ]
+    for state in contradictory_states:
+        with pytest.raises(ValueError, match="terminal validation state is inconsistent"):
+            replace(rejected, **state)
+
+    accepted.controlled_source.cleanup()
 
 
 @pytest.mark.parametrize(
@@ -519,6 +608,66 @@ def test_validation_system_failure_is_failed_and_cleans_owned_source(tmp_path: P
     assert outcome.cleanup is not None
     assert outcome.cleanup.status is CleanupStatus.COMPLETED
     assert receiver.calls == 0
+
+
+def test_ffprobe_stdout_read_failure_is_failed_and_cleans_owned_source(
+    tmp_path: Path,
+    media_files: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "PRIVATE PIPE PATH"
+
+    class FailingStdout:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def read(self, _size: int) -> bytes:
+            raise OSError(sentinel)
+
+        def close(self) -> None:
+            self.closed = True
+
+    class StartedProcess:
+        def __init__(self) -> None:
+            self.stdout = FailingStdout()
+            self.killed = False
+            self.wait_calls = 0
+
+        def wait(self, timeout: float | None = None) -> int:
+            self.wait_calls += 1
+            return 0
+
+        def kill(self) -> None:
+            self.killed = True
+
+    process = StartedProcess()
+    monkeypatch.setattr(
+        media_tools_module.subprocess,
+        "Popen",
+        lambda arguments, **kwargs: process,
+    )
+    service, _owner, receiver = make_service(tmp_path)
+
+    outcome = service.process(
+        BytesIO(media_files["wav"].read_bytes()),
+        original_name="sample.wav",
+        declared_content_type=None,
+        source=source_context(),
+    )
+
+    assert isinstance(outcome, Stage3Terminal)
+    assert outcome.status is AnalysisStatus.FAILED
+    assert outcome.validation is None
+    assert outcome.validated_file is None
+    assert outcome.errors[0].code == "internal_error"
+    assert sentinel not in repr(outcome.errors)
+    assert outcome.cleanup is not None
+    assert outcome.cleanup.status is CleanupStatus.COMPLETED
+    assert process.killed
+    assert process.wait_calls == 1
+    assert process.stdout.closed
+    assert receiver.calls == 0
+    assert not (tmp_path / "PRIVATE-TEMP" / outcome.analysis_id).exists()
 
 
 def test_handoff_failure_preserves_successful_validation_and_cleans_moved_source(

@@ -72,6 +72,18 @@ class TimeoutProcess(FakeProcess):
         return self.return_code
 
 
+class FailingStdout:
+    def __init__(self, message: str) -> None:
+        self._message = message
+        self.closed = False
+
+    def read(self, _size: int) -> bytes:
+        raise OSError(self._message)
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def test_probe_uses_bounded_safe_arguments_and_parses_only_required_json(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -205,6 +217,55 @@ def test_probe_output_limit_kills_process_and_rejects_input(
 
     assert error_info.value.phase == "ffprobe_output_limit"
     assert process.killed
+
+
+def test_probe_stdout_read_failure_kills_reaps_and_is_safe_system_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "PRIVATE PIPE PATH"
+    process = FakeProcess()
+    failing_stdout = FailingStdout(sentinel)
+    process.stdout = failing_stdout  # type: ignore[assignment]
+    monkeypatch.setattr(
+        media_tools_module.subprocess,
+        "Popen",
+        lambda arguments, **kwargs: process,
+    )
+
+    with pytest.raises(MediaToolSystemError) as error_info:
+        FFmpegMediaInspector().probe(tmp_path / "source")
+
+    assert error_info.value.phase == "ffprobe_stdout_read"
+    assert sentinel not in str(error_info.value)
+    assert error_info.value.__cause__ is None
+    assert process.killed
+    assert process.wait_calls == 1
+    assert failing_stdout.closed
+
+
+def test_probe_stdout_read_failure_remains_system_failure_during_timeout_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "PRIVATE PIPE PATH"
+    process = TimeoutProcess()
+    failing_stdout = FailingStdout(sentinel)
+    process.stdout = failing_stdout  # type: ignore[assignment]
+    monkeypatch.setattr(
+        media_tools_module.subprocess,
+        "Popen",
+        lambda arguments, **kwargs: process,
+    )
+
+    with pytest.raises(MediaToolSystemError) as error_info:
+        FFmpegMediaInspector(timeout_seconds=0.01).probe(tmp_path / "source")
+
+    assert error_info.value.phase == "ffprobe_stdout_read"
+    assert sentinel not in str(error_info.value)
+    assert process.killed
+    assert process.wait_calls == 2
+    assert failing_stdout.closed
 
 
 @pytest.mark.parametrize("operation", ["probe", "decode"])

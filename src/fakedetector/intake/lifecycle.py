@@ -92,6 +92,20 @@ class Stage3Terminal:
             raise ValueError("Stage 3 terminal status must be rejected or failed")
         if not self.errors:
             raise ValueError("Stage 3 terminal outcome requires a primary error")
+        if self.validation is None:
+            if self.validated_file is not None:
+                raise ValueError("Stage 3 terminal validation state is inconsistent")
+            return
+        if not self.validation.accepted:
+            if self.status is not AnalysisStatus.REJECTED or self.validated_file is not None:
+                raise ValueError("Stage 3 terminal validation state is inconsistent")
+            return
+        if (
+            self.status is not AnalysisStatus.FAILED
+            or self.validated_file is None
+            or self.validation.validated_file != self.validated_file
+        ):
+            raise ValueError("Stage 3 terminal validation state is inconsistent")
 
 
 type Stage3Outcome = Stage3Accepted | Stage3Terminal
