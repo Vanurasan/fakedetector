@@ -6,6 +6,7 @@ import json
 import math
 import subprocess
 import threading
+from contextlib import suppress
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -186,6 +187,7 @@ class FFmpegMediaInspector:
         assert stdout_pipe is not None
         output = bytearray()
         output_exceeded = threading.Event()
+        output_read_failed = threading.Event()
 
         def read_output() -> None:
             try:
@@ -200,23 +202,47 @@ class FFmpegMediaInspector:
                     output_exceeded.set()
                     process.kill()
             except OSError:
-                output_exceeded.set()
-                process.kill()
+                output_read_failed.set()
+                with suppress(OSError):
+                    process.kill()
 
         reader = threading.Thread(target=read_output, daemon=True)
         reader.start()
+        return_code: int | None = None
+        timed_out = False
+        wait_failed = False
         try:
             return_code = process.wait(timeout=self._timeout_seconds)
         except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-            reader.join()
-            stdout_pipe.close()
-            raise MediaRejectedError("ffprobe_timeout") from None
+            timed_out = True
+            with suppress(OSError):
+                process.kill()
+            try:
+                process.wait()
+            except OSError:
+                wait_failed = True
+        except OSError:
+            wait_failed = True
+            with suppress(OSError):
+                process.kill()
+            with suppress(OSError):
+                process.wait()
         reader.join()
-        stdout_pipe.close()
+        try:
+            stdout_pipe.close()
+        except OSError:
+            if output_read_failed.is_set():
+                raise MediaToolSystemError("ffprobe_stdout_read") from None
+            raise MediaToolSystemError("ffprobe_stdout_close") from None
+        if output_read_failed.is_set():
+            raise MediaToolSystemError("ffprobe_stdout_read") from None
+        if wait_failed:
+            raise MediaToolSystemError("process_wait") from None
+        if timed_out:
+            raise MediaRejectedError("ffprobe_timeout") from None
         if output_exceeded.is_set():
             raise MediaRejectedError("ffprobe_output_limit")
+        assert return_code is not None
         if return_code != 0:
             raise MediaRejectedError("ffprobe")
         return bytes(output)

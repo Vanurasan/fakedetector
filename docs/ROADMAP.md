@@ -547,8 +547,9 @@ audit Stage 3 в отдельной audit-ветке. Audit implementation и au
 Только после final audit PASS Stage 3 переводится в `DONE`, а ближайшим действием
 становится Stage 4.
 
-Функциональный Increment 3 завершён; три finding первого final audit исправлены.
-Stage 3 остаётся `IN_PROGRESS`; ожидается повторный независимый final audit.
+Функциональный Increment 3 завершён; три finding первого final audit и finding
+повторного аудита `S3-RERUN-001`/`S3-RERUN-002` исправлены. Stage 3 остаётся
+`IN_PROGRESS`; ближайшее действие — повторить независимый final audit Stage 3.
 
 ---
 

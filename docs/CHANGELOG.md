@@ -342,6 +342,10 @@ YYYY-MM-DD
 
 ### 2026-08-13
 
+### Fixed
+
+- **[Stage 3/Audit] Исправлены два finding повторного финального аудита.** `Stage3Terminal` теперь отклоняет противоречия между terminal status, factual validation и отдельным validated descriptor; сбой чтения application-owned ffprobe stdout pipe классифицируется как безопасная infrastructure failure с cleanup/reaping, отдельно от нормативного output overflow. Внешние контракты и schema version не изменены.
+
 ### Changed
 
 - **[Stage 3/Lifecycle] Реализован единый adapter-neutral intake lifecycle.** `FileIntakeService` связывает регистрацию, bounded intake и primary validation, возвращает `Stage3Accepted` после move-style ownership handoff либо factual `Stage3Terminal` с безопасным `rejected`/`failed` и одной pre-handoff cleanup attempt; primary и cleanup failures сохраняются раздельно. Функциональные критерии Stage 3 реализованы, окончательный статус остаётся `IN_PROGRESS` до отдельного final audit.
