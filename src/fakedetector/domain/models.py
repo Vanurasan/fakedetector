@@ -295,6 +295,21 @@ class ValidationResult(_DomainModel):
     errors: list[ErrorDetail]
     validated_file: ValidatedFileDescriptor | None
 
+    @model_validator(mode="after")
+    def validate_acceptance_outcome(self) -> Self:
+        """Require one complete success or rejection outcome without contradictions."""
+        if self.accepted:
+            if self.validated_file is None:
+                raise ValueError("accepted validation requires a validated file")
+            if self.errors:
+                raise ValueError("accepted validation cannot contain errors")
+        else:
+            if self.validated_file is not None:
+                raise ValueError("rejected validation cannot contain a validated file")
+            if not self.errors:
+                raise ValueError("rejected validation requires at least one error")
+        return self
+
 
 class AnalyzerResult(_DomainModel):
     """Structured result returned by one analyzer execution."""

@@ -37,6 +37,8 @@ from fakedetector.intake.temporary_input import IntakeSystemError, LocalTemporar
 
 _HEADER_LIMIT_BYTES = 64 * 1024
 _BYTES_PER_MEBIBYTE = 1024 * 1024
+_EBML_HEADER_ID = 0x1A45DFA3
+_EBML_DOCUMENT_TYPE_ID = 0x4282
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _MIME_PATTERN = re.compile(r"^[!#$%&'*+.^_`|~0-9a-z-]+/[!#$%&'*+.^_`|~0-9a-z-]+$")
 _PathResult = TypeVar("_PathResult")
@@ -375,19 +377,90 @@ def _classify_header(header: bytes) -> _HeaderCandidate | None:
         return None
     if header.startswith(b"fLaC"):
         return _HeaderCandidate("flac")
+    if header.startswith(b"\x1aE\xdf\xa3"):
+        document_type = _ebml_document_type(header)
+        if document_type in {"matroska", "webm"}:
+            return _HeaderCandidate("matroska", document_type=document_type)
+        return None
     if header.startswith(b"ID3") or _has_mpeg_audio_frame(header):
         return _HeaderCandidate("mp3")
-    if header.startswith(b"\x1aE\xdf\xa3"):
-        lowered = header.lower()
-        if b"webm" in lowered:
-            return _HeaderCandidate("matroska", document_type="webm")
-        if b"matroska" in lowered:
-            return _HeaderCandidate("matroska", document_type="matroska")
-        return None
     brands = _iso_bmff_brands(header)
     if brands is not None:
         return _HeaderCandidate("isobmff", brands=brands)
     return None
+
+
+def _ebml_document_type(header: bytes) -> str | None:
+    """Read only the structural DocType from one complete bounded EBML header."""
+    header_id = _read_ebml_vint(header, 0, max_length=4, preserve_marker=True)
+    if header_id is None or header_id[0] != _EBML_HEADER_ID:
+        return None
+    header_size = _read_ebml_vint(header, header_id[1], max_length=8, preserve_marker=False)
+    if header_size is None:
+        return None
+
+    offset = header_id[1] + header_size[1]
+    header_end = offset + header_size[0]
+    if header_end > len(header):
+        return None
+
+    document_type: bytes | None = None
+    while offset < header_end:
+        element_id = _read_ebml_vint(header, offset, max_length=4, preserve_marker=True)
+        if element_id is None:
+            return None
+        size_offset = offset + element_id[1]
+        element_size = _read_ebml_vint(
+            header,
+            size_offset,
+            max_length=8,
+            preserve_marker=False,
+        )
+        if element_size is None:
+            return None
+        value_start = size_offset + element_size[1]
+        value_end = value_start + element_size[0]
+        if value_end > header_end:
+            return None
+        if element_id[0] == _EBML_DOCUMENT_TYPE_ID:
+            if document_type is not None:
+                return None
+            document_type = header[value_start:value_end]
+        offset = value_end
+
+    if document_type is None:
+        return None
+    return {b"matroska": "matroska", b"webm": "webm"}.get(document_type)
+
+
+def _read_ebml_vint(
+    data: bytes,
+    offset: int,
+    *,
+    max_length: int,
+    preserve_marker: bool,
+) -> tuple[int, int] | None:
+    """Read one bounded EBML variable integer without interpreting other elements."""
+    if offset >= len(data):
+        return None
+    first = data[offset]
+    marker = 0x80
+    length = 1
+    while marker and not first & marker:
+        marker >>= 1
+        length += 1
+    if marker == 0 or length > max_length or offset + length > len(data):
+        return None
+
+    if preserve_marker:
+        return int.from_bytes(data[offset : offset + length], "big"), length
+
+    value = first & (marker - 1)
+    for byte in data[offset + 1 : offset + length]:
+        value = (value << 8) | byte
+    if value == (1 << (7 * length)) - 1:
+        return None
+    return value, length
 
 
 def _has_mpeg_audio_frame(header: bytes) -> bool:

@@ -76,7 +76,11 @@ def test_probe_uses_bounded_safe_arguments_and_parses_only_required_json(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source_path = tmp_path / "controlled-source"
+    original_name = "PRIVATE-user-title.wav"
+    workspace_path = tmp_path / "application-owned" / "system-analysis-id"
+    workspace_path.mkdir(parents=True)
+    source_path = workspace_path / "source"
+    source_path.touch()
     calls: list[tuple[list[str], dict[str, object]]] = []
     process = FakeProcess(output=json.dumps(probe_payload()).encode())
 
@@ -99,7 +103,9 @@ def test_probe_uses_bounded_safe_arguments_and_parses_only_required_json(
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.DEVNULL,
+        "cwd": workspace_path,
     }
+    assert original_name not in str(kwargs["cwd"])
 
 
 @pytest.mark.parametrize(("media_type", "has_audio"), [("audio", False), ("video", True)])
@@ -109,7 +115,11 @@ def test_bounded_decode_uses_null_sink_without_artifacts(
     media_type: str,
     has_audio: bool,
 ) -> None:
-    source_path = tmp_path / "source"
+    original_name = "PRIVATE-user-title.mkv"
+    workspace_path = tmp_path / "application-owned" / "system-analysis-id"
+    workspace_path.mkdir(parents=True)
+    source_path = workspace_path / "source"
+    source_path.touch()
     calls: list[tuple[list[str], dict[str, object]]] = []
 
     def fake_popen(arguments: list[str], **kwargs: object) -> FakeProcess:
@@ -134,6 +144,8 @@ def test_bounded_decode_uses_null_sink_without_artifacts(
     assert kwargs["stdin"] == subprocess.DEVNULL
     assert kwargs["stdout"] == subprocess.DEVNULL
     assert kwargs["stderr"] == subprocess.DEVNULL
+    assert kwargs["cwd"] == workspace_path
+    assert original_name not in str(kwargs["cwd"])
     if media_type == "video":
         assert arguments[arguments.index("-frames:v") + 1] == "3"
         assert "0:v:0" in arguments

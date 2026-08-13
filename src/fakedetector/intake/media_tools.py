@@ -88,6 +88,7 @@ class FFmpegMediaInspector:
 
     def probe(self, source_path: Path) -> ProbeResult:
         """Return only fields required by the Stage 3 technical-parameter models."""
+        controlled_source_path = source_path.absolute()
         arguments = [
             self._ffprobe_executable,
             "-v",
@@ -104,9 +105,9 @@ class FFmpegMediaInspector:
             ),
             "-of",
             "json",
-            str(source_path),
+            str(controlled_source_path),
         ]
-        output = self._run_probe(arguments)
+        output = self._run_probe(arguments, cwd=controlled_source_path.parent)
         try:
             payload = json.loads(output.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -115,6 +116,7 @@ class FFmpegMediaInspector:
 
     def decode_audio(self, source_path: Path) -> None:
         """Decode at most the first second of the primary audio stream."""
+        controlled_source_path = source_path.absolute()
         self._run_decode(
             [
                 self._ffmpeg_executable,
@@ -129,7 +131,7 @@ class FFmpegMediaInspector:
                 "-analyzeduration",
                 str(_ANALYZE_DURATION_MICROSECONDS),
                 "-i",
-                str(source_path),
+                str(controlled_source_path),
                 "-map",
                 "0:a:0",
                 "-t",
@@ -139,11 +141,13 @@ class FFmpegMediaInspector:
                 "-f",
                 "null",
                 "-",
-            ]
+            ],
+            cwd=controlled_source_path.parent,
         )
 
     def decode_video(self, source_path: Path, *, has_audio: bool) -> None:
         """Decode a few primary video frames and matching bounded audio if present."""
+        controlled_source_path = source_path.absolute()
         mappings = ["-map", "0:v:0"]
         if has_audio:
             mappings.extend(("-map", "0:a:0"))
@@ -161,7 +165,7 @@ class FFmpegMediaInspector:
                 "-analyzeduration",
                 str(_ANALYZE_DURATION_MICROSECONDS),
                 "-i",
-                str(source_path),
+                str(controlled_source_path),
                 *mappings,
                 "-t",
                 str(_BOUNDED_DECODE_SECONDS),
@@ -172,11 +176,12 @@ class FFmpegMediaInspector:
                 "-f",
                 "null",
                 "-",
-            ]
+            ],
+            cwd=controlled_source_path.parent,
         )
 
-    def _run_probe(self, arguments: list[str]) -> bytes:
-        process = self._start(arguments, stdout=subprocess.PIPE)
+    def _run_probe(self, arguments: list[str], *, cwd: Path) -> bytes:
+        process = self._start(arguments, stdout=subprocess.PIPE, cwd=cwd)
         stdout_pipe = process.stdout
         assert stdout_pipe is not None
         output = bytearray()
@@ -216,8 +221,8 @@ class FFmpegMediaInspector:
             raise MediaRejectedError("ffprobe")
         return bytes(output)
 
-    def _run_decode(self, arguments: list[str]) -> None:
-        process = self._start(arguments, stdout=subprocess.DEVNULL)
+    def _run_decode(self, arguments: list[str], *, cwd: Path) -> None:
+        process = self._start(arguments, stdout=subprocess.DEVNULL, cwd=cwd)
         try:
             return_code = process.wait(timeout=self._timeout_seconds)
         except subprocess.TimeoutExpired:
@@ -228,7 +233,7 @@ class FFmpegMediaInspector:
             raise MediaRejectedError("ffmpeg_decode")
 
     @staticmethod
-    def _start(arguments: list[str], *, stdout: int) -> subprocess.Popen[bytes]:
+    def _start(arguments: list[str], *, stdout: int, cwd: Path) -> subprocess.Popen[bytes]:
         try:
             return subprocess.Popen(
                 arguments,
@@ -236,6 +241,7 @@ class FFmpegMediaInspector:
                 stdin=subprocess.DEVNULL,
                 stdout=stdout,
                 stderr=subprocess.DEVNULL,
+                cwd=cwd,
             )
         except OSError:
             raise MediaToolSystemError("process_start") from None

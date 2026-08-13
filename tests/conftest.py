@@ -62,6 +62,7 @@ def media_files(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
         )
 
     for extension in ("mp4", "mov", "avi", "mkv"):
+        metadata_arguments = ["-metadata", "title=webm"] if extension == "mkv" else []
         _run_ffmpeg(
             ffmpeg,
             [
@@ -75,6 +76,7 @@ def media_files(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
                 "mpeg4",
                 "-pix_fmt",
                 "yuv420p",
+                *metadata_arguments,
                 str(root / f"sample.{extension}"),
             ],
         )

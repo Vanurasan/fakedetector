@@ -12,9 +12,10 @@ class RuntimeSetupError(Exception):
 
 def ensure_runtime_directories(config: AppConfig) -> None:
     """Create active directories and verify mandatory media executables."""
+    temporary_storage_path = Path(config.temporary_storage.root_path).absolute()
     setup_error: RuntimeSetupError | None = None
     try:
-        Path(config.temporary_storage.root_path).mkdir(
+        temporary_storage_path.mkdir(
             mode=0o700,
             parents=True,
             exist_ok=True,
@@ -35,6 +36,7 @@ def ensure_runtime_directories(config: AppConfig) -> None:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                cwd=temporary_storage_path,
                 timeout=5.0,
                 check=False,
             )
