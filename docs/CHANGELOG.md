@@ -344,6 +344,13 @@ YYYY-MM-DD
 
 ### Changed
 
+- **[Stage 3/Primary validation] Реализована первичная проверка controlled source
+  по канонической matrix 12 MVP-форматов.** Pillow выполняет полный image decode,
+  системные FFmpeg/ffprobe — bounded probe/decode audio/video; exact per-media
+  limits и рассчитанный intake SHA-256 переиспользуются без cleanup или раскрытия
+  внутреннего path. Pillow добавлен как production dependency, FFmpeg/ffprobe
+  проверяются при startup, а Windows binary intake сохраняет байты без newline-
+  преобразования. Stage 2 domain/schema не изменены.
 - **[Stage 3/4 boundary] Безопасный intake оформлен как законченный use case с
   минимальным временным владением input в Stage 3.** Зафиксированы обязательное
   расширение MVP и `missing_extension`, допустимый nullable declared MIME,

@@ -14,11 +14,13 @@ from fakedetector.intake.temporary_input import (
     ReadableBinaryStream,
     TemporaryInputCleanupError,
 )
+from fakedetector.intake.validation import FileValidator, ValidationSystemError
 
 __all__ = [
     "ControlledInput",
     "ControlledIntakeService",
     "FileTooLargeError",
+    "FileValidator",
     "IntakeCleanupError",
     "IntakeMeasurements",
     "IntakeSystemError",
@@ -26,4 +28,5 @@ __all__ = [
     "OwnedSource",
     "ReadableBinaryStream",
     "TemporaryInputCleanupError",
+    "ValidationSystemError",
 ]

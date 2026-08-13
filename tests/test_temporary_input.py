@@ -156,6 +156,38 @@ def test_released_source_cannot_be_read(tmp_path: Path) -> None:
         pass
 
 
+def test_trusted_local_path_operation_preserves_opaque_active_ownership(tmp_path: Path) -> None:
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    owned_source = owner.create("trusted-operation")
+    owner.ingest(owned_source, BytesIO(b"content"), 100)
+
+    observed = owner.with_local_source_path(
+        owned_source,
+        lambda path: (path.name, path.read_bytes()),
+    )
+
+    assert observed == ("source", b"content")
+    assert not owned_source.is_released
+    assert not hasattr(owned_source, "source_path")
+    owner.cleanup(owned_source)
+
+
+def test_trusted_local_path_operation_rejects_foreign_and_released_handles(
+    tmp_path: Path,
+) -> None:
+    owner = LocalTemporaryInputOwner(tmp_path / "first")
+    foreign_owner = LocalTemporaryInputOwner(tmp_path / "second")
+    owned_source = owner.create("owned")
+    owner.ingest(owned_source, BytesIO(b"content"), 100)
+
+    with pytest.raises(IntakeSystemError):
+        foreign_owner.with_local_source_path(owned_source, lambda path: path)
+
+    owner.cleanup(owned_source)
+    with pytest.raises(IntakeSystemError):
+        owner.with_local_source_path(owned_source, lambda path: path)
+
+
 def test_cleanup_failure_keeps_ownership_active_and_does_not_remove_foreign_data(
     tmp_path: Path,
 ) -> None:
@@ -215,6 +247,20 @@ def test_short_write_is_completed_without_losing_bytes(tmp_path: Path, monkeypat
     assert writes == 3
     assert measurements.size_bytes == 6
     assert (tmp_path / "temp" / "short-write" / "source").read_bytes() == b"abcdef"
+    owner.cleanup(owned_source)
+
+
+def test_binary_newline_bytes_are_not_translated_on_windows(tmp_path: Path) -> None:
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    owned_source = owner.create("binary-newlines")
+    payload = b"before\ninside\r\nafter\r"
+
+    measurements = owner.ingest(owned_source, BytesIO(payload), 100)
+
+    with owner.open_for_read(owned_source) as source:
+        assert source.read() == payload
+    assert measurements.size_bytes == len(payload)
+    assert measurements.sha256 == hashlib.sha256(payload).hexdigest()
     owner.cleanup(owned_source)
 
 

@@ -555,17 +555,50 @@ def test_env_server_port_converted_to_int() -> None:
         Path(tmp_path).unlink(missing_ok=True)
 
 
-def test_env_bool_override() -> None:
-    """Boolean settings can be overridden via env var."""
+def test_env_cannot_disable_mandatory_primary_validation() -> None:
+    """An env override cannot disable a check required by the Stage 3 contract."""
     tmp_path = _write_temp_yaml(_MINIMAL_YAML)
     try:
-        config = load_config(
-            tmp_path,
-            env={"FAKEDETECTOR_VALIDATION__CHECK_EXTENSION": "false"},
-        )
-        assert config.validation.check_extension is False
+        with pytest.raises(ConfigurationError, match="environment variable"):
+            load_config(
+                tmp_path,
+                env={"FAKEDETECTOR_VALIDATION__CHECK_EXTENSION": "false"},
+            )
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_empty_allowed_formats_section_uses_canonical_mvp_matrix() -> None:
+    config = AppConfig.model_validate(
+        {
+            "schema_version": "1.0",
+            "server": {},
+            "access_channels": {},
+            "limits": {},
+            "allowed_formats": {},
+            "validation": {},
+            "temporary_storage": {},
+            "preprocessing": {},
+            "analyzers": {},
+            "risk_assessment": {},
+            "result": {},
+            "error_handling": {},
+            "logging": {},
+            "external_systems": {},
+        }
+    )
+
+    assert config.allowed_formats.image.extensions == ["jpg", "jpeg", "png", "webp"]
+    assert config.allowed_formats.audio.extensions == ["wav", "mp3", "flac", "m4a"]
+    assert config.allowed_formats.video.extensions == ["mp4", "mov", "avi", "mkv"]
+
+
+def test_noncanonical_allowed_formats_are_rejected() -> None:
+    data = yaml.safe_load(_MINIMAL_YAML)
+    data["allowed_formats"]["image"]["extensions"].remove("webp")
+
+    with pytest.raises(PydanticValidationError, match="canonical MVP matrix"):
+        AppConfig.model_validate(data)
 
 
 def test_env_without_prefix_ignored() -> None:
