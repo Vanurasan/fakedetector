@@ -574,6 +574,166 @@ handoff Stage 4 принимает ownership и отвечает за дальн
 последующую очистку accepted input. Если handoff не состоялся, ownership остаётся
 у Stage 3.
 
+### 6.7. Прикладной результат Stage 3
+
+Единый integrated intake service возвращает внутренний прикладной результат:
+
+```text
+Stage3Outcome = Stage3Accepted | Stage3Terminal
+```
+
+Это application-level boundary между Stage 3 и downstream lifecycle, а не
+внешний API/JSON contract и не публичная доменная модель Этапа 2. Он не изменяет
+`schema_version` итогового JSON.
+
+Stage 3 не формирует `AnalysisResult`. В частности, запрещено заполнять его
+вымышленными queue timestamps, `config_snapshot_id`, processing values, risk,
+recommendation или файловым дескриптором с неизвестным фактическим размером.
+`AnalysisResult` формируется последующим lifecycle только после появления
+требуемых им фактических данных.
+
+#### `Stage3Accepted`
+
+Успешный результат по смыслу содержит:
+
+- фактический `analysis_id`;
+- время успешной регистрации;
+- `SourceContext`;
+- успешный `ValidationResult`;
+- тот же `ValidatedFileDescriptor`, который присутствует в validation result;
+- непрозрачную controlled source capability, переданную downstream lifecycle.
+
+Обязательные инварианты:
+
+```text
+validation.accepted == true
+validation.validated_file != null
+```
+
+`Stage3Accepted` не является `AnalysisResult`, не получает искусственные
+`AnalysisStatus` или `ProcessingStage` и не содержит findings, risk,
+recommendation, `CleanupResult` или filesystem path. После подтверждённого
+handoff обязанность cleanup больше не принадлежит Stage 3.
+
+#### `Stage3Terminal`
+
+`Stage3Terminal` используется только после успешной регистрации анализа, поэтому
+`analysis_id`, registration timestamp и `SourceContext` обязательны. Результат
+содержит только фактически доступные Stage 3 данные:
+
+- `InputFileDescriptor | null`;
+- `ValidationResult | null`;
+- `ValidatedFileDescriptor | null`;
+- terminal `AnalysisStatus`: только `rejected` или `failed`;
+- terminal `ProcessingStage`: `finished`;
+- `analyzers=[]`;
+- `findings=[]`;
+- completeness=`not_assessed`;
+- final risk level=`null`;
+- recommendation=`null`;
+- `CleanupResult | null` согласно разделу 6.9;
+- массив безопасных `ErrorDetail` с primary reason.
+
+Отсутствующие значения не заменяются placeholders. `ValidationResult` равен
+`null`, если primary validation не запускалась или не завершилась нормативным
+результатом. `ValidatedFileDescriptor` присутствует только если validation была
+успешно завершена до последующего системного сбоя, например failed handoff.
+
+### 6.8. Сбой до регистрации
+
+Если системный `analysis_id` не удалось получить либо успешная Stage 3
+регистрация не была установлена, сервис не создаёт `Stage3Terminal` и не
+фабрикует идентификатор. Такой сбой покидает application boundary как безопасное
+типизированное pre-registration exception.
+
+Pre-registration exception не является validation rejection или
+`AnalysisResult` и не раскрывает исходное сообщение внутреннего исключения,
+filesystem path, traceback или другие implementation details. После успешной
+регистрации обычные системные сбои Stage 3 преобразуются integrated service в
+фактический `Stage3Terminal` со статусом `failed`.
+
+### 6.9. Cleanup terminal outcome
+
+Если `OwnedSource` никогда не был создан, cleanup не требовался и
+`Stage3Terminal.cleanup=null`. `CleanupStatus.NOT_STARTED` не используется как
+неявный синоним «cleanup not required».
+
+Если Stage 3 получил ownership и завершает `rejected` или `failed` до успешного
+handoff, выполняется ровно одна immediate cleanup attempt. Её фактический
+результат записывается в обязательный для этого случая `CleanupResult`.
+Cleanup retry, TTL и quarantine остаются ответственностью Stage 4 и не
+применяются Stage 3.
+
+Cleanup failure не меняет и не маскирует primary outcome:
+
+- validation rejection остаётся `rejected`, validation errors сохраняются, а
+  cleanup failure отражается отдельно в `CleanupResult`;
+- system failure остаётся `failed`, primary safe system error сохраняется, а
+  cleanup error отражается отдельно;
+- handoff failure является `failed`; primary handoff/system cause и cleanup
+  failure сохраняются раздельно.
+
+Результат не должен заявлять успешное удаление, если фактическая cleanup attempt
+завершилась частично или неуспешно.
+
+### 6.10. Pre-detection hard limit
+
+`FileTooLargeError`, возникший во время bounded intake до primary validation,
+является нормативным input rejection:
+
+```text
+status = rejected
+error.code = file_too_large
+validation_result = null
+```
+
+Synthetic `ValidationResult` не создаётся. `observed_size_bytes` означает только
+число байтов, достаточное для подтверждения превышения hard limit, и не выдаётся
+за полный фактический размер внешнего файла.
+
+### 6.11. Accepted ownership handoff
+
+До успешного подтверждения узким downstream receiver port обязанность cleanup
+остаётся у Stage 3. После успешного подтверждения она переходит downstream
+lifecycle. Минимальное внутреннее направление ownership state:
+
+```text
+owned
+→ handed_off
+→ released
+```
+
+Это implementation-private state, а не domain enum или сериализуемый контракт.
+Pre-handoff cleanup terminal outcome переводит `owned` непосредственно в
+`released`, не создавая ложного handoff.
+Handoff имеет move-style semantics: исходная Stage 3 capability после transfer
+недействительна; double transfer, transfer released source и transfer foreign
+ownership запрещены. Успешный handoff запрещает последующий cleanup со стороны
+Stage 3. Если receiver не подтвердил handoff, ownership и cleanup obligation
+остаются у Stage 3 и выполняется одна immediate cleanup attempt.
+
+Узкий receiver port не является универсальным lease/capability framework и не
+реализует Stage 4. Stage 3 заканчивается либо accepted validated descriptor и
+подтверждённым controlled ownership handoff, либо terminal `rejected`/`failed` с
+фактическим pre-handoff cleanup outcome. Concrete downstream lifecycle,
+`AnalysisContext`, state machine, queue, routing, concurrency, executor/process
+lifecycle, artifact registry, eventual accepted-source cleanup, retries, TTL и
+quarantine принадлежат Stage 4.
+
+### 6.12. Adapter-neutral boundary
+
+Integrated Stage 3 service принимает по смыслу:
+
+```text
+binary stream
+original_name
+declared_content_type | null
+SourceContext
+```
+
+Application contract не зависит от FastAPI `UploadFile`. HTTP/WebUI analysis
+wiring реализуется на соответствующей последующей стадии.
+
 ---
 
 ## 7. Контракт предварительной обработки
@@ -1120,8 +1280,10 @@ internal
 input. Невозможность создать workspace, внутренняя ошибка записи и неожиданный
 системный exception относятся к `failed` и не маскируются как invalid input.
 
-Cleanup не добавляется в `ValidationResult`: фактическое удаление отражается
-существующими `CleanupResult` и terminal `AnalysisResult`. Если промежуточные
+Cleanup не добавляется в `ValidationResult`: Stage 3 отражает фактическое удаление
+в `Stage3Terminal.cleanup` согласно разделу 6.9. Последующий lifecycle переносит
+эти фактические данные в `CleanupResult` terminal `AnalysisResult` только когда
+может сформировать весь итоговый результат без placeholders. Если промежуточные
 артефакты не создавались, `intermediate_files_deleted=true` означает, что после
 cleanup промежуточных файлов не осталось; это не утверждение об их создании.
 
@@ -1988,8 +2150,9 @@ WebUI / API
 → InputFileDescriptor + SourceContext
 → temporary owned source
 → ValidationResult
-→ accepted: ValidatedFileDescriptor + opaque owned-source handoff
-  | rejected / failed: cleanup + terminal result
+→ Stage3Outcome
+  | accepted: Stage3Accepted + opaque owned-source handoff
+  | rejected / failed: Stage3Terminal + factual pre-handoff cleanup outcome
 → AnalysisContext
 → PreparedMedia
 → AnalyzerRequest

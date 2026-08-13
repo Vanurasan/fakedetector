@@ -344,6 +344,7 @@ YYYY-MM-DD
 
 ### Changed
 
+- **[Stage 3/Contracts] Зафиксирован внутренний application boundary `Stage3Outcome = Stage3Accepted | Stage3Terminal`.** Stage 3 не фабрикует `AnalysisResult`: pre-registration failure является безопасным typed exception, cleanup равен `null` только при отсутствии временного resource, primary `rejected`/`failed` сохраняется при cleanup failure, а accepted source передаётся move-style handoff; после последнего functional increment Stage 3 проходит отдельный final audit до статуса `DONE`. Внешняя schema `1.0`, Stage 2 models и enums не изменены.
 - **[Stage 3/Primary validation] Реализована первичная проверка controlled source
   по канонической matrix 12 MVP-форматов.** Pillow выполняет полный image decode,
   системные FFmpeg/ffprobe — bounded probe/decode audio/video; exact per-media
