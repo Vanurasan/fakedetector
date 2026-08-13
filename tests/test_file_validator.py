@@ -26,6 +26,7 @@ from fakedetector.intake import (
     ValidationSystemError,
 )
 from fakedetector.intake.media_tools import MediaToolSystemError
+from fakedetector.intake.validation import _classify_header
 
 _RECEIVED_AT = datetime(2026, 8, 13, tzinfo=UTC)
 _MATRIX = [
@@ -322,6 +323,73 @@ def test_webm_renamed_as_mkv_is_unsupported_actual_container(
     assert result.errors[0].code == "unsupported_mime_type"
     assert result.checks[-1].code == "file_signature_valid"
     owner.cleanup(controlled.owned_source)
+
+
+def test_matroska_with_unrelated_webm_title_is_accepted_structurally(
+    tmp_path: Path,
+    media_files: dict[str, Path],
+) -> None:
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    controlled = controlled_source(
+        owner,
+        media_files["mkv"].read_bytes(),
+        original_name="metadata-contamination.mkv",
+    )
+
+    result = FileValidator(
+        config=make_config(tmp_path / "temp"),
+        temporary_input_owner=owner,
+    ).validate(controlled)
+
+    assert result.accepted
+    assert result.errors == []
+    assert result.validated_file is not None
+    assert result.validated_file.detected_mime_type == "video/x-matroska"
+    assert result.validated_file.media_type is MediaType.VIDEO
+    owner.cleanup(controlled.owned_source)
+
+
+def test_ebml_doctype_ignores_values_of_other_structural_elements() -> None:
+    unrelated_element = b"\x42\x87\x86webm\xff\xe2"
+    document_type_element = b"\x42\x82\x88matroska"
+    payload = unrelated_element + document_type_element
+    header = b"\x1aE\xdf\xa3" + bytes([0x80 | len(payload)]) + payload
+
+    candidate = _classify_header(header)
+
+    assert candidate is not None
+    assert candidate.document_type == "matroska"
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        b"\x1aE\xdf\xa3",
+        b"\x1aE\xdf\xa3\x00",
+        b"\x1aE\xdf\xa3\xff",
+        b"\x1aE\xdf\xa3\x90\x42\x82\x88matroska",
+        b"\x1aE\xdf\xa3\x81\x00",
+        b"\x1aE\xdf\xa3\x82\x42\x82",
+        b"\x1aE\xdf\xa3\x83\x42\x82\x00",
+        b"\x1aE\xdf\xa3\x84\x42\x82\x85x",
+        b"\x1aE\xdf\xa3\x83\x42\x86\x80",
+        b"\x1aE\xdf\xa3\x88\x42\x82\x85other",
+    ],
+    ids=[
+        "truncated-header-size",
+        "malformed-header-size-vint",
+        "unknown-header-size",
+        "header-boundary-beyond-buffer",
+        "malformed-element-id-vint",
+        "truncated-element-size",
+        "malformed-element-size-vint",
+        "element-boundary-beyond-header",
+        "missing-doctype",
+        "unsupported-doctype",
+    ],
+)
+def test_malformed_or_unsupported_bounded_ebml_header_is_not_classified(header: bytes) -> None:
+    assert _classify_header(header) is None
 
 
 def test_renamed_media_rejects_matrix_mismatch_before_decode(

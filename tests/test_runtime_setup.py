@@ -189,6 +189,7 @@ def test_verifies_ffmpeg_and_ffprobe_with_safe_bounded_calls(
             "stdin": subprocess.DEVNULL,
             "stdout": subprocess.DEVNULL,
             "stderr": subprocess.DEVNULL,
+            "cwd": (tmp_path / "temp").absolute(),
             "timeout": 5.0,
             "check": False,
         }

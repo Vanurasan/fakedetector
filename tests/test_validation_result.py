@@ -113,6 +113,16 @@ def validation_result_data() -> dict[str, Any]:
     }
 
 
+def rejected_validation_result_data() -> dict[str, Any]:
+    """Return a complete rejected validation result as nested dictionaries."""
+    return {
+        "accepted": False,
+        "checks": [VALIDATION_CHECK_DATA.copy()],
+        "errors": [ERROR_DETAIL_DATA.copy()],
+        "validated_file": None,
+    }
+
+
 def test_validation_check_accepts_all_contract_fields() -> None:
     check = ValidationCheck(**VALIDATION_CHECK_DATA)
 
@@ -253,7 +263,7 @@ def test_validation_result_accepts_validated_file_descriptor() -> None:
     assert result.validated_file is descriptor
 
 
-def test_validation_result_accepts_explicit_null_validated_file() -> None:
+def test_validation_result_accepts_valid_rejection() -> None:
     result = ValidationResult(
         accepted=False,
         checks=[ValidationCheck(**VALIDATION_CHECK_DATA)],
@@ -264,15 +274,45 @@ def test_validation_result_accepts_explicit_null_validated_file() -> None:
     assert result.validated_file is None
 
 
+@pytest.mark.parametrize(
+    ("accepted", "validated_file", "errors"),
+    [
+        (True, None, []),
+        (True, VALIDATED_FILE_DATA, [ERROR_DETAIL_DATA]),
+        (False, None, []),
+        (False, VALIDATED_FILE_DATA, [ERROR_DETAIL_DATA]),
+    ],
+    ids=[
+        "success-without-validated-file",
+        "success-with-errors",
+        "rejection-without-errors",
+        "rejection-with-validated-file",
+    ],
+)
+def test_validation_result_rejects_contradictory_outcomes(
+    accepted: bool,
+    validated_file: dict[str, Any] | None,
+    errors: list[dict[str, Any]],
+) -> None:
+    with pytest.raises(ValidationError):
+        ValidationResult.model_validate(
+            {
+                "accepted": accepted,
+                "checks": [VALIDATION_CHECK_DATA.copy()],
+                "errors": errors,
+                "validated_file": validated_file,
+            }
+        )
+
+
 def test_validation_result_validates_nested_dictionaries_as_contract_models() -> None:
-    data = validation_result_data()
-    data["errors"] = [ERROR_DETAIL_DATA.copy()]
+    data = rejected_validation_result_data()
 
     result = ValidationResult.model_validate(data)
 
     assert isinstance(result.checks[0], ValidationCheck)
     assert isinstance(result.errors[0], ErrorDetail)
-    assert isinstance(result.validated_file, ValidatedFileDescriptor)
+    assert result.validated_file is None
 
 
 @pytest.mark.parametrize("missing_field", ["accepted", "checks", "errors", "validated_file"])
@@ -296,8 +336,7 @@ def test_validation_result_checks_have_validation_check_type() -> None:
 
 
 def test_validation_result_errors_have_error_detail_type() -> None:
-    data = validation_result_data()
-    data["errors"] = [ERROR_DETAIL_DATA.copy()]
+    data = rejected_validation_result_data()
 
     result = ValidationResult.model_validate(data)
 
@@ -306,23 +345,17 @@ def test_validation_result_errors_have_error_detail_type() -> None:
 
 def test_validation_result_model_dump_is_json_compatible() -> None:
     data = validation_result_data()
-    data["errors"] = [
-        {
-            **ERROR_DETAIL_DATA,
-            "safe_details": {"detected_mime_type": "image/jpeg"},
-        }
-    ]
     result = ValidationResult.model_validate(data)
 
     dumped = result.model_dump(mode="json")
 
     assert json.loads(json.dumps(dumped)) == dumped
+    assert set(dumped) == {"accepted", "checks", "errors", "validated_file"}
     assert dumped["validated_file"]["media_type"] == "image"
 
 
 def test_validation_result_json_round_trip() -> None:
-    data = validation_result_data()
-    data["errors"] = [ERROR_DETAIL_DATA.copy()]
+    data = rejected_validation_result_data()
     result = ValidationResult.model_validate(data)
 
     restored = ValidationResult.model_validate_json(result.model_dump_json())
@@ -330,7 +363,7 @@ def test_validation_result_json_round_trip() -> None:
     assert restored == result
     assert isinstance(restored.checks[0], ValidationCheck)
     assert isinstance(restored.errors[0], ErrorDetail)
-    assert isinstance(restored.validated_file, ValidatedFileDescriptor)
+    assert restored.validated_file is None
 
 
 def test_new_models_are_available_by_direct_domain_import() -> None:
