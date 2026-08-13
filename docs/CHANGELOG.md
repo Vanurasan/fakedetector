@@ -342,6 +342,10 @@ YYYY-MM-DD
 
 ### 2026-08-13
 
+### Decision
+
+- **[Stage 4/Lifecycle and cleanup contracts] Принята minimal deterministic local policy и зафиксирована граница первого Stage 4 lifecycle.** `cleanup_retries` означает initial attempt плюс настроенные immediate retries; optional quarantine, workspace/quarantine TTL и deterministic sweeps не очищают active/non-terminal `TaskRegistry` tasks и не вводят durable metadata repository. Stage 4 receiver подтверждает ownership только после identity/context validation, registry reservation, canonical route resolution и successful enqueue; отсутствующий binding `IMAGE`/`AUDIO`/`VIDEO` является internal receiver failure с rollback и Stage 3 cleanup, а не `rejected`. Живое состояние принадлежит typed in-process `TaskRegistry`; Stage 4 не создаёт `AnalysisResult`, не вызывает `ResultRepository.save()` и не фабрикует later-stage facts. Реализация разделена на managed accepted task lifecycle, bounded local execution lifecycle и cleanup recovery с отдельным final audit; запись фиксирует решения, а не их реализацию. External schema `1.0`, existing models/enums, config fields, dependencies, persistence architecture и Stage 3 contract shape/redesign не изменены.
+
 ### Fixed
 
 - **[Stage 3/Audit] Исправлены два finding повторного финального аудита.** `Stage3Terminal` теперь отклоняет противоречия между terminal status, factual validation и отдельным validated descriptor; сбой чтения application-owned ffprobe stdout pipe классифицируется как безопасная infrastructure failure с cleanup/reaping, отдельно от нормативного output overflow. Внешние контракты и schema version не изменены.

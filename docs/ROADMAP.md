@@ -111,11 +111,11 @@ AFTER_MVP
 
 ```text
 Общий статус: IN_PROGRESS
-Текущий этап: Этап 3 — Безопасный приём, временное владение и первичная проверка файлов
-Статус этапа: DONE
-Ближайшее действие: планирование Этапа 4
+Текущий этап: Этап 4 — Жизненный цикл задачи, хранение и маршрутизация
+Статус этапа: IN_PROGRESS
+Ближайшее действие: Stage 4 Increment 1 — Managed accepted task lifecycle
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–3 завершены; Этап 4 ещё не начат
+Реализация программы: Этапы 1–3 завершены; documentation prerequisite Этапа 4 выполнен, functional increments ещё не завершены
 Документационная база: сформирована
 ```
 
@@ -147,7 +147,7 @@ AFTER_MVP
 | 1 | Каркас проекта и конфигурация | DONE | Запускаемое приложение |
 | 2 | Доменные модели и репозитории | DONE | Типизированные модели контрактов |
 | 3 | Приём и первичная проверка файлов | DONE | Безопасно принятый или отклонённый файл |
-| 4 | Жизненный цикл задачи, хранение и маршрутизация | NOT_STARTED | Управляемая задача с очисткой |
+| 4 | Жизненный цикл задачи, хранение и маршрутизация | IN_PROGRESS | Управляемая задача с очисткой |
 | 5 | Предварительная обработка и каркас анализаторов | NOT_STARTED | Единый запуск анализаторов |
 | 6 | Базовые анализаторы и формирование признаков | NOT_STARTED | Реальные нормализованные признаки |
 | 7 | Полнота, риск и рекомендации | NOT_STARTED | Объяснимый итог без псевдовероятности |
@@ -553,12 +553,12 @@ Stage 3 возвращает либо accepted handoff с `ValidatedFileDescript
   terminal `failed` outcome.
 
 Все completion criteria Stage 3 и полный quality barrier прошли. Stage 3 закрыт
-со статусом `DONE`. Ближайшее действие — планирование Этапа 4; Этап 4 остаётся
-`NOT_STARTED`.
+со статусом `DONE`. Принятые Stage 4 contracts не меняют фактически завершённый
+Stage 3 lifecycle.
 
 ---
 
-# Этап 4. Жизненный цикл задачи, хранение и маршрутизация — NOT_STARTED
+# Этап 4. Жизненный цикл задачи, хранение и маршрутизация — IN_PROGRESS
 
 ## Цель
 
@@ -568,67 +568,117 @@ Stage 3 возвращает либо accepted handoff с `ValidatedFileDescript
 
 ## Обязательные задачи
 
-### Workspace после handoff
+### Documentation prerequisite — Lifecycle and cleanup contract — DONE
 
-- [ ] принять ownership исходного controlled source от Stage 3;
-- [ ] продолжать использовать изолированный workspace конкретного `analysis_id`;
-- [ ] размещать только необходимые рабочие данные дальнейшего lifecycle;
-- [ ] сохранить ограниченный доступ к workspace;
-- [ ] реализовать реестр будущих preprocessing-артефактов;
-- [ ] исключить прямое включение пользовательских строк в пути новых артефактов.
+Ветка: `docs/stage4-lifecycle-cleanup-contract`.
 
-### Жизненный цикл
+- [x] зафиксировать receiver/handoff commit и rollback provisional state;
+- [x] уточнить canonical `MediaType` routing и internal missing-binding failure;
+- [x] определить in-process `TaskRegistry`, `AnalysisContext` и internal
+  `AnalysisTask` boundary;
+- [x] отделить Stage 4 task state от `AnalysisResult` и `ResultRepository` Stage 8;
+- [x] принять Option A cleanup retry/TTL/quarantine policy и active-task exclusion;
+- [x] определить deterministic sweep triggers и conservative entry handling;
+- [x] декомпозировать Stage 4 на три functional increments и отдельный final audit.
 
-- [ ] реализовать состояния и этапы из `CONTRACTS.md`;
-- [ ] создать и сопровождать полный `AnalysisContext` после принятия ownership;
-- [ ] фиксировать время регистрации, старта и завершения;
-- [ ] запретить недопустимые переходы;
-- [ ] отделить статус задачи от уровня риска;
-- [ ] обеспечить восстановимость общего состояния задачи по доменной модели;
-- [ ] реализовать общий orchestrator/use case.
+Документальная prerequisite не является functional increment: production code,
+tests, config, dependencies, external schema `1.0`, Stage 2 models/enums и Stage 3
+contract shape/redesign не изменены.
 
-### Очередь и параллельность
+### Stage 4 Increment 1 — Managed accepted task lifecycle
 
-- [ ] реализовать внутреннюю очередь;
-- [ ] ограничить параллельность по типу медиа;
-- [ ] не блокировать event loop CPU-нагруженной работой;
-- [ ] предусмотреть отдельный executor/process для тяжёлых операций;
-- [ ] корректно обрабатывать переполнение/остановку.
+Ветка: `feat/stage4-managed-task-lifecycle`.
 
-### Маршрутизация
+Functional vertical slice:
 
-- [ ] отправлять файл по `MediaType`;
-- [ ] исключить неизвестный маршрут;
-- [ ] передавать единый `AnalysisContext`.
+```text
+Stage3Accepted
+→ AnalysisContext / AnalysisTask
+→ state machine
+→ local registry
+→ canonical router
+→ deterministic FIFO queue/run_next
+→ test executor
+→ immediate post-handoff cleanup
+→ terminal task snapshot
+```
 
-### Очистка
+- [ ] подтвердить identity и factual fields `Stage3Accepted`;
+- [ ] создать `AnalysisContext` и internal `AnalysisTask` без ownership capability;
+- [ ] реализовать допустимые state transitions и запрет terminal requeue/restart;
+- [ ] реализовать authoritative local typed in-process `TaskRegistry`;
+- [ ] реализовать canonical routes `IMAGE`, `AUDIO`, `VIDEO` и safe
+  internal/infrastructure failure при отсутствующем binding;
+- [ ] реализовать deterministic FIFO enqueue и явный `run_next`;
+- [ ] фиксировать `queued_at` только после successful enqueue;
+- [ ] выполнить logical receiver commit только после registry reservation, route
+  resolution и successful enqueue, откатывая provisional state при исключении;
+- [ ] выполнить test executor и immediate post-handoff cleanup;
+- [ ] вернуть factual terminal task snapshot без `AnalysisResult` и
+  `ResultRepository.save()`.
 
-- [ ] после handoff выполнять общую lifecycle-очистку в `finally`;
-- [ ] удалять accepted input и все промежуточные файлы Stage 5+;
-- [ ] повторять lifecycle cleanup по настройке;
-- [ ] применять общую TTL policy workspace в рамках lifecycle задачи;
-- [ ] использовать quarantine только при сбое cleanup;
-- [ ] реализовать TTL и повторную очистку quarantine;
-- [ ] фиксировать фактический `CleanupStatus`;
-- [ ] не утверждать успешное удаление при ошибке.
+Исключено из Increment 1: concurrency workers, queue pressure, retries, TTL,
+quarantine, preprocessing, analyzers и persistence `AnalysisResult`.
+
+### Stage 4 Increment 2 — Bounded local execution lifecycle
+
+Ветка: `feat/stage4-bounded-local-execution`.
+
+- [ ] реализовать bounded per-media queues;
+- [ ] реализовать workers и настроенные per-media concurrency limits;
+- [ ] обеспечить exactly-once claim;
+- [ ] определить и проверить overflow behavior;
+- [ ] реализовать start/stop/drain и safe shutdown;
+- [ ] корректно обработать pending/running accepted tasks при shutdown;
+- [ ] изолировать caller/event loop от тяжёлого выполнения.
+
+### Stage 4 Increment 3 — Cleanup recovery
+
+Ветка: `feat/stage4-cleanup-recovery`.
+
+- [ ] реализовать initial cleanup и configured immediate retries;
+- [ ] фиксировать factual partial/failed cleanup без изменения primary status;
+- [ ] реализовать optional quarantine после retry exhaustion;
+- [ ] реализовать workspace TTL с обязательным исключением active/non-terminal
+  `TaskRegistry` entries;
+- [ ] реализовать quarantine TTL и повторные cleanup attempts без durable metadata;
+- [ ] интегрировать sweep при scheduler startup, после terminal task cleanup и при
+  graceful shutdown;
+- [ ] не оставлять abandoned ordinary workspace и не заявлять ложный cleanup
+  success для symlink/suspicious/unknown entries.
 
 ## Обязательные тесты
 
 - [ ] валидные переходы статусов;
 - [ ] недопустимые переходы отклоняются;
 - [ ] ownership accepted input принимается ровно один раз;
+- [ ] enqueue failure откатывает provisional registry state и не подтверждает handoff;
+- [ ] missing canonical route binding приводит к receiver exception и Stage 3 cleanup, а не `rejected`;
+- [ ] `queued_at` отсутствует до successful enqueue;
 - [ ] cleanup accepted input и будущих артефактов выполняется после успеха;
 - [ ] post-handoff cleanup выполняется после исключения;
 - [ ] ошибка удаления отражается;
 - [ ] retry/quarantine/TTL policy применяется только при сбое cleanup;
+- [ ] active/non-terminal task исключается из TTL cleanup независимо от mtime;
+- [ ] sweep triggers и quarantine TTL/retry детерминированы;
 - [ ] ограничения параллельности соблюдаются;
-- [ ] неизвестный тип не проходит маршрутизацию.
+- [ ] Stage 4 не создаёт `AnalysisResult` и не вызывает `ResultRepository.save()`.
 
 ## Критерий завершения
 
 Тестовая задача принимает ownership проверенного source, проходит регистрацию
 дальнейшего lifecycle, очередь, маршрутизацию и post-handoff очистку, а её
-состояние можно восстановить по доменной модели.
+живое состояние правдиво доступно через in-process `TaskRegistry`. Cleanup
+recovery не очищает live tasks, не оставляет ordinary abandoned workspace и не
+выдаёт quarantine за persistent repository. Durable restart recovery и
+`AnalysisResult` persistence не входят в Stage 4.
+
+## Финальный аудит Stage 4
+
+После завершения всех трёх functional increments Stage 4 остаётся
+`IN_PROGRESS`. Затем выполняется отдельный final audit branch. Статус `DONE`
+допустим только после audit `PASS`; ни один functional increment данной
+documentation prerequisite не отмечен выполненным.
 
 ---
 

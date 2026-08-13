@@ -422,10 +422,27 @@ Stage 3 отвечает на вопрос: можно ли безопасно �
 дальнейший lifecycle анализа, очередь, маршрутизацию, состояния и полную
 последующую очистку.
 
+Передача ownership подтверждается не самим вызовом Stage 4 receiver, а его
+нормальным возвратом после логического commit: receiver проверил identity
+`Stage3Accepted`, создал правдивые `AnalysisContext` и внутреннюю задачу,
+зарезервировал запись локального реестра, разрешил канонический маршрут и успешно
+поставил задачу в очередь. До этого commit cleanup owner остаётся Stage 3. Любое
+исключение receiver означает неподтверждённый handoff: provisional Stage 4 state
+откатывается, Stage 3 формирует terminal `failed` и выполняет cleanup. После
+нормального подтверждения ownership окончательно принадлежит Stage 4 и не
+возвращается Stage 3.
+
 Минимальный workspace исходного файла относится к безопасному intake, а не к
 полному lifecycle задачи. Это не объединяет Stage 3 и Stage 4 и не переносит в
 Stage 3 очередь, общий orchestrator, полный `AnalysisContext` или реестр будущих
 артефактов.
+
+Текущее состояние Stage 4 хранится в локальном типизированном in-process
+`TaskRegistry`. Он является authoritative source живого task state, но не
+репозиторием результатов, JSON/DB persistence или механизмом durable recovery
+после перезапуска. Полный `AnalysisResult` и его сохранение через
+`ResultRepository` принадлежат Stage 8; Stage 4 не фабрикует сведения последующих
+этапов ради промежуточной persistence.
 
 **Статус: FIXED.**
 
@@ -690,6 +707,11 @@ list_recent(limit)
 ```text
 JsonFileResultRepository
 ```
+
+`ResultRepository` хранит полный terminal `AnalysisResult`, формируемый на Stage
+8. Stage 4 не вызывает `save()` и не создаёт промежуточный или фиктивный
+`AnalysisResult`; его живое состояние принадлежит отдельному in-process
+`TaskRegistry`.
 
 ### 6.16. Журналирование
 
@@ -1201,7 +1223,20 @@ runtime/
   handle без раскрытия внутреннего пути во внешнем или файловом дескрипторе;
 - до успешной передачи ownership cleanup остаётся ответственностью intake;
 - после передачи ownership дальнейшая очистка относится к lifecycle задачи;
-- `quarantine` используется только при сбое очистки.
+- первая cleanup attempt выполняется всегда, а `cleanup_retries=N` означает до
+  `N` дополнительных немедленных последовательных попыток после неё;
+- `quarantine` используется только после исчерпания cleanup attempts и только
+  при `quarantine_enabled=true`;
+- канонический quarantine path расположен рядом с temporary root:
+  `<temporary_storage.root_path parent>/quarantine/<analysis_id>` (для default
+  layout — `runtime/quarantine/<analysis_id>`), строится только из проверенного
+  системного `analysis_id` и не является долговременным repository;
+- TTL workspace и quarantine обслуживается детерминированными Stage 4 sweeps без
+  отдельного daemon или background timer; живой workspace никогда не очищается
+  только на основании filesystem age.
+
+**Политика cleanup recovery: FIXED — Option A, minimal deterministic local
+policy.**
 
 ### 12.3. Результаты анализа
 
@@ -1850,7 +1885,6 @@ MVP должен включать:
 - механизм аутентификации WebUI;
 - срок хранения результатов;
 - срок хранения логов;
-- правила очистки карантина;
 - rate limiting;
 - эксплуатационный мониторинг;
 - резервное копирование служебных результатов;

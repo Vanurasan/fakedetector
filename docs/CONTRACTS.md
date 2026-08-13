@@ -272,10 +272,39 @@ queued
 
 Уточнение:
 
-- `rejected` обычно возникает на этапах `validation` или `routing`;
+- `rejected` на `routing` зарезервирован для factual normative routing decision
+  после подтверждённого принятия задачи Stage 4; отсутствие внутреннего
+  executor/route binding для уже подтверждённого Stage 3 канонического
+  `MediaType` не является таким решением;
 - `partial` возникает, когда результат пригоден, но покрытие снижено;
 - `failed` возникает при системной ошибке, не позволяющей сформировать пригодную оценку;
 - терминальный статус не возвращается в `queued` или `running` без создания новой задачи повторного анализа.
+
+Stage 4 создаёт задачу в состоянии:
+
+```text
+status = queued
+stage = registered
+```
+
+Каноническая последовательность этапов для принятой Stage 4 задачи начинается
+так:
+
+```text
+registered → routing → queued → preprocessing
+```
+
+`queued_at` появляется только после фактически успешного enqueue, а не при
+registry reservation или route lookup. Переход к `preprocessing` является
+границей ответственности Stage 4. Последующие `analysis`, `finding_formation`,
+`risk_assessment`, `result_formation`, `cleanup`, `persistence` и `finished`
+остаются допустимыми значениями общей state machine, но Stage 4 не утверждает, что
+этапы 5–8 были пройдены.
+
+Terminal lifecycle задачи проходит через `cleanup → finished`. Cleanup failure
+фиксируется отдельно и не переписывает primary terminal status. Terminal task
+нельзя повторно поставить в очередь или перезапустить как ту же задачу; повторный
+analysis требует нового task lifecycle по каноническим контрактам.
 
 ### 3.2. Внутренний контекст задачи `AnalysisContext`
 
@@ -295,6 +324,125 @@ queued
 | `finished_at` | datetime|null | да | Окончание обработки |
 
 `workspace_path` не сериализуется во внешний результат.
+
+`AnalysisContext` впервые создаётся Stage 4 только из фактического
+`Stage3Accepted`: identity, registration time, `SourceContext` и
+`ValidatedFileDescriptor.media_type` не угадываются и не заменяются значениями из
+имени, MIME или external reference. Контекст не содержит ownership capability и
+не используется как lease/handle. Для создаваемого Stage 4 контекста
+`media_type` всегда non-null и равен factual
+`Stage3Accepted.validated_file.media_type`; общая nullable capability поля не
+разрешает Stage 4 терять уже подтверждённый тип.
+
+### 3.3. Внутренняя задача и реестр Stage 4
+
+Internal application model `AnalysisTask` может агрегировать:
+
+- `AnalysisContext`;
+- фактические `ValidationResult` и `ValidatedFileDescriptor` Stage 3;
+- `Stage3Accepted` source data и непрозрачный `AcceptedSource`;
+- registry созданных lifecycle-артефактов;
+- factual `queued_at`;
+- cleanup outcome;
+- безопасные lifecycle errors и primary outcome.
+
+Это внутренний aggregate, который не меняет внешнюю schema `1.0`.
+
+Локальный типизированный in-process `TaskRegistry` является authoritative source
+текущего живого состояния Stage 4. Он не является `ResultRepository`, JSON-
+persistence, базой данных или restart/durable recovery store. Stage 4 не вводит
+восстановление незавершённых задач после перезапуска процесса.
+
+### 3.4. Receiver commit и каноническая маршрутизация
+
+Stage 4 receiver выполняет provisional phase в следующем порядке:
+
+```text
+verify Stage3Accepted identity
+→ build truthful AnalysisContext / AnalysisTask
+→ reserve TaskRegistry entry
+→ resolve canonical route
+→ enqueue successfully
+→ return normally
+```
+
+Нормальный return является логическим handoff commit: только тогда ownership и
+cleanup obligation переходят Stage 4. До него cleanup owner остаётся Stage 3.
+Если любая операция, включая enqueue, завершается исключением, Stage 4 удаляет
+provisional registry/queue state и поднимает безопасное внутреннее исключение;
+handoff не подтверждается, Stage 3 формирует `failed` и выполняет pre-handoff
+cleanup. После нормального receiver confirmation ownership не возвращается Stage
+3.
+
+Route lookup выполняется до handoff commit по фактическому
+`ValidatedFileDescriptor.media_type`. Канонические MVP bindings обязательны для:
+
+```text
+MediaType.IMAGE
+MediaType.AUDIO
+MediaType.VIDEO
+```
+
+Отсутствие binding для одного из этих значений — внутренняя/infrastructure
+receiver initialization failure, а не `unsupported_media_type`, normative input
+rejection или Stage 4 `rejected`. Receiver поднимает безопасное внутреннее
+исключение, оставляя handoff неподтверждённым. Возможность transition
+`routing → rejected` сохраняется для будущей factual downstream policy после
+подтверждённого ownership; Stage 4 MVP может не иметь production path, который
+использует этот transition.
+
+### 3.5. Cleanup recovery и deterministic sweep
+
+Для cleanup, которым уже владеет Stage 4, первая attempt выполняется всегда. Значение
+`cleanup_retries=N` означает `1` initial attempt и до `N` дополнительных
+немедленных последовательных retries; после первого полного success retries не
+выполняются.
+
+Quarantine применяется только при `quarantine_enabled=true` и только после
+исчерпания всех immediate attempts без полного success. Канонический путь:
+
+```text
+<temporary_storage.root_path parent>/quarantine/<analysis_id>
+```
+
+Для default layout это `runtime/quarantine/<analysis_id>`. Путь является
+application-owned, строится только из validated system `analysis_id` и никогда не
+использует filename, MIME, `SourceContext` или external reference. Quarantine —
+не долговременный persistent repository; durable metadata repository для него не
+создаётся.
+
+`ttl_minutes` применяется к stale Stage 4 workspace. Возраст определяется по
+последнему application-owned filesystem modification time, но filesystem age
+никогда не является достаточным условием cleanup. Обязательный invariant:
+
+```text
+workspace eligible for TTL cleanup
+ONLY IF
+analysis_id is NOT present as an active/non-terminal task in TaskRegistry
+```
+
+Janitor запрещено cleanup или quarantine workspace живой задачи независимо от
+его filesystem mtime. Минимальный deterministic MVP sweep запускается при старте
+Stage 4 scheduler, после cleanup terminal task и при graceful shutdown; отдельный
+daemon или background timer не вводится.
+
+Для каждого непосредственного безопасного дочернего workspace sweep:
+
+1. проверяет, что кандидат является direct child и имеет safe analysis-id shape;
+2. исключает active/non-terminal entries authoritative `TaskRegistry`;
+3. определяет TTL eligibility;
+4. выполняет configured cleanup attempts;
+5. применяет quarantine только после retry exhaustion, если он включён.
+
+Symlink и suspicious/unknown entries не follow и не интерпретируются как trusted
+workspace. Они обрабатываются консервативно, и система не заявляет cleanup
+success без фактического безопасного удаления. Полный TOCTOU/no-follow hardening
+остаётся задачей Stage 9.
+
+После `quarantine_ttl_hours` eligible quarantined item получает cleanup attempt
+во время sweep. При success item удаляется. При failure item остаётся в
+quarantine, безопасный технический failure фиксируется/журналируется и success не
+заявляется; следующий eligible sweep может повторить попытку.
 
 ---
 
@@ -613,7 +761,7 @@ validation.validated_file != null
 `Stage3Accepted` не является `AnalysisResult`, не получает искусственные
 `AnalysisStatus` или `ProcessingStage` и не содержит findings, risk,
 recommendation, `CleanupResult` или filesystem path. После подтверждённого
-handoff обязанность cleanup больше не принадлежит Stage 3.
+receiver commit из раздела 3.4 обязанность cleanup больше не принадлежит Stage 3.
 
 #### `Stage3Terminal`
 
@@ -693,9 +841,10 @@ Synthetic `ValidationResult` не создаётся. `observed_size_bytes` оз
 
 ### 6.11. Accepted ownership handoff
 
-До успешного подтверждения узким downstream receiver port обязанность cleanup
-остаётся у Stage 3. После успешного подтверждения она переходит downstream
-lifecycle. Минимальное внутреннее направление ownership state:
+До нормального возврата узкого downstream receiver после полного commit из
+раздела 3.4 обязанность cleanup остаётся у Stage 3. Только после такого
+подтверждения она переходит downstream lifecycle. Минимальное внутреннее
+направление ownership state:
 
 ```text
 owned
@@ -710,7 +859,9 @@ Handoff имеет move-style semantics: исходная Stage 3 capability п�
 недействительна; double transfer, transfer released source и transfer foreign
 ownership запрещены. Успешный handoff запрещает последующий cleanup со стороны
 Stage 3. Если receiver не подтвердил handoff, ownership и cleanup obligation
-остаются у Stage 3 и выполняется одна immediate cleanup attempt.
+остаются у Stage 3 и выполняется одна immediate cleanup attempt. Receiver обязан
+откатить provisional Stage 4 state перед исключением; Stage 3 сохраняет safe
+primary receiver failure отдельно от cleanup outcome.
 
 Узкий receiver port не является универсальным lease/capability framework и не
 реализует Stage 4. Stage 3 заканчивается либо accepted validated descriptor и
@@ -1256,7 +1407,8 @@ internal
 
 #### `rejected`
 
-- ожидаемое нарушение требований к входу обнаружено на validation/routing;
+- ожидаемое нарушение требований к входу обнаружено на validation либо принято
+  factual normative routing decision после подтверждённого Stage 4 ownership;
 - анализаторы не запускались;
 - `findings=[]`;
 - `risk_assessment.final_level=null`;
@@ -1279,6 +1431,10 @@ internal
 типов, пустой или слишком большой файл и повреждённый/безопасно недекодируемый
 input. Невозможность создать workspace, внутренняя ошибка записи и неожиданный
 системный exception относятся к `failed` и не маскируются как invalid input.
+Отсутствие внутреннего Stage 4 route/executor binding для канонического
+`MediaType.IMAGE`, `MediaType.AUDIO` или `MediaType.VIDEO` также является
+internal/infrastructure receiver failure до handoff confirmation, а не
+`unsupported_media_type` или Stage 4 `rejected`.
 
 Cleanup не добавляется в `ValidationResult`: Stage 3 отражает фактическое удаление
 в `Stage3Terminal.cleanup` согласно разделу 6.9. Последующий lifecycle переносит
@@ -1286,6 +1442,10 @@ Cleanup не добавляется в `ValidationResult`: Stage 3 отража�
 может сформировать весь итоговый результат без placeholders. Если промежуточные
 артефакты не создавались, `intermediate_files_deleted=true` означает, что после
 cleanup промежуточных файлов не осталось; это не утверждение об их создании.
+
+Stage 4 не формирует полный `AnalysisResult` и не создаёт его промежуточную или
+фиктивную версию. Он не фабрикует analyzer results, findings, completeness, risk,
+recommendation, processing или persistence facts последующих этапов.
 
 ### 14.5. Полный пример
 
@@ -1462,6 +1622,10 @@ class ResultRepository(Protocol):
     def exists(self, analysis_id: str) -> bool: ...
     def list_recent(self, limit: int) -> list[AnalysisResultSummary]: ...
 ```
+
+`ResultRepository` является repository полного terminal `AnalysisResult` на
+Stage 8. Stage 4 не вызывает `ResultRepository.save()`; его in-process
+`TaskRegistry` не реализует и не заменяет этот интерфейс.
 
 Первая реализация:
 
@@ -1659,6 +1823,10 @@ external_systems
 - `cleanup_retries`;
 - `quarantine_enabled`;
 - `quarantine_ttl_hours`.
+
+Эти существующие поля используются с точной семантикой cleanup attempts,
+workspace/quarantine TTL и sweep из раздела 3.5; дополнительные config fields для
+Stage 4 не вводятся.
 
 #### `preprocessing`
 
