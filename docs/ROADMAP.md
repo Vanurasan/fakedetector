@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 4 — Жизненный цикл задачи, хранение и маршрутизация
 Статус этапа: IN_PROGRESS
-Ближайшее действие: Stage 4 Increment 1 — Managed accepted task lifecycle
+Ближайшее действие: Stage 4 Increment 2 — Bounded local execution lifecycle
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–3 завершены; documentation prerequisite Этапа 4 выполнен, functional increments ещё не завершены
+Реализация программы: Этапы 1–3 завершены; documentation prerequisite и Increment 1 Этапа 4 выполнены
 Документационная база: сформирована
 ```
 
@@ -585,7 +585,7 @@ Stage 3 lifecycle.
 tests, config, dependencies, external schema `1.0`, Stage 2 models/enums и Stage 3
 contract shape/redesign не изменены.
 
-### Stage 4 Increment 1 — Managed accepted task lifecycle
+### Stage 4 Increment 1 — Managed accepted task lifecycle — DONE
 
 Ветка: `feat/stage4-managed-task-lifecycle`.
 
@@ -603,18 +603,18 @@ Stage3Accepted
 → terminal task snapshot
 ```
 
-- [ ] подтвердить identity и factual fields `Stage3Accepted`;
-- [ ] создать `AnalysisContext` и internal `AnalysisTask` без ownership capability;
-- [ ] реализовать допустимые state transitions и запрет terminal requeue/restart;
-- [ ] реализовать authoritative local typed in-process `TaskRegistry`;
-- [ ] реализовать canonical routes `IMAGE`, `AUDIO`, `VIDEO` и safe
+- [x] подтвердить identity и factual fields `Stage3Accepted`;
+- [x] создать `AnalysisContext` и internal `AnalysisTask` без ownership capability;
+- [x] реализовать допустимые state transitions и запрет terminal requeue/restart;
+- [x] реализовать authoritative local typed in-process `TaskRegistry`;
+- [x] реализовать canonical routes `IMAGE`, `AUDIO`, `VIDEO` и safe
   internal/infrastructure failure при отсутствующем binding;
-- [ ] реализовать deterministic FIFO enqueue и явный `run_next`;
-- [ ] фиксировать `queued_at` только после successful enqueue;
-- [ ] выполнить logical receiver commit только после registry reservation, route
+- [x] реализовать deterministic FIFO enqueue и явный `run_next`;
+- [x] фиксировать `queued_at` только после successful enqueue;
+- [x] выполнить logical receiver commit только после registry reservation, route
   resolution и successful enqueue, откатывая provisional state при исключении;
-- [ ] выполнить test executor и immediate post-handoff cleanup;
-- [ ] вернуть factual terminal task snapshot без `AnalysisResult` и
+- [x] выполнить test executor и immediate post-handoff cleanup;
+- [x] вернуть factual terminal task snapshot без `AnalysisResult` и
   `ResultRepository.save()`.
 
 Исключено из Increment 1: concurrency workers, queue pressure, retries, TTL,
