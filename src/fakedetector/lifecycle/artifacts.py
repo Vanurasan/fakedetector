@@ -30,6 +30,8 @@ class WorkspaceArtifactRegistry:
     def __init__(self, workspace_path: Path) -> None:
         self._workspace_path = workspace_path
         self._obligations: dict[str, Path] = {}
+        self._completed: set[str] = set()
+        self._pending_directories: set[Path] = set()
 
     def register(self, artifact_id: str, relative_path: str) -> None:
         """Register one safe application-generated relative file obligation."""
@@ -64,10 +66,14 @@ class WorkspaceArtifactRegistry:
     def cleanup_once(self) -> ArtifactCleanupOutcome:
         """Attempt each registered file exactly once without following directories."""
         completed = True
-        parent_directories: set[Path] = set()
-        for path in self.cleanup_obligations():
+        parent_directories = set(self._pending_directories)
+        for artifact_id in sorted(self._obligations):
+            if artifact_id in self._completed:
+                continue
+            path = self._obligations[artifact_id]
             try:
                 path.unlink(missing_ok=True)
+                self._completed.add(artifact_id)
                 parent_directories.update(
                     parent
                     for parent in path.parents
@@ -79,7 +85,10 @@ class WorkspaceArtifactRegistry:
             try:
                 directory.rmdir()
             except FileNotFoundError:
-                continue
+                self._pending_directories.discard(directory)
             except OSError:
                 completed = False
+                self._pending_directories.add(directory)
+            else:
+                self._pending_directories.discard(directory)
         return ArtifactCleanupOutcome(completed=completed)

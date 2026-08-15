@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import BinaryIO, Literal, Protocol, TypeVar
 
 _SOURCE_NAME = "source"
 _DEFAULT_CHUNK_SIZE = 64 * 1024
+_SYSTEM_ANALYSIS_ID = re.compile(r"^[0-9a-f]{32}$")
 _OperationResult = TypeVar("_OperationResult")
 
 
@@ -57,6 +60,13 @@ class TemporaryInputCleanupError(Exception):
         self.intermediate_files_deleted = intermediate_files_deleted
 
 
+class TemporaryInputQuarantineError(Exception):
+    """Safe failure raised when an owned workspace cannot enter quarantine."""
+
+    def __init__(self) -> None:
+        super().__init__("Temporary input quarantine did not complete.")
+
+
 @dataclass(frozen=True, slots=True)
 class IntakeMeasurements:
     """Size and digest measured during one successful intake pass."""
@@ -82,7 +92,7 @@ class _OwnedResource:
         self.workspace_path = workspace_path
         self.source_path = source_path
         self.owner_token = owner_token
-        self.state: Literal["owned", "handed_off", "released"] = "owned"
+        self.state: Literal["owned", "handed_off", "quarantined", "released"] = "owned"
 
 
 class OwnedSource:
@@ -151,6 +161,10 @@ class AcceptedSource:
     def cleanup(self) -> None:
         """Release the downstream source without exposing physical storage."""
         self._owner.cleanup(self._owned_source)
+
+    def _quarantine(self, modified_at: datetime) -> None:
+        """Move the remaining workspace to the owner's fixed recovery location."""
+        self._owner._quarantine(self._owned_source, modified_at)
 
 
 class LocalTemporaryInputOwner:
@@ -292,6 +306,50 @@ class LocalTemporaryInputOwner:
             ) from None
 
         owned_source._resource.state = "released"
+
+    def _quarantine(self, owned_source: OwnedSource, modified_at: datetime) -> None:
+        """Move one remaining direct workspace to the fixed sibling quarantine."""
+        self._require_own_handle(owned_source)
+        resource = owned_source._resource
+        if (
+            not owned_source._active
+            or resource.state != "handed_off"
+            or _SYSTEM_ANALYSIS_ID.fullmatch(resource.analysis_id) is None
+        ):
+            raise TemporaryInputQuarantineError()
+
+        workspace_path = self._safe_workspace_path(resource.analysis_id)
+        quarantine_root = self._root_path.parent / "quarantine"
+        destination = quarantine_root / resource.analysis_id
+        if (
+            resource.workspace_path != workspace_path
+            or workspace_path.parent != self._root_path
+            or destination.parent != quarantine_root
+        ):
+            raise TemporaryInputQuarantineError()
+
+        try:
+            if workspace_path.is_symlink() or not workspace_path.is_dir():
+                raise TemporaryInputQuarantineError()
+            if quarantine_root.exists():
+                if quarantine_root.is_symlink() or not quarantine_root.is_dir():
+                    raise TemporaryInputQuarantineError()
+            else:
+                quarantine_root.mkdir()
+            if destination.exists() or destination.is_symlink():
+                raise TemporaryInputQuarantineError()
+            workspace_path.rename(destination)
+        except TemporaryInputQuarantineError:
+            raise
+        except OSError:
+            raise TemporaryInputQuarantineError() from None
+
+        resource.workspace_path = destination
+        resource.source_path = destination / _SOURCE_NAME
+        resource.state = "quarantined"
+        with suppress(OSError):
+            timestamp = modified_at.timestamp()
+            os.utime(destination, (timestamp, timestamp))
 
     def _safe_workspace_path(self, analysis_id: str) -> Path:
         """Build one unchanged direct child after cross-platform lexical checks."""

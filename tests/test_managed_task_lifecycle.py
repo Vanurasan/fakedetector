@@ -175,7 +175,12 @@ def make_stage4(
         router=MediaRouter(routes),
         queue=actual_queue,
     )
-    runner = Stage4LifecycleRunner(clock=clock, registry=registry, queue=actual_queue)
+    runner = Stage4LifecycleRunner(
+        config=config,
+        clock=clock,
+        registry=registry,
+        queue=actual_queue,
+    )
     return receiver, runner, registry, actual_queue
 
 
@@ -635,7 +640,7 @@ def test_executor_exception_becomes_safe_failed_and_cleanup_runs_exactly_once(
     assert registry.snapshot(accepted.analysis_id) == finished
 
 
-def test_cleanup_failure_preserves_completed_primary_status_and_is_not_retried(
+def test_cleanup_failure_preserves_completed_primary_status_and_uses_configured_retries(
     tmp_path: Path,
     media_files: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -676,7 +681,7 @@ def test_cleanup_failure_preserves_completed_primary_status_and_is_not_retried(
     assert finished.cleanup is not None
     assert finished.cleanup.status is CleanupStatus.FAILED
     assert finished.cleanup.errors[0].code == "cleanup_failed"
-    assert cleanup_calls == 1
+    assert cleanup_calls == 1 + config.temporary_storage.cleanup_retries
     assert not finished.cleanup.quarantine_used
 
 
