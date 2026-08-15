@@ -11,9 +11,12 @@ from typing import NoReturn
 
 import pytest
 
+import fakedetector.lifecycle.receiver as receiver_module
 from fakedetector.config.models import AppConfig
+from fakedetector.core import Clock
 from fakedetector.domain import (
     AnalysisStatus,
+    CleanupResult,
     CleanupStatus,
     ErrorDetail,
     MediaType,
@@ -64,6 +67,35 @@ class IncrementingClock:
         result = self.current
         self.current += timedelta(seconds=1)
         return result
+
+
+class TerminalFailureClock:
+    def __init__(self, current: datetime = _REGISTERED) -> None:
+        self.current = current
+        self._fail_next = False
+
+    def fail_next(self) -> None:
+        self._fail_next = True
+
+    def now(self) -> datetime:
+        if self._fail_next:
+            self._fail_next = False
+            raise RuntimeError("PRIVATE CLOCK PATH C:\\clock\\source")
+        result = self.current
+        self.current += timedelta(seconds=1)
+        return result
+
+
+class TerminalFailureOwner(LocalTemporaryInputOwner):
+    def __init__(self, root_path: Path, clock: TerminalFailureClock) -> None:
+        super().__init__(root_path)
+        self._clock = clock
+        self.cleanup_calls = 0
+
+    def cleanup(self, owned_source: OwnedSource) -> None:
+        self.cleanup_calls += 1
+        super().cleanup(owned_source)
+        self._clock.fail_next()
 
 
 class SequenceIdGenerator:
@@ -137,7 +169,7 @@ def safe_execution_error() -> ErrorDetail:
 def make_stage3_service(
     *,
     config: AppConfig,
-    clock: IncrementingClock,
+    clock: Clock,
     id_generator: SequenceIdGenerator,
     receiver: Stage4TaskReceiver,
     owner: LocalTemporaryInputOwner,
@@ -160,7 +192,7 @@ def make_stage3_service(
 def make_stage4(
     *,
     config: AppConfig,
-    clock: IncrementingClock,
+    clock: Clock,
     executor: RecordingExecutor,
     bindings: dict[MediaType, RecordingExecutor] | None = None,
     queue: DeterministicTaskQueue | None = None,
@@ -302,11 +334,59 @@ def test_state_machine_rejects_reverse_skip_duplicate_finish_and_terminal_restar
             stage=ProcessingStage.PREPROCESSING,
             started_at=started_at,
         )
-    registry.finish(analysis_id, started_at + timedelta(seconds=1))
+    cleanup = CleanupResult(
+        status=CleanupStatus.COMPLETED,
+        original_file_deleted=True,
+        intermediate_files_deleted=True,
+        quarantine_used=False,
+        finished_at=started_at + timedelta(seconds=1),
+        errors=[],
+    )
+    registry.record_terminal_cleanup_and_finish(analysis_id, cleanup)
     with pytest.raises(LifecycleStateError):
-        registry.finish(analysis_id, started_at + timedelta(seconds=2))
+        registry.record_terminal_cleanup_and_finish(analysis_id, cleanup)
     with pytest.raises(QueueStateError):
         DeterministicTaskQueue().enqueue(task, RecordingExecutor())
+
+
+def test_registry_atomically_records_terminal_cleanup_and_rejects_duplicates(
+    accepted_task: tuple[AnalysisTask, TaskRegistry, RecordingExecutor],
+) -> None:
+    task, registry, _executor = accepted_task
+    analysis_id = task.context.analysis_id
+    finished_at = _REGISTERED + timedelta(minutes=1)
+    registry.claim(analysis_id, _REGISTERED)
+    registry.record_outcome(analysis_id, TaskExecutionOutcome.completed())
+    provisional = CleanupResult(
+        status=CleanupStatus.COMPLETED,
+        original_file_deleted=True,
+        intermediate_files_deleted=True,
+        quarantine_used=False,
+        finished_at=None,
+        errors=[],
+    )
+
+    with pytest.raises(LifecycleStateError):
+        registry.record_terminal_cleanup_and_finish(analysis_id, provisional)
+
+    unchanged = registry.snapshot(analysis_id)
+    assert unchanged.stage is ProcessingStage.CLEANUP
+    assert unchanged.cleanup is None
+    assert unchanged.finished_at is None
+    assert registry.is_active(analysis_id)
+
+    terminal = provisional.model_copy(update={"finished_at": finished_at})
+    registry.record_terminal_cleanup_and_finish(analysis_id, terminal)
+
+    snapshot = registry.snapshot(analysis_id)
+    assert snapshot.stage is ProcessingStage.FINISHED
+    assert snapshot.finished_at == finished_at
+    assert snapshot.cleanup is not None
+    assert snapshot.cleanup.finished_at == finished_at
+    assert not registry.is_active(analysis_id)
+    with pytest.raises(LifecycleStateError):
+        registry.record_terminal_cleanup_and_finish(analysis_id, terminal)
+    assert registry.snapshot(analysis_id) == snapshot
 
 
 def test_state_machine_rejects_prohibited_skip_without_mutation(
@@ -583,13 +663,78 @@ def test_confirmed_queue_preserves_source_until_run_then_completes_and_cleans(
     assert finished.status is AnalysisStatus.COMPLETED
     assert finished.stage is ProcessingStage.FINISHED
     assert finished.started_at is not None
-    assert finished.finished_at is not None
+    assert finished.finished_at == _REGISTERED + timedelta(seconds=3)
     assert finished.cleanup is not None
     assert finished.cleanup.status is CleanupStatus.COMPLETED
+    assert finished.cleanup.finished_at == finished.finished_at
     assert accepted.controlled_source.is_released
     assert not workspace.exists()
     assert executor.calls == [accepted.analysis_id]
     assert runner.run_next() is None
+
+
+@pytest.mark.parametrize(
+    ("raise_error", "expected_status"),
+    [
+        (False, AnalysisStatus.COMPLETED),
+        (True, AnalysisStatus.FAILED),
+    ],
+)
+def test_runner_terminal_clock_failure_uses_post_cleanup_utc_fallback(
+    tmp_path: Path,
+    media_files: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    raise_error: bool,
+    expected_status: AnalysisStatus,
+) -> None:
+    root = tmp_path / "temp"
+    config = make_config(root)
+    clock = TerminalFailureClock()
+    executor = RecordingExecutor(raise_error=raise_error)
+    receiver, runner, registry, queue = make_stage4(
+        config=config,
+        clock=clock,
+        executor=executor,
+    )
+    owner = TerminalFailureOwner(root, clock)
+    service = make_stage3_service(
+        config=config,
+        clock=clock,
+        id_generator=SequenceIdGenerator(f"terminal-clock-{expected_status.value}"),
+        receiver=receiver,
+        owner=owner,
+    )
+    accepted = process_png(service, media_files)
+    assert isinstance(accepted, Stage3Accepted)
+    workspace = root / accepted.analysis_id
+    fallback_time = _REGISTERED + timedelta(hours=1)
+
+    class PostCleanupDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None) -> datetime:
+            assert tz is UTC
+            assert accepted.controlled_source.is_released
+            assert not workspace.exists()
+            return fallback_time
+
+    monkeypatch.setattr(receiver_module, "datetime", PostCleanupDatetime)
+
+    finished = runner.run_next()
+
+    assert finished is not None
+    assert finished.status is expected_status
+    assert finished.stage is ProcessingStage.FINISHED
+    assert finished.finished_at == fallback_time
+    assert finished.cleanup is not None
+    assert finished.cleanup.status is CleanupStatus.COMPLETED
+    assert finished.cleanup.finished_at == fallback_time
+    assert owner.cleanup_calls == 1
+    assert accepted.controlled_source.is_released
+    assert not workspace.exists()
+    assert not registry.is_active(accepted.analysis_id)
+    assert len(queue) == 0
+    assert executor.calls == [accepted.analysis_id]
+    assert "PRIVATE CLOCK" not in repr(finished)
 
 
 def test_executor_exception_becomes_safe_failed_and_cleanup_runs_exactly_once(
