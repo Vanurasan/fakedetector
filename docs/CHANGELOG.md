@@ -342,6 +342,10 @@ YYYY-MM-DD
 
 ### 2026-08-15
 
+### Fixed
+
+- **[Stage 4/S4-AUD-001] Исправлена truthfulness ownership после quarantine.** `AcceptedSource` сохраняет controlled read до release и может удалить свой canonical quarantine resource с idempotent переходом в `released`; janitor TTL recovery синхронизирует тот же live ownership state, а orphan quarantine entries по-прежнему удаляются безопасно напрямую. Persistent regressions покрывают direct cleanup, successful/failed known-resource TTL recovery, orphan recovery, collision и move failure; Stage 4 остаётся `IN_PROGRESS` до повторного независимого final audit.
+
 ### Added
 
 - **[Stage 4/Cleanup recovery] Реализован третий и последний functional increment Stage 4.** Единый post-handoff cleanup выполняет initial attempt и configured immediate retries с factual `completed`/`partial`/`failed` без изменения primary task status, после exhaustion опционально перемещает controlled workspace в sibling quarantine без overwrite, а deterministic startup/post-terminal/shutdown sweeps обслуживают workspace и quarantine TTL. Authoritative `TaskRegistry` coordination исключает active tasks и закрывает registration-vs-cleanup race; suspicious direct entries и symlinks не считаются trusted workspaces. Durable recovery metadata, background daemon, Stage 9 TOCTOU redesign, `AnalysisResult` и persistence не добавлены; Stage 4 остаётся `IN_PROGRESS` до независимого final audit.

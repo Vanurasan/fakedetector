@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
@@ -166,6 +167,10 @@ class AcceptedSource:
         """Move the remaining workspace to the owner's fixed recovery location."""
         self._owner._quarantine(self._owned_source, modified_at)
 
+    def _cleanup_quarantine(self) -> bool:
+        """Release this source only when it owns the current quarantine item."""
+        return self._owner._cleanup_quarantine(self._owned_source)
+
 
 class LocalTemporaryInputOwner:
     """Own exactly one fixed-name source inside each isolated analysis workspace."""
@@ -288,24 +293,73 @@ class LocalTemporaryInputOwner:
         self._require_own_handle(owned_source)
         if not owned_source._active:
             raise IntakeSystemError("ownership")
-        if owned_source._resource.state == "released":
+        resource = owned_source._resource
+        if resource.state == "released":
             return
-        if owned_source._resource.state not in {"owned", "handed_off"}:
+        if resource.state == "quarantined":
+            self._cleanup_quarantined_resource(resource)
+            return
+        if resource.state not in {"owned", "handed_off"}:
             raise IntakeSystemError("ownership")
 
         original_file_deleted = False
         try:
-            owned_source._resource.source_path.unlink(missing_ok=True)
+            resource.source_path.unlink(missing_ok=True)
             original_file_deleted = True
             with suppress(FileNotFoundError):
-                owned_source._resource.workspace_path.rmdir()
+                resource.workspace_path.rmdir()
         except OSError:
             raise TemporaryInputCleanupError(
                 original_file_deleted=original_file_deleted,
                 intermediate_files_deleted=False,
             ) from None
 
-        owned_source._resource.state = "released"
+        resource.state = "released"
+
+    def _cleanup_quarantine(self, owned_source: OwnedSource) -> bool:
+        """Clean the canonical quarantine item only when this capability owns it."""
+        self._require_own_handle(owned_source)
+        if not owned_source._active:
+            raise IntakeSystemError("ownership")
+        if owned_source._resource.state != "quarantined":
+            return False
+        self.cleanup(owned_source)
+        return True
+
+    def _cleanup_quarantined_resource(self, resource: _OwnedResource) -> None:
+        quarantine_root = self._root_path.parent / "quarantine"
+        workspace_path = quarantine_root / resource.analysis_id
+        if (
+            _SYSTEM_ANALYSIS_ID.fullmatch(resource.analysis_id) is None
+            or workspace_path.parent != quarantine_root
+            or resource.workspace_path != workspace_path
+            or resource.source_path != workspace_path / _SOURCE_NAME
+        ):
+            raise TemporaryInputCleanupError()
+
+        try:
+            try:
+                workspace_path.lstat()
+            except FileNotFoundError:
+                resource.state = "released"
+                return
+            if quarantine_root.is_symlink() or not quarantine_root.is_dir():
+                raise OSError
+            if workspace_path.is_symlink() or not workspace_path.is_dir():
+                raise OSError
+            shutil.rmtree(workspace_path)
+        except OSError:
+            try:
+                workspace_path.lstat()
+            except FileNotFoundError:
+                resource.state = "released"
+                return
+            raise TemporaryInputCleanupError(
+                original_file_deleted=False,
+                intermediate_files_deleted=False,
+            ) from None
+
+        resource.state = "released"
 
     def _quarantine(self, owned_source: OwnedSource, modified_at: datetime) -> None:
         """Move one remaining direct workspace to the fixed sibling quarantine."""

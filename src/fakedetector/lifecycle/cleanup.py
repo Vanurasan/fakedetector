@@ -176,7 +176,11 @@ class WorkspaceJanitor:
             if not expired:
                 continue
 
-            def recover_workspace(entry: Path = entry, analysis_id: str = analysis_id) -> str:
+            def recover_workspace(
+                _task: AnalysisTask | None,
+                entry: Path = entry,
+                analysis_id: str = analysis_id,
+            ) -> str:
                 return self._recover_workspace(entry, analysis_id)
 
             outcome = self._registry.cleanup_if_inactive(
@@ -218,7 +222,16 @@ class WorkspaceJanitor:
             if not expired:
                 continue
 
-            def remove_quarantine(entry: Path = entry) -> bool:
+            def remove_quarantine(
+                task: AnalysisTask | None,
+                entry: Path = entry,
+            ) -> bool:
+                if task is not None:
+                    try:
+                        if task.accepted_source._cleanup_quarantine():
+                            return True
+                    except Exception:
+                        return False
                 return self._remove_quarantine(entry)
 
             outcome = self._registry.cleanup_if_inactive(

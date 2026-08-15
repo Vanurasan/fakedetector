@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import NoReturn
@@ -213,6 +214,31 @@ def test_transfer_moves_ownership_and_invalidates_stale_handle(tmp_path: Path) -
     assert accepted_source.is_released
     assert owned_source.is_released
     assert not (tmp_path / "temp" / "moved-source").exists()
+
+
+def test_quarantined_accepted_source_remains_readable_and_cleanup_releases_it(
+    tmp_path: Path,
+) -> None:
+    analysis_id = "a" * 32
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    owned_source = owner.create(analysis_id)
+    owner.ingest(owned_source, BytesIO(b"quarantined-content"), 100)
+    accepted_source = owner.transfer(owned_source)
+    accepted_source._quarantine(datetime(2026, 8, 15, tzinfo=UTC))
+    quarantine_item = tmp_path / "quarantine" / analysis_id
+
+    assert not accepted_source.is_released
+    with accepted_source.open_for_read() as source:
+        assert source.read() == b"quarantined-content"
+
+    accepted_source.cleanup()
+
+    assert not quarantine_item.exists()
+    assert accepted_source.is_released
+    accepted_source.cleanup()
+    assert accepted_source.is_released
+    with pytest.raises(IntakeSystemError), accepted_source.open_for_read():
+        pass
 
 
 def test_transfer_rejects_foreign_and_released_handles(tmp_path: Path) -> None:

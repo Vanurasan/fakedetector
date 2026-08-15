@@ -174,15 +174,15 @@ class TaskRegistry:
     def cleanup_if_inactive(
         self,
         analysis_id: str,
-        cleanup: Callable[[], _CleanupOutcome],
+        cleanup: Callable[[AnalysisTask | None], _CleanupOutcome],
     ) -> _CleanupOutcome | None:
-        """Run local cleanup while reservation cannot race past active exclusion."""
+        """Run cleanup with any inactive task while reservation cannot race it."""
         with self._lock:
             task = self._tasks.get(analysis_id)
             if task is not None and task.context.stage is not ProcessingStage.FINISHED:
                 return None
             self._cleanup_claims.add(analysis_id)
-            return cleanup()
+            return cleanup(task)
 
     def snapshot(self, analysis_id: str) -> TaskSnapshot:
         with self._lock:
