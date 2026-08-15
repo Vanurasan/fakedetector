@@ -20,6 +20,8 @@ from fakedetector.lifecycle.execution import (
     DeterministicTaskQueue,
     LifecycleStateError,
     MediaRouter,
+    TaskExecutor,
+    TaskQueue,
     TaskRegistry,
 )
 from fakedetector.lifecycle.models import (
@@ -48,7 +50,7 @@ class Stage4TaskReceiver:
         clock: Clock,
         registry: TaskRegistry,
         router: MediaRouter,
-        queue: DeterministicTaskQueue,
+        queue: TaskQueue,
     ) -> None:
         self._config = config
         self._clock = clock
@@ -101,6 +103,7 @@ class Stage4TaskReceiver:
             queued_at = self._clock.now()
             self._queue.enqueue(task, executor)
             self._registry.mark_enqueued(analysis_id, queued_at)
+            self._queue.commit(analysis_id)
         except BaseException as error:
             if reserved:
                 self._queue.remove(analysis_id)
@@ -132,6 +135,7 @@ class Stage4LifecycleRunner:
         self._clock = clock
         self._registry = registry
         self._queue = queue
+        self._processor = Stage4TaskProcessor(clock=clock, registry=registry)
 
     def run_next(self) -> TaskSnapshot | None:
         """Execute and finish exactly one queued task, or return None when empty."""
@@ -139,10 +143,33 @@ class Stage4LifecycleRunner:
         if item is None:
             return None
         analysis_id, executor = item
-        task = self._registry.claim(analysis_id, self._clock.now())
+        return self._processor.execute(analysis_id, executor)
+
+
+class Stage4TaskProcessor:
+    """Canonical claim, execution, terminalization, and immediate-cleanup core."""
+
+    def __init__(self, *, clock: Clock, registry: TaskRegistry) -> None:
+        self._clock = clock
+        self._registry = registry
+
+    def execute(self, analysis_id: str, executor: TaskExecutor) -> TaskSnapshot:
+        """Claim and finish one confirmed task, propagating only ``BaseException``."""
+        task = self.claim_execution(analysis_id)
+        return self.execute_claimed(task, executor)
+
+    def claim_execution(self, analysis_id: str) -> AnalysisTask:
+        """Apply the authoritative exactly-once execution claim."""
+        return self._registry.claim(analysis_id, self._clock.now())
+
+    def execute_claimed(self, task: AnalysisTask, executor: TaskExecutor) -> TaskSnapshot:
+        """Finish one task whose exactly-once registry claim already succeeded."""
+        analysis_id = task.context.analysis_id
         termination: BaseException | None = None
         try:
             outcome = executor.execute(task)
+            if not isinstance(outcome, TaskExecutionOutcome):
+                raise TypeError("executor returned an invalid outcome")
         except Exception:
             outcome = TaskExecutionOutcome.failed(_execution_error())
         except BaseException as error:
@@ -150,15 +177,33 @@ class Stage4LifecycleRunner:
             termination = error
 
         self._registry.record_outcome(analysis_id, outcome)
-        task.cleanup_result = _cleanup_once(task, self._clock)
-        finished_at = task.cleanup_result.finished_at
-        if finished_at is None:
-            raise LifecycleStateError()
-        self._registry.finish(analysis_id, finished_at)
-        snapshot = self._registry.snapshot(analysis_id)
+        snapshot = self._cleanup_and_finish(task)
         if termination is not None:
             raise termination
         return snapshot
+
+    def fail_pending(self, analysis_id: str) -> TaskSnapshot:
+        """Fail one confirmed task that never factually started execution."""
+        task = self.claim_pending_failure(analysis_id)
+        return self._cleanup_and_finish(task)
+
+    def claim_pending_failure(self, analysis_id: str) -> AnalysisTask:
+        """Claim a never-started task for shutdown failure terminalization."""
+        return self._registry.fail_pending(analysis_id, _shutdown_error())
+
+    def finish_failed_pending(self, task: AnalysisTask) -> TaskSnapshot:
+        """Cleanup one pending task already claimed for shutdown terminalization."""
+        return self._cleanup_and_finish(task)
+
+    def _cleanup_and_finish(self, task: AnalysisTask) -> TaskSnapshot:
+        analysis_id = task.context.analysis_id
+        cleanup_result = _cleanup_once(task, self._clock)
+        self._registry.record_cleanup(analysis_id, cleanup_result)
+        finished_at = cleanup_result.finished_at
+        if finished_at is None:
+            raise LifecycleStateError()
+        self._registry.finish(analysis_id, finished_at)
+        return self._registry.snapshot(analysis_id)
 
 
 def _workspace_path(root_path: str, analysis_id: str) -> Path:
@@ -232,6 +277,15 @@ def _execution_error() -> ErrorDetail:
         code="internal_error",
         category="internal",
         message="Внутренняя ошибка не позволила выполнить задачу анализа.",
+        retryable=True,
+    )
+
+
+def _shutdown_error() -> ErrorDetail:
+    return ErrorDetail(
+        code="internal_error",
+        category="internal",
+        message="Задача анализа не выполнена из-за остановки обработки.",
         retryable=True,
     )
 
