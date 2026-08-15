@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -10,6 +11,7 @@ from threading import Condition, RLock, Thread
 from fakedetector.config.models import AppConfig
 from fakedetector.core import Clock
 from fakedetector.domain import AnalysisStatus, MediaType, ProcessingStage
+from fakedetector.lifecycle.cleanup import WorkspaceJanitor
 from fakedetector.lifecycle.execution import (
     QueueStateError,
     TaskExecutor,
@@ -17,6 +19,8 @@ from fakedetector.lifecycle.execution import (
 )
 from fakedetector.lifecycle.models import AnalysisTask
 from fakedetector.lifecycle.receiver import Stage4TaskProcessor
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class SchedulerStateError(Exception):
@@ -71,7 +75,12 @@ class BoundedLocalScheduler:
         self._queues = {media_type: deque[_QueueItem]() for media_type in MediaType}
         self._analysis_ids: set[str] = set()
         self._condition = Condition(RLock())
-        self._processor = Stage4TaskProcessor(clock=clock, registry=registry)
+        self._processor = Stage4TaskProcessor(config=config, clock=clock, registry=registry)
+        self._janitor = WorkspaceJanitor(
+            config=config.temporary_storage,
+            clock=clock,
+            registry=registry,
+        )
         self._registry = registry
         self._state = _SchedulerState.NOT_STARTED
         self._drain = True
@@ -110,6 +119,7 @@ class BoundedLocalScheduler:
 
     def start(self) -> None:
         """Create all configured workers and atomically make the scheduler ready."""
+        self._sweep_best_effort()
         with self._condition:
             if self._state is not _SchedulerState.NOT_STARTED:
                 raise SchedulerStateError()
@@ -211,6 +221,8 @@ class BoundedLocalScheduler:
         for thread in threads:
             thread.join()
 
+        self._sweep_best_effort()
+
         with self._condition:
             self._state = _SchedulerState.STOPPED
             self._threads.clear()
@@ -234,6 +246,8 @@ class BoundedLocalScheduler:
                 self._settle_infrastructure_failure(claimed.item.analysis_id)
             except BaseException as error:
                 self._stop_after_worker_termination(error)
+            finally:
+                self._sweep_best_effort()
 
     def _take_next(self, media_type: MediaType) -> _ClaimedItem | None:
         with self._condition:
@@ -255,6 +269,12 @@ class BoundedLocalScheduler:
                 if self._state in {_SchedulerState.SHUTTING_DOWN, _SchedulerState.STOPPED}:
                     return None
                 self._condition.wait()
+
+    def _sweep_best_effort(self) -> None:
+        try:
+            self._janitor.sweep()
+        except Exception:
+            _LOGGER.warning("Stage 4 cleanup recovery sweep failed.")
 
     def _settle_infrastructure_failure(self, analysis_id: str) -> None:
         try:

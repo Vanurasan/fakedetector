@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 4 — Жизненный цикл задачи, хранение и маршрутизация
 Статус этапа: IN_PROGRESS
-Ближайшее действие: Stage 4 Increment 3 — Cleanup recovery
+Ближайшее действие: независимый Stage 4 final audit
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–3 завершены; documentation prerequisite и Increments 1–2 Этапа 4 выполнены
+Реализация программы: Этапы 1–3 завершены; functional implementation Этапа 4 complete, Stage 4 остаётся IN_PROGRESS до final audit
 Документационная база: сформирована
 ```
 
@@ -632,19 +632,19 @@ quarantine, preprocessing, analyzers и persistence `AnalysisResult`.
 - [x] корректно обработать pending/running accepted tasks при shutdown;
 - [x] изолировать caller/event loop от тяжёлого выполнения.
 
-### Stage 4 Increment 3 — Cleanup recovery
+### Stage 4 Increment 3 — Cleanup recovery — DONE
 
 Ветка: `feat/stage4-cleanup-recovery`.
 
-- [ ] реализовать initial cleanup и configured immediate retries;
-- [ ] фиксировать factual partial/failed cleanup без изменения primary status;
-- [ ] реализовать optional quarantine после retry exhaustion;
-- [ ] реализовать workspace TTL с обязательным исключением active/non-terminal
+- [x] реализовать initial cleanup и configured immediate retries;
+- [x] фиксировать factual partial/failed cleanup без изменения primary status;
+- [x] реализовать optional quarantine после retry exhaustion;
+- [x] реализовать workspace TTL с обязательным исключением active/non-terminal
   `TaskRegistry` entries;
-- [ ] реализовать quarantine TTL и повторные cleanup attempts без durable metadata;
-- [ ] интегрировать sweep при scheduler startup, после terminal task cleanup и при
+- [x] реализовать quarantine TTL и повторные cleanup attempts без durable metadata;
+- [x] интегрировать sweep при scheduler startup, после terminal task cleanup и при
   graceful shutdown;
-- [ ] не оставлять abandoned ordinary workspace и не заявлять ложный cleanup
+- [x] не оставлять abandoned ordinary workspace и не заявлять ложный cleanup
   success для symlink/suspicious/unknown entries.
 
 ## Обязательные тесты
@@ -658,9 +658,9 @@ quarantine, preprocessing, analyzers и persistence `AnalysisResult`.
 - [x] cleanup accepted input и будущих артефактов выполняется после успеха;
 - [x] post-handoff cleanup выполняется после исключения;
 - [x] ошибка удаления отражается;
-- [ ] retry/quarantine/TTL policy применяется только при сбое cleanup;
-- [ ] active/non-terminal task исключается из TTL cleanup независимо от mtime;
-- [ ] sweep triggers и quarantine TTL/retry детерминированы;
+- [x] retry/quarantine/TTL policy применяется только при сбое cleanup;
+- [x] active/non-terminal task исключается из TTL cleanup независимо от mtime;
+- [x] sweep triggers и quarantine TTL/retry детерминированы;
 - [x] ограничения параллельности соблюдаются;
 - [x] Stage 4 не создаёт `AnalysisResult` и не вызывает `ResultRepository.save()`.
 
@@ -677,8 +677,8 @@ recovery не очищает live tasks, не оставляет ordinary abando
 
 После завершения всех трёх functional increments Stage 4 остаётся
 `IN_PROGRESS`. Затем выполняется отдельный final audit branch. Статус `DONE`
-допустим только после audit `PASS`; ни один functional increment данной
-documentation prerequisite не отмечен выполненным.
+допустим только после audit `PASS`. Functional implementation Stage 4 complete;
+следующее действие — независимый Stage 4 final audit.
 
 ---
 

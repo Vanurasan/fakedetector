@@ -404,7 +404,7 @@ def test_exactly_once_registry_claim_race_executes_and_cleans_once(tmp_path: Pat
     )
     submit(receiver, owner, "claim-race")
     assert queue.pop_next() is not None
-    processor = Stage4TaskProcessor(clock=UtcClock(), registry=registry)
+    processor = Stage4TaskProcessor(config=config, clock=UtcClock(), registry=registry)
     barrier = Barrier(3)
     outcomes: list[object] = []
 

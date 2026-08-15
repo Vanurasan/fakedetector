@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 from threading import RLock
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from fakedetector.domain import (
     AnalysisStatus,
@@ -17,6 +18,8 @@ from fakedetector.domain import (
     ValidatedFileDescriptor,
 )
 from fakedetector.lifecycle.models import AnalysisTask, TaskExecutionOutcome, TaskSnapshot
+
+_CleanupOutcome = TypeVar("_CleanupOutcome")
 
 
 class LifecycleStateError(Exception):
@@ -143,13 +146,14 @@ class TaskRegistry:
 
     def __init__(self, state_machine: AnalysisStateMachine | None = None) -> None:
         self._tasks: dict[str, AnalysisTask] = {}
+        self._cleanup_claims: set[str] = set()
         self._lock = RLock()
         self._state_machine = state_machine or AnalysisStateMachine()
 
     def reserve(self, task: AnalysisTask) -> None:
         with self._lock:
             analysis_id = task.context.analysis_id
-            if analysis_id in self._tasks:
+            if analysis_id in self._tasks or analysis_id in self._cleanup_claims:
                 raise DuplicateTaskError()
             self._tasks[analysis_id] = task
 
@@ -166,6 +170,19 @@ class TaskRegistry:
         with self._lock:
             task = self._tasks.get(analysis_id)
             return task is not None and task.context.stage is not ProcessingStage.FINISHED
+
+    def cleanup_if_inactive(
+        self,
+        analysis_id: str,
+        cleanup: Callable[[], _CleanupOutcome],
+    ) -> _CleanupOutcome | None:
+        """Run local cleanup while reservation cannot race past active exclusion."""
+        with self._lock:
+            task = self._tasks.get(analysis_id)
+            if task is not None and task.context.stage is not ProcessingStage.FINISHED:
+                return None
+            self._cleanup_claims.add(analysis_id)
+            return cleanup()
 
     def snapshot(self, analysis_id: str) -> TaskSnapshot:
         with self._lock:

@@ -5,6 +5,12 @@ from fakedetector.lifecycle.artifacts import (
     ArtifactRegistrationError,
     WorkspaceArtifactRegistry,
 )
+from fakedetector.lifecycle.cleanup import (
+    SweepIssue,
+    SweepResult,
+    WorkspaceCleanup,
+    WorkspaceJanitor,
+)
 from fakedetector.lifecycle.execution import (
     AnalysisStateMachine,
     DeterministicTaskQueue,
@@ -53,6 +59,8 @@ __all__ = [
     "RouteBindingError",
     "SchedulerStateError",
     "SourceSnapshot",
+    "SweepIssue",
+    "SweepResult",
     "Stage4LifecycleRunner",
     "Stage4ReceiverError",
     "Stage4TaskProcessor",
@@ -64,5 +72,7 @@ __all__ = [
     "TaskRegistry",
     "TaskSnapshot",
     "WorkspaceArtifactRegistry",
+    "WorkspaceCleanup",
+    "WorkspaceJanitor",
     "config_snapshot_fingerprint",
 ]

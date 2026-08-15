@@ -7,15 +7,10 @@ from pathlib import Path, PureWindowsPath
 
 from fakedetector.config.models import AppConfig
 from fakedetector.core import Clock
-from fakedetector.domain import (
-    AnalysisStatus,
-    CleanupResult,
-    CleanupStatus,
-    ErrorDetail,
-    ProcessingStage,
-)
-from fakedetector.intake import Stage3Accepted, TemporaryInputCleanupError
+from fakedetector.domain import AnalysisStatus, ErrorDetail, ProcessingStage
+from fakedetector.intake import Stage3Accepted
 from fakedetector.lifecycle.artifacts import WorkspaceArtifactRegistry
+from fakedetector.lifecycle.cleanup import WorkspaceCleanup
 from fakedetector.lifecycle.execution import (
     DeterministicTaskQueue,
     LifecycleStateError,
@@ -123,11 +118,12 @@ class Stage4TaskReceiver:
 
 
 class Stage4LifecycleRunner:
-    """Run one FIFO task explicitly, terminalize it, and attempt cleanup once."""
+    """Run one FIFO task explicitly, terminalize it, and recover cleanup."""
 
     def __init__(
         self,
         *,
+        config: AppConfig,
         clock: Clock,
         registry: TaskRegistry,
         queue: DeterministicTaskQueue,
@@ -135,7 +131,7 @@ class Stage4LifecycleRunner:
         self._clock = clock
         self._registry = registry
         self._queue = queue
-        self._processor = Stage4TaskProcessor(clock=clock, registry=registry)
+        self._processor = Stage4TaskProcessor(config=config, clock=clock, registry=registry)
 
     def run_next(self) -> TaskSnapshot | None:
         """Execute and finish exactly one queued task, or return None when empty."""
@@ -147,11 +143,12 @@ class Stage4LifecycleRunner:
 
 
 class Stage4TaskProcessor:
-    """Canonical claim, execution, terminalization, and immediate-cleanup core."""
+    """Canonical claim, execution, terminalization, and cleanup-recovery core."""
 
-    def __init__(self, *, clock: Clock, registry: TaskRegistry) -> None:
+    def __init__(self, *, config: AppConfig, clock: Clock, registry: TaskRegistry) -> None:
         self._clock = clock
         self._registry = registry
+        self._cleanup = WorkspaceCleanup(config=config.temporary_storage, clock=clock)
 
     def execute(self, analysis_id: str, executor: TaskExecutor) -> TaskSnapshot:
         """Claim and finish one confirmed task, propagating only ``BaseException``."""
@@ -197,7 +194,7 @@ class Stage4TaskProcessor:
 
     def _cleanup_and_finish(self, task: AnalysisTask) -> TaskSnapshot:
         analysis_id = task.context.analysis_id
-        cleanup_result = _cleanup_once(task, self._clock)
+        cleanup_result = self._cleanup.cleanup_task(task)
         self._registry.record_cleanup(analysis_id, cleanup_result)
         finished_at = cleanup_result.finished_at
         if finished_at is None:
@@ -226,45 +223,6 @@ def _workspace_path(root_path: str, analysis_id: str) -> Path:
     return workspace
 
 
-def _cleanup_once(task: AnalysisTask, clock: Clock) -> CleanupResult:
-    try:
-        intermediate_deleted = task.artifacts.cleanup_once().completed
-    except Exception:
-        intermediate_deleted = False
-
-    original_deleted = False
-    source_intermediates_deleted = False
-    cleanup_failed = False
-    try:
-        task.accepted_source.cleanup()
-        original_deleted = True
-        source_intermediates_deleted = True
-    except TemporaryInputCleanupError as error:
-        original_deleted = error.original_file_deleted
-        source_intermediates_deleted = error.intermediate_files_deleted
-        cleanup_failed = True
-    except Exception:
-        cleanup_failed = True
-
-    intermediate_deleted = intermediate_deleted and source_intermediates_deleted
-    completed = original_deleted and intermediate_deleted and not cleanup_failed
-    if completed:
-        status = CleanupStatus.COMPLETED
-    elif original_deleted or intermediate_deleted:
-        status = CleanupStatus.PARTIAL
-    else:
-        status = CleanupStatus.FAILED
-    errors = [] if completed else [_cleanup_error()]
-    return CleanupResult(
-        status=status,
-        original_file_deleted=original_deleted,
-        intermediate_files_deleted=intermediate_deleted,
-        quarantine_used=False,
-        finished_at=_safe_now(clock),
-        errors=errors,
-    )
-
-
 def _safe_now(clock: Clock) -> datetime | None:
     try:
         return clock.now()
@@ -286,14 +244,5 @@ def _shutdown_error() -> ErrorDetail:
         code="internal_error",
         category="internal",
         message="Задача анализа не выполнена из-за остановки обработки.",
-        retryable=True,
-    )
-
-
-def _cleanup_error() -> ErrorDetail:
-    return ErrorDetail(
-        code="cleanup_failed",
-        category="cleanup",
-        message="Не удалось полностью удалить временные данные.",
         retryable=True,
     )
