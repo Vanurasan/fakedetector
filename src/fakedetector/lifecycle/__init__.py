@@ -15,6 +15,7 @@ from fakedetector.lifecycle.execution import (
     RouteBindingError,
     TaskExecutor,
     TaskNotFoundError,
+    TaskQueue,
     TaskRegistry,
 )
 from fakedetector.lifecycle.models import (
@@ -30,8 +31,10 @@ from fakedetector.lifecycle.models import (
 from fakedetector.lifecycle.receiver import (
     Stage4LifecycleRunner,
     Stage4ReceiverError,
+    Stage4TaskProcessor,
     Stage4TaskReceiver,
 )
+from fakedetector.lifecycle.scheduler import BoundedLocalScheduler, SchedulerStateError
 
 __all__ = [
     "AnalysisContext",
@@ -39,6 +42,7 @@ __all__ = [
     "AnalysisTask",
     "ArtifactCleanupOutcome",
     "ArtifactRegistrationError",
+    "BoundedLocalScheduler",
     "CleanupSnapshot",
     "DeterministicTaskQueue",
     "DuplicateTaskError",
@@ -47,13 +51,16 @@ __all__ = [
     "MediaRouter",
     "QueueStateError",
     "RouteBindingError",
+    "SchedulerStateError",
     "SourceSnapshot",
     "Stage4LifecycleRunner",
     "Stage4ReceiverError",
+    "Stage4TaskProcessor",
     "Stage4TaskReceiver",
     "TaskExecutionOutcome",
     "TaskExecutor",
     "TaskNotFoundError",
+    "TaskQueue",
     "TaskRegistry",
     "TaskSnapshot",
     "WorkspaceArtifactRegistry",

@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 4 — Жизненный цикл задачи, хранение и маршрутизация
 Статус этапа: IN_PROGRESS
-Ближайшее действие: Stage 4 Increment 2 — Bounded local execution lifecycle
+Ближайшее действие: Stage 4 Increment 3 — Cleanup recovery
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–3 завершены; documentation prerequisite и Increment 1 Этапа 4 выполнены
+Реализация программы: Этапы 1–3 завершены; documentation prerequisite и Increments 1–2 Этапа 4 выполнены
 Документационная база: сформирована
 ```
 
@@ -620,17 +620,17 @@ Stage3Accepted
 Исключено из Increment 1: concurrency workers, queue pressure, retries, TTL,
 quarantine, preprocessing, analyzers и persistence `AnalysisResult`.
 
-### Stage 4 Increment 2 — Bounded local execution lifecycle
+### Stage 4 Increment 2 — Bounded local execution lifecycle — DONE
 
 Ветка: `feat/stage4-bounded-local-execution`.
 
-- [ ] реализовать bounded per-media queues;
-- [ ] реализовать workers и настроенные per-media concurrency limits;
-- [ ] обеспечить exactly-once claim;
-- [ ] определить и проверить overflow behavior;
-- [ ] реализовать start/stop/drain и safe shutdown;
-- [ ] корректно обработать pending/running accepted tasks при shutdown;
-- [ ] изолировать caller/event loop от тяжёлого выполнения.
+- [x] реализовать bounded per-media queues;
+- [x] реализовать workers и настроенные per-media concurrency limits;
+- [x] обеспечить exactly-once claim;
+- [x] определить и проверить overflow behavior;
+- [x] реализовать start/stop/drain и safe shutdown;
+- [x] корректно обработать pending/running accepted tasks при shutdown;
+- [x] изолировать caller/event loop от тяжёлого выполнения.
 
 ### Stage 4 Increment 3 — Cleanup recovery
 
@@ -649,20 +649,20 @@ quarantine, preprocessing, analyzers и persistence `AnalysisResult`.
 
 ## Обязательные тесты
 
-- [ ] валидные переходы статусов;
-- [ ] недопустимые переходы отклоняются;
-- [ ] ownership accepted input принимается ровно один раз;
-- [ ] enqueue failure откатывает provisional registry state и не подтверждает handoff;
-- [ ] missing canonical route binding приводит к receiver exception и Stage 3 cleanup, а не `rejected`;
-- [ ] `queued_at` отсутствует до successful enqueue;
-- [ ] cleanup accepted input и будущих артефактов выполняется после успеха;
-- [ ] post-handoff cleanup выполняется после исключения;
-- [ ] ошибка удаления отражается;
+- [x] валидные переходы статусов;
+- [x] недопустимые переходы отклоняются;
+- [x] ownership accepted input принимается ровно один раз;
+- [x] enqueue failure откатывает provisional registry state и не подтверждает handoff;
+- [x] missing canonical route binding приводит к receiver exception и Stage 3 cleanup, а не `rejected`;
+- [x] `queued_at` отсутствует до successful enqueue;
+- [x] cleanup accepted input и будущих артефактов выполняется после успеха;
+- [x] post-handoff cleanup выполняется после исключения;
+- [x] ошибка удаления отражается;
 - [ ] retry/quarantine/TTL policy применяется только при сбое cleanup;
 - [ ] active/non-terminal task исключается из TTL cleanup независимо от mtime;
 - [ ] sweep triggers и quarantine TTL/retry детерминированы;
-- [ ] ограничения параллельности соблюдаются;
-- [ ] Stage 4 не создаёт `AnalysisResult` и не вызывает `ResultRepository.save()`.
+- [x] ограничения параллельности соблюдаются;
+- [x] Stage 4 не создаёт `AnalysisResult` и не вызывает `ResultRepository.save()`.
 
 ## Критерий завершения
 

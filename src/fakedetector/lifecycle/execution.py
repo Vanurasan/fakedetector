@@ -8,7 +8,14 @@ from datetime import datetime
 from threading import RLock
 from typing import Protocol
 
-from fakedetector.domain import AnalysisStatus, MediaType, ProcessingStage, ValidatedFileDescriptor
+from fakedetector.domain import (
+    AnalysisStatus,
+    CleanupResult,
+    ErrorDetail,
+    MediaType,
+    ProcessingStage,
+    ValidatedFileDescriptor,
+)
 from fakedetector.lifecycle.models import AnalysisTask, TaskExecutionOutcome, TaskSnapshot
 
 
@@ -55,6 +62,22 @@ class TaskExecutor(Protocol):
         ...
 
 
+class TaskQueue(Protocol):
+    """Receiver-facing queue port with an explicit non-failing commit boundary."""
+
+    def enqueue(self, task: AnalysisTask, executor: TaskExecutor) -> None:
+        """Reserve local queue capacity for a provisional task."""
+        ...
+
+    def commit(self, analysis_id: str) -> None:
+        """Make one provisional item dispatchable as the final receiver step."""
+        ...
+
+    def remove(self, analysis_id: str) -> None:
+        """Remove a provisional queue reservation during receiver rollback."""
+        ...
+
+
 class AnalysisStateMachine:
     """Validate and apply the narrow Increment 1 status/stage transitions."""
 
@@ -66,7 +89,8 @@ class AnalysisStateMachine:
             (AnalysisStatus.QUEUED, ProcessingStage.QUEUED)
         },
         (AnalysisStatus.QUEUED, ProcessingStage.QUEUED): {
-            (AnalysisStatus.RUNNING, ProcessingStage.PREPROCESSING)
+            (AnalysisStatus.RUNNING, ProcessingStage.PREPROCESSING),
+            (AnalysisStatus.FAILED, ProcessingStage.CLEANUP),
         },
         (AnalysisStatus.RUNNING, ProcessingStage.PREPROCESSING): {
             (AnalysisStatus.COMPLETED, ProcessingStage.CLEANUP),
@@ -137,6 +161,12 @@ class TaskRegistry:
         with self._lock:
             return analysis_id in self._tasks
 
+    def is_active(self, analysis_id: str) -> bool:
+        """Return whether a known task has not factually reached ``finished``."""
+        with self._lock:
+            task = self._tasks.get(analysis_id)
+            return task is not None and task.context.stage is not ProcessingStage.FINISHED
+
     def snapshot(self, analysis_id: str) -> TaskSnapshot:
         with self._lock:
             return self._get(analysis_id).snapshot()
@@ -199,6 +229,28 @@ class TaskRegistry:
             )
             task.errors.extend(error.model_copy(deep=True) for error in outcome.errors)
 
+    def fail_pending(self, analysis_id: str, error: ErrorDetail) -> AnalysisTask:
+        """Claim terminalization, without execution, for one confirmed pending task."""
+        with self._lock:
+            task = self._get(analysis_id)
+            if task.execution_claimed or task.queued_at is None:
+                raise LifecycleStateError()
+            self._state_machine.transition(
+                task,
+                status=AnalysisStatus.FAILED,
+                stage=ProcessingStage.CLEANUP,
+            )
+            task.errors.append(error.model_copy(deep=True))
+            return task
+
+    def record_cleanup(self, analysis_id: str, cleanup_result: CleanupResult) -> None:
+        """Record exactly one factual cleanup outcome while the task owns cleanup."""
+        with self._lock:
+            task = self._get(analysis_id)
+            if task.context.stage is not ProcessingStage.CLEANUP or task.cleanup_result is not None:
+                raise LifecycleStateError()
+            task.cleanup_result = cleanup_result.model_copy(deep=True)
+
     def finish(self, analysis_id: str, finished_at: datetime) -> None:
         with self._lock:
             task = self._get(analysis_id)
@@ -254,6 +306,11 @@ class DeterministicTaskQueue:
             return
         self._items = deque(item for item in self._items if item[0] != analysis_id)
         self._analysis_ids.discard(analysis_id)
+
+    def commit(self, analysis_id: str) -> None:
+        """Preserve the explicit receiver boundary; deterministic items never auto-run."""
+        if analysis_id not in self._analysis_ids:
+            raise QueueStateError()
 
     def pop_next(self) -> tuple[str, TaskExecutor] | None:
         if not self._items:
