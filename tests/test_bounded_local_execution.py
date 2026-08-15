@@ -12,7 +12,7 @@ from threading import Barrier, Event, Lock, Thread, get_ident
 import pytest
 
 from fakedetector.config.models import AppConfig
-from fakedetector.core import UtcClock
+from fakedetector.core import Clock, UtcClock
 from fakedetector.domain import (
     AnalysisStatus,
     AudioTechnicalParameters,
@@ -64,6 +64,23 @@ class FixedClock:
         return _REGISTERED
 
 
+class TerminalFailureClock:
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._fail_next = False
+
+    def fail_next(self) -> None:
+        with self._lock:
+            self._fail_next = True
+
+    def now(self) -> datetime:
+        with self._lock:
+            if self._fail_next:
+                self._fail_next = False
+                raise RuntimeError("PRIVATE CLOCK PATH C:\\clock\\source")
+        return _REGISTERED
+
+
 class CountingOwner(LocalTemporaryInputOwner):
     def __init__(self, root_path: Path) -> None:
         super().__init__(root_path)
@@ -78,6 +95,16 @@ class CountingOwner(LocalTemporaryInputOwner):
     def cleanup_calls(self, analysis_id: str) -> int:
         with self._calls_lock:
             return self._calls[analysis_id]
+
+
+class TerminalFailureOwner(CountingOwner):
+    def __init__(self, root_path: Path, clock: TerminalFailureClock) -> None:
+        super().__init__(root_path)
+        self._clock = clock
+
+    def cleanup(self, owned_source: OwnedSource) -> None:
+        super().cleanup(owned_source)
+        self._clock.fail_next()
 
 
 class BlockingExecutor:
@@ -265,14 +292,16 @@ def make_runtime(
     image: int = 1,
     audio: int = 1,
     video: int = 1,
+    clock: Clock | None = None,
     scheduler_factory: Callable[..., BoundedLocalScheduler] = BoundedLocalScheduler,
 ):
     config = make_config(root, image=image, audio=audio, video=video)
     registry = TaskRegistry()
-    scheduler = scheduler_factory(config=config, clock=UtcClock(), registry=registry)
+    actual_clock = clock or UtcClock()
+    scheduler = scheduler_factory(config=config, clock=actual_clock, registry=registry)
     receiver = Stage4TaskReceiver(
         config=config,
-        clock=UtcClock(),
+        clock=actual_clock,
         registry=registry,
         router=MediaRouter(dict.fromkeys(MediaType, executor)),
         queue=scheduler,
@@ -523,6 +552,37 @@ def test_ordinary_executor_exception_does_not_destroy_worker(tmp_path: Path) -> 
     assert owner.cleanup_calls("ordinary-a") == owner.cleanup_calls("ordinary-b") == 1
 
 
+def test_terminal_clock_failure_does_not_strand_task_or_destroy_worker(tmp_path: Path) -> None:
+    clock = TerminalFailureClock()
+    executor = BlockingExecutor()
+    _config, registry, scheduler, receiver = make_runtime(
+        tmp_path / "temp",
+        executor,
+        clock=clock,
+    )
+    owner = TerminalFailureOwner(tmp_path / "temp", clock)
+    scheduler.start()
+    first = submit(receiver, owner, "worker-clock-first")
+    assert executor.expected_reached.wait(5)
+    second = submit(receiver, owner, "worker-clock-second")
+    executor.release.set()
+    scheduler.shutdown(drain=True)
+
+    for accepted in (first, second):
+        snapshot = registry.snapshot(accepted.analysis_id)
+        assert snapshot.status is AnalysisStatus.COMPLETED
+        assert snapshot.stage is ProcessingStage.FINISHED
+        assert snapshot.finished_at is not None
+        assert snapshot.cleanup is not None
+        assert snapshot.cleanup.status is CleanupStatus.COMPLETED
+        assert snapshot.cleanup.finished_at == snapshot.finished_at
+        assert accepted.controlled_source.is_released
+        assert owner.cleanup_calls(accepted.analysis_id) == 1
+        assert not registry.is_active(accepted.analysis_id)
+    assert executor.calls == ["worker-clock-first", "worker-clock-second"]
+    assert scheduler.is_stopped
+
+
 def test_non_draining_shutdown_fails_pending_without_start_and_waits_for_running(
     tmp_path: Path,
 ) -> None:
@@ -554,6 +614,42 @@ def test_non_draining_shutdown_fails_pending_without_start_and_waits_for_running
     assert executor.calls == ["nondrain-running"]
     assert owner.cleanup_calls("nondrain-running") == 1
     assert owner.cleanup_calls("nondrain-pending") == 1
+    assert scheduler.is_stopped
+
+
+def test_non_draining_pending_terminal_clock_failure_cannot_strand_task(
+    tmp_path: Path,
+) -> None:
+    clock = TerminalFailureClock()
+    executor = BlockingExecutor()
+    _config, registry, scheduler, receiver = make_runtime(
+        tmp_path / "temp",
+        executor,
+        clock=clock,
+    )
+    owner = TerminalFailureOwner(tmp_path / "temp", clock)
+    scheduler.start()
+    submit(receiver, owner, "nondrain-clock-running")
+    assert executor.expected_reached.wait(5)
+    pending_accepted = submit(receiver, owner, "nondrain-clock-pending")
+    shutdown_thread = Thread(target=lambda: scheduler.shutdown(drain=False))
+    shutdown_thread.start()
+    assert scheduler.wait_until_not_accepting(5)
+    executor.release.set()
+    shutdown_thread.join(5)
+
+    pending = registry.snapshot("nondrain-clock-pending")
+    assert pending.status is AnalysisStatus.FAILED
+    assert pending.stage is ProcessingStage.FINISHED
+    assert pending.started_at is None
+    assert pending.finished_at is not None
+    assert pending.cleanup is not None
+    assert pending.cleanup.status is CleanupStatus.COMPLETED
+    assert pending.cleanup.finished_at == pending.finished_at
+    assert pending_accepted.controlled_source.is_released
+    assert owner.cleanup_calls("nondrain-clock-pending") == 1
+    assert not registry.is_active("nondrain-clock-pending")
+    assert executor.calls == ["nondrain-clock-running"]
     assert scheduler.is_stopped
 
 

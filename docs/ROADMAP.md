@@ -113,7 +113,7 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 4 — Жизненный цикл задачи, хранение и маршрутизация
 Статус этапа: IN_PROGRESS
-Ближайшее действие: повторный независимый Stage 4 final audit после исправления S4-AUD-001
+Ближайшее действие: повторный независимый Stage 4 final audit после исправления S4-RERUN-001
 Критические блокеры: отсутствуют
 Реализация программы: Этапы 1–3 завершены; functional implementation Этапа 4 complete, Stage 4 остаётся IN_PROGRESS до final audit
 Документационная база: сформирована
@@ -649,8 +649,11 @@ quarantine, preprocessing, analyzers и persistence `AnalysisResult`.
 
 ### Stage 4 final audit remediation — IN_PROGRESS
 
-- [x] `S4-AUD-001`: синхронизировать factual ownership state quarantined
-  `AcceptedSource` с direct cleanup и janitor TTL recovery;
+- [x] `S4-AUD-001` independently verified closed: factual ownership state
+  quarantined `AcceptedSource` синхронизирован с direct cleanup и janitor TTL
+  recovery;
+- [x] `S4-RERUN-001`: исключить stranded active task при сбое terminal
+  `Clock.now()` после physical cleanup;
 - [ ] повторить независимый Stage 4 final audit.
 
 ## Обязательные тесты
@@ -683,8 +686,9 @@ recovery не очищает live tasks, не оставляет ordinary abando
 
 После завершения всех трёх functional increments Stage 4 остаётся
 `IN_PROGRESS`. Затем выполняется отдельный final audit branch. Статус `DONE`
-допустим только после audit `PASS`. Finding `S4-AUD-001` исправлен; следующее
-действие — повторный независимый Stage 4 final audit.
+допустим только после audit `PASS`. Finding `S4-AUD-001` независимо подтверждён
+закрытым, remediation `S4-RERUN-001` исправлена; следующее действие — повторный
+независимый Stage 4 final audit.
 
 ---
 

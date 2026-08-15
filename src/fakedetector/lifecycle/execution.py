@@ -260,23 +260,28 @@ class TaskRegistry:
             task.errors.append(error.model_copy(deep=True))
             return task
 
-    def record_cleanup(self, analysis_id: str, cleanup_result: CleanupResult) -> None:
-        """Record exactly one factual cleanup outcome while the task owns cleanup."""
+    def record_terminal_cleanup_and_finish(
+        self,
+        analysis_id: str,
+        cleanup_result: CleanupResult,
+    ) -> None:
+        """Atomically record factual cleanup and move its task to ``finished``."""
         with self._lock:
             task = self._get(analysis_id)
-            if task.context.stage is not ProcessingStage.CLEANUP or task.cleanup_result is not None:
+            if (
+                task.context.stage is not ProcessingStage.CLEANUP
+                or task.cleanup_result is not None
+                or cleanup_result.finished_at is None
+            ):
                 raise LifecycleStateError()
-            task.cleanup_result = cleanup_result.model_copy(deep=True)
-
-    def finish(self, analysis_id: str, finished_at: datetime) -> None:
-        with self._lock:
-            task = self._get(analysis_id)
+            recorded_cleanup = cleanup_result.model_copy(deep=True)
             self._state_machine.transition(
                 task,
                 status=task.context.status,
                 stage=ProcessingStage.FINISHED,
-                finished_at=finished_at,
+                finished_at=cleanup_result.finished_at,
             )
+            task.cleanup_result = recorded_cleanup
 
     def _get(self, analysis_id: str) -> AnalysisTask:
         try:

@@ -344,6 +344,7 @@ YYYY-MM-DD
 
 ### Fixed
 
+- **[Stage 4/S4-RERUN-001] Исключена незавершимая active task при сбое terminal clock после physical cleanup.** Отсутствующий post-cleanup timestamp восстанавливается внутренним timezone-aware UTC fallback без повторной очистки и изменения factual primary/cleanup outcomes, после чего cleanup fact и переход `CLEANUP → FINISHED` применяются одной atomic registry operation; `S4-AUD-001` независимо подтверждён закрытым, Stage 4 остаётся `IN_PROGRESS` до повторного независимого final audit.
 - **[Stage 4/S4-AUD-001] Исправлена truthfulness ownership после quarantine.** `AcceptedSource` сохраняет controlled read до release и может удалить свой canonical quarantine resource с idempotent переходом в `released`; janitor TTL recovery синхронизирует тот же live ownership state, а orphan quarantine entries по-прежнему удаляются безопасно напрямую. Persistent regressions покрывают direct cleanup, successful/failed known-resource TTL recovery, orphan recovery, collision и move failure; Stage 4 остаётся `IN_PROGRESS` до повторного независимого final audit.
 
 ### Added

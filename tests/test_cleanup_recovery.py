@@ -167,9 +167,8 @@ def register_finished_task(
     registry.mark_enqueued(analysis_id, _NOW)
     registry.claim(analysis_id, _NOW)
     registry.record_outcome(analysis_id, TaskExecutionOutcome.completed())
-    registry.record_cleanup(analysis_id, cleanup_result)
     assert cleanup_result.finished_at is not None
-    registry.finish(analysis_id, cleanup_result.finished_at)
+    registry.record_terminal_cleanup_and_finish(analysis_id, cleanup_result)
 
 
 @pytest.mark.parametrize(
@@ -342,8 +341,7 @@ def test_failed_primary_outcome_is_preserved_when_cleanup_exhausts(
         config=config.temporary_storage,
         clock=FixedClock(),
     ).cleanup_task(claimed)
-    registry.record_cleanup(analysis_id, cleanup)
-    registry.finish(analysis_id, _NOW)
+    registry.record_terminal_cleanup_and_finish(analysis_id, cleanup)
 
     snapshot = registry.snapshot(analysis_id)
     assert snapshot.status is AnalysisStatus.FAILED

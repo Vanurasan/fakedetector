@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path, PureWindowsPath
 
 from fakedetector.config.models import AppConfig
@@ -13,7 +13,6 @@ from fakedetector.lifecycle.artifacts import WorkspaceArtifactRegistry
 from fakedetector.lifecycle.cleanup import WorkspaceCleanup
 from fakedetector.lifecycle.execution import (
     DeterministicTaskQueue,
-    LifecycleStateError,
     MediaRouter,
     TaskExecutor,
     TaskQueue,
@@ -195,11 +194,11 @@ class Stage4TaskProcessor:
     def _cleanup_and_finish(self, task: AnalysisTask) -> TaskSnapshot:
         analysis_id = task.context.analysis_id
         cleanup_result = self._cleanup.cleanup_task(task)
-        self._registry.record_cleanup(analysis_id, cleanup_result)
-        finished_at = cleanup_result.finished_at
-        if finished_at is None:
-            raise LifecycleStateError()
-        self._registry.finish(analysis_id, finished_at)
+        if cleanup_result.finished_at is None:
+            cleanup_result = cleanup_result.model_copy(
+                update={"finished_at": datetime.now(UTC)},
+            )
+        self._registry.record_terminal_cleanup_and_finish(analysis_id, cleanup_result)
         return self._registry.snapshot(analysis_id)
 
 
