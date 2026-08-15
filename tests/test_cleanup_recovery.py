@@ -11,10 +11,12 @@ from typing import NoReturn
 
 import pytest
 
+import fakedetector.intake.temporary_input as temporary_input_module
 import fakedetector.lifecycle.cleanup as cleanup_module
 from fakedetector.config.models import AppConfig
 from fakedetector.domain import (
     AnalysisStatus,
+    CleanupResult,
     CleanupStatus,
     ErrorDetail,
     ImageTechnicalParameters,
@@ -26,6 +28,7 @@ from fakedetector.domain import (
     ValidationResult,
 )
 from fakedetector.intake import (
+    IntakeSystemError,
     LocalTemporaryInputOwner,
     Stage3Accepted,
     TemporaryInputCleanupError,
@@ -141,6 +144,32 @@ def make_task(root: Path, analysis_id: str) -> tuple[AnalysisTask, LocalTemporar
         artifacts=WorkspaceArtifactRegistry(root / analysis_id),
     )
     return task, owner
+
+
+def register_finished_task(
+    registry: TaskRegistry,
+    task: AnalysisTask,
+    cleanup_result: CleanupResult,
+) -> None:
+    analysis_id = task.context.analysis_id
+    registry.reserve(task)
+    registry.transition(
+        analysis_id,
+        status=AnalysisStatus.QUEUED,
+        stage=ProcessingStage.ROUTING,
+    )
+    registry.bind_route(analysis_id, MediaType.IMAGE)
+    registry.transition(
+        analysis_id,
+        status=AnalysisStatus.QUEUED,
+        stage=ProcessingStage.QUEUED,
+    )
+    registry.mark_enqueued(analysis_id, _NOW)
+    registry.claim(analysis_id, _NOW)
+    registry.record_outcome(analysis_id, TaskExecutionOutcome.completed())
+    registry.record_cleanup(analysis_id, cleanup_result)
+    assert cleanup_result.finished_at is not None
+    registry.finish(analysis_id, cleanup_result.finished_at)
 
 
 @pytest.mark.parametrize(
@@ -351,7 +380,48 @@ def test_quarantine_success_moves_remaining_workspace_without_claiming_cleanup(
     assert not result.intermediate_files_deleted
     assert not (root / analysis_id).exists()
     assert (tmp_path / "quarantine" / analysis_id / "source").is_file()
+
+
+def test_cleanup_after_cleanup_exhaustion_quarantine_releases_same_accepted_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analysis_id = "5" * 32
+    root = tmp_path / "temp"
+    task, owner = make_task(root, analysis_id)
+    config = make_config(root, cleanup_retries=1, quarantine_enabled=True)
+    real_cleanup = owner.cleanup
+    cleanup_calls = 0
+
+    def fail_initial_cleanup(_owned_source) -> NoReturn:
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        raise TemporaryInputCleanupError()
+
+    monkeypatch.setattr(owner, "cleanup", fail_initial_cleanup)
+    result = WorkspaceCleanup(
+        config=config.temporary_storage,
+        clock=FixedClock(),
+    ).cleanup_task(task)
+    monkeypatch.setattr(owner, "cleanup", real_cleanup)
+    quarantine_item = tmp_path / "quarantine" / analysis_id
+
+    assert cleanup_calls == 2
+    assert result.status is CleanupStatus.FAILED
+    assert result.quarantine_used
+    assert quarantine_item.is_dir()
     assert not task.accepted_source.is_released
+    with task.accepted_source.open_for_read() as source:
+        assert source.read() == b"x"
+
+    task.accepted_source.cleanup()
+
+    assert not quarantine_item.exists()
+    assert task.accepted_source.is_released
+    task.accepted_source.cleanup()
+    assert task.accepted_source.is_released
+    with pytest.raises(IntakeSystemError), task.accepted_source.open_for_read():
+        pass
 
 
 def test_quarantine_collision_does_not_overwrite_or_lose_either_item(
@@ -365,6 +435,7 @@ def test_quarantine_collision_does_not_overwrite_or_lose_either_item(
     destination.mkdir(parents=True)
     unrelated = destination / "unrelated"
     unrelated.write_bytes(b"keep")
+    real_cleanup = owner.cleanup
     monkeypatch.setattr(
         owner,
         "cleanup",
@@ -381,6 +452,52 @@ def test_quarantine_collision_does_not_overwrite_or_lose_either_item(
     assert not result.quarantine_used
     assert (root / analysis_id / "source").is_file()
     assert unrelated.read_bytes() == b"keep"
+    assert not task.accepted_source.is_released
+    with task.accepted_source.open_for_read() as source:
+        assert source.read() == b"x"
+    monkeypatch.setattr(owner, "cleanup", real_cleanup)
+    task.accepted_source.cleanup()
+    assert task.accepted_source.is_released
+
+
+def test_quarantine_move_failure_retains_prior_controlled_location_and_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analysis_id = "6" * 32
+    root = tmp_path / "temp"
+    task, owner = make_task(root, analysis_id)
+    config = make_config(root, cleanup_retries=0, quarantine_enabled=True)
+    real_cleanup = owner.cleanup
+    real_rename = Path.rename
+
+    monkeypatch.setattr(
+        owner,
+        "cleanup",
+        lambda _source: (_ for _ in ()).throw(TemporaryInputCleanupError()),
+    )
+
+    def fail_workspace_move(path: Path, target: Path) -> Path:
+        if path == root / analysis_id:
+            raise OSError("PRIVATE MOVE FAILURE")
+        return real_rename(path, target)
+
+    monkeypatch.setattr(Path, "rename", fail_workspace_move)
+    result = WorkspaceCleanup(
+        config=config.temporary_storage,
+        clock=FixedClock(),
+    ).cleanup_task(task)
+
+    assert result.status is CleanupStatus.FAILED
+    assert not result.quarantine_used
+    assert (root / analysis_id / "source").is_file()
+    assert not (tmp_path / "quarantine" / analysis_id).exists()
+    assert not task.accepted_source.is_released
+    with task.accepted_source.open_for_read() as source:
+        assert source.read() == b"x"
+    monkeypatch.setattr(owner, "cleanup", real_cleanup)
+    task.accepted_source.cleanup()
+    assert task.accepted_source.is_released
 
 
 def create_workspace(root: Path, analysis_id: str, modified_at: datetime) -> Path:
@@ -517,7 +634,117 @@ def test_registry_cleanup_claim_closes_registration_race(
     assert not (root / analysis_id).exists()
 
 
-def test_quarantine_ttl_retries_once_per_sweep_and_retains_failure(
+def test_quarantine_ttl_releases_known_controlled_source_through_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analysis_id = "b" * 32
+    root = tmp_path / "temp"
+    task, owner = make_task(root, analysis_id)
+    config = make_config(
+        root,
+        cleanup_retries=0,
+        quarantine_enabled=True,
+        quarantine_ttl_hours=24,
+    )
+    real_cleanup = owner.cleanup
+    monkeypatch.setattr(
+        owner,
+        "cleanup",
+        lambda _source: (_ for _ in ()).throw(TemporaryInputCleanupError()),
+    )
+    cleanup_result = WorkspaceCleanup(
+        config=config.temporary_storage,
+        clock=FixedClock(),
+    ).cleanup_task(task)
+    monkeypatch.setattr(owner, "cleanup", real_cleanup)
+    quarantine_item = tmp_path / "quarantine" / analysis_id
+    os.utime(quarantine_item, ((_NOW - timedelta(hours=24)).timestamp(),) * 2)
+    registry = TaskRegistry()
+    register_finished_task(registry, task, cleanup_result)
+
+    result = WorkspaceJanitor(
+        config=config.temporary_storage,
+        clock=FixedClock(),
+        registry=registry,
+    ).sweep()
+
+    assert result.quarantine_deleted == (analysis_id,)
+    assert result.issues == ()
+    assert not quarantine_item.exists()
+    assert task.accepted_source.is_released
+    task.accepted_source.cleanup()
+    assert task.accepted_source.is_released
+    with pytest.raises(IntakeSystemError), task.accepted_source.open_for_read():
+        pass
+    snapshot = registry.snapshot(analysis_id)
+    assert snapshot.cleanup is not None
+    assert snapshot.cleanup.status is CleanupStatus.FAILED
+    assert snapshot.cleanup.quarantine_used
+
+
+def test_failed_known_quarantine_ttl_cleanup_remains_controlled_and_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analysis_id = "c" * 32
+    root = tmp_path / "temp"
+    task, owner = make_task(root, analysis_id)
+    config = make_config(
+        root,
+        cleanup_retries=0,
+        quarantine_enabled=True,
+        quarantine_ttl_hours=24,
+    )
+    real_cleanup = owner.cleanup
+    monkeypatch.setattr(
+        owner,
+        "cleanup",
+        lambda _source: (_ for _ in ()).throw(TemporaryInputCleanupError()),
+    )
+    cleanup_result = WorkspaceCleanup(
+        config=config.temporary_storage,
+        clock=FixedClock(),
+    ).cleanup_task(task)
+    monkeypatch.setattr(owner, "cleanup", real_cleanup)
+    quarantine_item = tmp_path / "quarantine" / analysis_id
+    os.utime(quarantine_item, ((_NOW - timedelta(hours=24)).timestamp(),) * 2)
+    registry = TaskRegistry()
+    register_finished_task(registry, task, cleanup_result)
+    janitor = WorkspaceJanitor(
+        config=config.temporary_storage,
+        clock=FixedClock(),
+        registry=registry,
+    )
+    real_rmtree = temporary_input_module.shutil.rmtree
+
+    def fail_controlled_cleanup(path: Path) -> NoReturn:
+        assert path == quarantine_item
+        raise OSError("PRIVATE QUARANTINE PATH")
+
+    monkeypatch.setattr(temporary_input_module.shutil, "rmtree", fail_controlled_cleanup)
+    first = janitor.sweep()
+
+    assert first.quarantine_deleted == ()
+    assert len(first.issues) == 1
+    assert first.issues[0].analysis_id == analysis_id
+    assert first.issues[0].code == "quarantine_cleanup_failed"
+    assert "PRIVATE" not in repr(first)
+    assert quarantine_item.is_dir()
+    assert not task.accepted_source.is_released
+    with task.accepted_source.open_for_read() as source:
+        assert source.read() == b"x"
+
+    monkeypatch.setattr(temporary_input_module.shutil, "rmtree", real_rmtree)
+    second = janitor.sweep()
+
+    assert second.quarantine_deleted == (analysis_id,)
+    assert second.issues == ()
+    assert not quarantine_item.exists()
+    assert task.accepted_source.is_released
+
+
+def test_orphan_quarantine_ttl_retries_once_per_sweep_and_retains_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
