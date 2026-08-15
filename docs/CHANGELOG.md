@@ -340,6 +340,12 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-08-15
+
+### Added
+
+- **[Stage 4/Managed task lifecycle] Реализован первый functional increment Stage 4.** Успешный `Stage3Accepted` теперь проходит defensive identity validation, truthful `AnalysisContext`/internal task creation, authoritative in-process registry reservation, canonical media routing и deterministic FIFO enqueue с logical handoff commit; explicit `run_next` выполняет injected test executor, сохраняет primary `completed`/`failed`, делает одну immediate post-handoff cleanup attempt и возвращает безопасный terminal snapshot. Provisional failures откатывают Stage 4 state и оставляют cleanup Stage 3; `AnalysisResult`, `ResultRepository.save()`, concurrency и cleanup recovery не добавлены.
+
 ### 2026-08-13
 
 ### Decision
