@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from threading import Barrier, Event, Lock, Thread, get_ident
@@ -81,6 +81,44 @@ class TerminalFailureClock:
         return _REGISTERED
 
 
+class SequenceClock:
+    def __init__(self, *timestamps: datetime) -> None:
+        self._timestamps = list(timestamps)
+        self._lock = Lock()
+
+    def now(self) -> datetime:
+        with self._lock:
+            if not self._timestamps:
+                raise AssertionError("clock exhausted")
+            return self._timestamps.pop(0)
+
+
+class WorkerArmableClock:
+    def __init__(self, *, initial: datetime) -> None:
+        self._current = initial
+        self._lock = Lock()
+        self._control_thread = get_ident()
+        self._armed = False
+        self._invalid_offset = None
+
+    def arm_invalid_next_worker(self, *, offset: timedelta) -> None:
+        with self._lock:
+            self._armed = True
+            self._invalid_offset = offset
+
+    def now(self) -> datetime:
+        with self._lock:
+            result = self._current
+            self._current += timedelta(seconds=1)
+            if self._armed and get_ident() != self._control_thread:
+                assert self._invalid_offset is not None
+                self._armed = False
+                invalid = result + self._invalid_offset
+                self._invalid_offset = None
+                return invalid
+            return result
+
+
 class CountingOwner(LocalTemporaryInputOwner):
     def __init__(self, root_path: Path) -> None:
         super().__init__(root_path)
@@ -107,6 +145,18 @@ class TerminalFailureOwner(CountingOwner):
         self._clock.fail_next()
 
 
+class EventedOwner(CountingOwner):
+    def __init__(self, root_path: Path, watched_analysis_id: str) -> None:
+        super().__init__(root_path)
+        self.watched_analysis_id = watched_analysis_id
+        self.cleaned = Event()
+
+    def cleanup(self, owned_source: OwnedSource) -> None:
+        super().cleanup(owned_source)
+        if owned_source.analysis_id == self.watched_analysis_id:
+            self.cleaned.set()
+
+
 class BlockingExecutor:
     def __init__(self, expected_running: int = 1) -> None:
         self.release = Event()
@@ -130,6 +180,22 @@ class BlockingExecutor:
         assert self.release.wait(5)
         with self._lock:
             self.running[media_type] -= 1
+        return TaskExecutionOutcome.completed()
+
+
+class SelectiveBlockingExecutor:
+    def __init__(self, blocked_analysis_id: str) -> None:
+        self.blocked_analysis_id = blocked_analysis_id
+        self.release = Event()
+        self.blocked_started = Event()
+        self.calls: list[str] = []
+
+    def execute(self, task) -> TaskExecutionOutcome:
+        analysis_id = task.context.analysis_id
+        self.calls.append(analysis_id)
+        if analysis_id == self.blocked_analysis_id:
+            self.blocked_started.set()
+            assert self.release.wait(5)
         return TaskExecutionOutcome.completed()
 
 
@@ -580,6 +646,48 @@ def test_terminal_clock_failure_does_not_strand_task_or_destroy_worker(tmp_path:
         assert owner.cleanup_calls(accepted.analysis_id) == 1
         assert not registry.is_active(accepted.analysis_id)
     assert executor.calls == ["worker-clock-first", "worker-clock-second"]
+    assert scheduler.is_stopped
+
+
+def test_invalid_started_at_settles_task_without_executor_call_and_worker_remains_usable(
+    tmp_path: Path,
+) -> None:
+    clock = WorkerArmableClock(initial=_REGISTERED)
+    executor = SelectiveBlockingExecutor("valid-start-b")
+    _config, registry, scheduler, receiver = make_runtime(
+        tmp_path / "temp",
+        executor,
+        clock=clock,
+    )
+    owner = EventedOwner(tmp_path / "temp", "invalid-start-a")
+    scheduler.start()
+    clock.arm_invalid_next_worker(offset=timedelta(days=-1))
+    first = submit(receiver, owner, "invalid-start-a")
+    assert owner.cleaned.wait(5)
+    second = submit(receiver, owner, "valid-start-b")
+    assert executor.blocked_started.wait(5)
+    executor.release.set()
+    scheduler.shutdown(drain=True)
+
+    failed = registry.snapshot(first.analysis_id)
+    assert failed.status is AnalysisStatus.FAILED
+    assert failed.stage is ProcessingStage.FINISHED
+    assert failed.started_at is None
+    assert failed.finished_at is not None
+    assert failed.cleanup is not None
+    assert failed.cleanup.finished_at == failed.finished_at
+    assert owner.cleanup_calls(first.analysis_id) == 1
+    assert first.controlled_source.is_released
+    assert not registry.is_active(first.analysis_id)
+
+    completed = registry.snapshot(second.analysis_id)
+    assert completed.status is AnalysisStatus.COMPLETED
+    assert completed.stage is ProcessingStage.FINISHED
+    assert completed.started_at is not None
+    assert completed.started_at >= completed.queued_at  # type: ignore[operator]
+    assert owner.cleanup_calls(second.analysis_id) == 1
+    assert second.controlled_source.is_released
+    assert executor.calls == [second.analysis_id]
     assert scheduler.is_stopped
 
 

@@ -17,6 +17,7 @@ from fakedetector.lifecycle.execution import (
     TaskExecutor,
     TaskQueue,
     TaskRegistry,
+    TimestampValidationError,
 )
 from fakedetector.lifecycle.models import (
     AnalysisContext,
@@ -156,11 +157,16 @@ class Stage4TaskProcessor:
 
     def claim_execution(self, analysis_id: str) -> AnalysisTask:
         """Apply the authoritative exactly-once execution claim."""
-        return self._registry.claim(analysis_id, self._clock.now())
+        try:
+            return self._registry.claim(analysis_id, self._clock.now())
+        except TimestampValidationError:
+            return self._registry.fail_pending(analysis_id, _execution_error())
 
     def execute_claimed(self, task: AnalysisTask, executor: TaskExecutor) -> TaskSnapshot:
         """Finish one task whose exactly-once registry claim already succeeded."""
         analysis_id = task.context.analysis_id
+        if task.context.status is AnalysisStatus.FAILED:
+            return self._cleanup_and_finish(task)
         termination: BaseException | None = None
         try:
             outcome = executor.execute(task)

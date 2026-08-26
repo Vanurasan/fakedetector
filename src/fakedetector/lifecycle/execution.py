@@ -17,6 +17,7 @@ from fakedetector.domain import (
     ProcessingStage,
     ValidatedFileDescriptor,
 )
+from fakedetector.domain.models import validate_utc_datetime
 from fakedetector.lifecycle.models import AnalysisTask, TaskExecutionOutcome, TaskSnapshot
 
 _CleanupOutcome = TypeVar("_CleanupOutcome")
@@ -27,6 +28,10 @@ class LifecycleStateError(Exception):
 
     def __init__(self) -> None:
         super().__init__("Task lifecycle transition is invalid.")
+
+
+class TimestampValidationError(LifecycleStateError):
+    """Safe internal rejection for authoritative timestamp form or chronology."""
 
 
 class DuplicateTaskError(Exception):
@@ -211,6 +216,7 @@ class TaskRegistry:
             task = self._get(analysis_id)
             if task.queued_at is not None or task.context.stage is not ProcessingStage.QUEUED:
                 raise QueueStateError()
+            self._validate_queued_at(task, queued_at)
             task.queued_at = queued_at
 
     def bind_route(self, analysis_id: str, media_type: MediaType) -> None:
@@ -227,6 +233,7 @@ class TaskRegistry:
             task = self._get(analysis_id)
             if task.execution_claimed or task.queued_at is None:
                 raise LifecycleStateError()
+            self._validate_started_at(task, started_at)
             self._state_machine.transition(
                 task,
                 status=AnalysisStatus.RUNNING,
@@ -275,6 +282,10 @@ class TaskRegistry:
             ):
                 raise LifecycleStateError()
             recorded_cleanup = cleanup_result.model_copy(deep=True)
+            finished_at = recorded_cleanup.finished_at
+            if finished_at is None:
+                raise LifecycleStateError()
+            self._validate_finished_at(task, finished_at)
             self._state_machine.transition(
                 task,
                 status=task.context.status,
@@ -282,6 +293,44 @@ class TaskRegistry:
                 finished_at=cleanup_result.finished_at,
             )
             task.cleanup_result = recorded_cleanup
+
+    @staticmethod
+    def _validate_queued_at(task: AnalysisTask, queued_at: datetime) -> None:
+        try:
+            validated = validate_utc_datetime(queued_at, "queued_at")
+        except ValueError:
+            raise TimestampValidationError() from None
+        assert validated is not None
+        if validated < task.context.created_at:
+            raise TimestampValidationError()
+
+    @staticmethod
+    def _validate_started_at(task: AnalysisTask, started_at: datetime) -> None:
+        try:
+            validated = validate_utc_datetime(started_at, "started_at")
+        except ValueError:
+            raise TimestampValidationError() from None
+        assert validated is not None
+        if task.queued_at is None:
+            raise LifecycleStateError()
+        if validated < task.context.created_at or validated < task.queued_at:
+            raise TimestampValidationError()
+
+    @staticmethod
+    def _validate_finished_at(task: AnalysisTask, finished_at: datetime) -> None:
+        try:
+            validated = validate_utc_datetime(finished_at, "finished_at")
+        except ValueError:
+            raise TimestampValidationError() from None
+        assert validated is not None
+        if task.context.started_at is not None:
+            if validated < task.context.started_at:
+                raise TimestampValidationError()
+            return
+        if task.queued_at is None:
+            raise LifecycleStateError()
+        if validated < task.context.created_at or validated < task.queued_at:
+            raise TimestampValidationError()
 
     def _get(self, analysis_id: str) -> AnalysisTask:
         try:
