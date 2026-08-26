@@ -36,6 +36,11 @@ def _validate_utc_datetime(value: datetime | None, field_group: str) -> datetime
     return value
 
 
+def validate_utc_datetime(value: datetime | None, field_group: str) -> datetime | None:
+    """Public reusable UTC validator following the canonical project rule."""
+    return _validate_utc_datetime(value, field_group)
+
+
 def _serialize_utc_datetime(value: datetime | None) -> str | None:
     """Serialize a validated UTC timestamp with the canonical Z suffix."""
     if value is None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from fakedetector.config.models import AppConfig
@@ -20,6 +20,7 @@ from fakedetector.domain import (
     ValidatedFileDescriptor,
     ValidationResult,
 )
+from fakedetector.domain.models import validate_utc_datetime
 from fakedetector.intake import AcceptedSource
 from fakedetector.lifecycle.artifacts import WorkspaceArtifactRegistry
 
@@ -34,11 +35,6 @@ def config_snapshot_fingerprint(config: AppConfig) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
-
-
-def _require_utc(value: datetime, field_name: str) -> None:
-    if value.utcoffset() != timedelta(0):
-        raise ValueError(f"{field_name} must be timezone-aware UTC")
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,11 +57,11 @@ class AnalysisContext:
             raise ValueError("analysis_id must not be empty")
         if not self.config_snapshot_id:
             raise ValueError("config_snapshot_id must not be empty")
-        _require_utc(self.created_at, "created_at")
+        validate_utc_datetime(self.created_at, "created_at")
         if self.started_at is not None:
-            _require_utc(self.started_at, "started_at")
+            validate_utc_datetime(self.started_at, "started_at")
         if self.finished_at is not None:
-            _require_utc(self.finished_at, "finished_at")
+            validate_utc_datetime(self.finished_at, "finished_at")
 
 
 @dataclass(frozen=True, slots=True)

@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 4 — Жизненный цикл задачи, хранение и маршрутизация
 Статус этапа: IN_PROGRESS
-Ближайшее действие: повторный независимый Stage 4 final audit после исправления S4-RERUN-001
+Ближайшее действие: повторный независимый Stage 4 final audit после исправления S4-RERUN2-001
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–3 завершены; functional implementation Этапа 4 complete, Stage 4 остаётся IN_PROGRESS до final audit
+Реализация программы: Этапы 1–3 завершены; все три functional increment Этапа 4 завершены, remediation S4-AUD-001 и S4-RERUN-001 независимо подтверждены закрытыми, remediation S4-RERUN2-001 реализован и локально проверен; authoritative timestamps Stage 4 теперь требуют канонический UTC-form и lifecycle chronology, Stage 4 остаётся IN_PROGRESS до повторного независимого final audit
 Документационная база: сформирована
 ```
 
