@@ -693,17 +693,126 @@ def test_registry_cleanup_claim_closes_registration_race(
     assert entered_cleanup.wait(5)
     registration_thread = Thread(target=register)
     registration_thread.start()
-    assert not registration_finished.is_set()
+    assert registration_finished.wait(5)
+    assert len(registration_errors) == 1
+    assert isinstance(registration_errors[0], DuplicateTaskError)
 
     release_cleanup.set()
     sweep_thread.join(5)
     registration_thread.join(5)
 
-    assert registration_finished.is_set()
-    assert len(registration_errors) == 1
-    assert isinstance(registration_errors[0], DuplicateTaskError)
+    assert not sweep_thread.is_alive()
+    assert not registration_thread.is_alive()
     assert not registry.is_active(analysis_id)
     assert not (root / analysis_id).exists()
+
+
+def test_blocked_filesystem_cleanup_does_not_block_unrelated_registry_reservation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cleanup_id = "1" * 32
+    unrelated_id = "2" * 32
+    root = tmp_path / "temp"
+    create_workspace(root, cleanup_id, _NOW - timedelta(days=1))
+    unrelated_task, _owner = make_task(root, unrelated_id)
+    registry = TaskRegistry()
+    janitor = WorkspaceJanitor(
+        config=make_config(root, quarantine_enabled=False).temporary_storage,
+        clock=authoritative_clock(),
+        registry=registry,
+    )
+    entered_cleanup = Event()
+    release_cleanup = Event()
+    reservation_finished = Event()
+    real_recover = janitor._recover_workspace
+
+    def blocking_recover(entry: Path, candidate_id: str) -> str:
+        entered_cleanup.set()
+        assert release_cleanup.wait(5)
+        return real_recover(entry, candidate_id)
+
+    def reserve_unrelated() -> None:
+        registry.reserve(unrelated_task)
+        reservation_finished.set()
+
+    monkeypatch.setattr(janitor, "_recover_workspace", blocking_recover)
+    sweep_thread = Thread(target=janitor.sweep)
+    sweep_thread.start()
+    assert entered_cleanup.wait(5)
+    reservation_thread = Thread(target=reserve_unrelated)
+    reservation_thread.start()
+
+    assert reservation_finished.wait(5)
+    assert registry.contains(unrelated_id)
+
+    release_cleanup.set()
+    sweep_thread.join(5)
+    reservation_thread.join(5)
+
+    assert not sweep_thread.is_alive()
+    assert not reservation_thread.is_alive()
+    assert not (root / cleanup_id).exists()
+
+
+def test_registry_allows_only_one_cleanup_owner_and_releases_successful_claim() -> None:
+    registry = TaskRegistry()
+    analysis_id = "3" * 32
+    entered_cleanup = Event()
+    release_cleanup = Event()
+    cleanup_finished = Event()
+    callback_calls = 0
+    outcomes: list[str | None] = []
+
+    def blocking_cleanup(_task: AnalysisTask | None) -> str:
+        nonlocal callback_calls
+        callback_calls += 1
+        entered_cleanup.set()
+        assert release_cleanup.wait(5)
+        return "first"
+
+    def run_cleanup() -> None:
+        outcomes.append(registry.cleanup_if_inactive(analysis_id, blocking_cleanup))
+        cleanup_finished.set()
+
+    cleanup_thread = Thread(target=run_cleanup)
+    cleanup_thread.start()
+    assert entered_cleanup.wait(5)
+
+    assert registry.cleanup_if_inactive(analysis_id, lambda _task: "duplicate") is None
+    assert callback_calls == 1
+    assert not cleanup_finished.is_set()
+
+    release_cleanup.set()
+    cleanup_thread.join(5)
+
+    assert not cleanup_thread.is_alive()
+    assert outcomes == ["first"]
+    assert registry.cleanup_if_inactive(analysis_id, lambda _task: "retry") == "retry"
+
+
+def test_registry_releases_cleanup_claim_after_factual_failure() -> None:
+    registry = TaskRegistry()
+    analysis_id = "4" * 32
+
+    assert registry.cleanup_if_inactive(analysis_id, lambda _task: False) is False
+    assert registry.cleanup_if_inactive(analysis_id, lambda _task: True) is True
+
+
+@pytest.mark.parametrize("failure_type", [RuntimeError, KeyboardInterrupt])
+def test_registry_releases_cleanup_claim_after_raised_failure(
+    failure_type: type[BaseException],
+) -> None:
+    registry = TaskRegistry()
+    analysis_id = "5" * 32
+
+    def fail(_task: AnalysisTask | None) -> NoReturn:
+        raise failure_type("PRIVATE CALLBACK FAILURE")
+
+    with pytest.raises(failure_type):
+        registry.cleanup_if_inactive(analysis_id, fail)
+
+    assert registry.cleanup_if_inactive(analysis_id, lambda _task: "retry") == "retry"
 
 
 def test_quarantine_ttl_releases_known_controlled_source_through_owner(

@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 4 — Жизненный цикл задачи, хранение и маршрутизация
 Статус этапа: IN_PROGRESS
-Ближайшее действие: повторный независимый Stage 4 final audit после remediation S4-RERUN3-001
+Ближайшее действие: свежий независимый Stage 4 final audit после remediation S4-RERUN4-001
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–3 завершены; все три functional increment Этапа 4 завершены, historical findings S4-AUD-001, S4-RERUN-001 и S4-RERUN2-001 сохранены; cohesive remediation S4-RERUN3-001 с shared AuthoritativeLifecycleClock и explicit TerminalSettlement реализована и локально проверена; Stage 4 остаётся IN_PROGRESS до повторного независимого final audit
+Реализация программы: Этапы 1–3 завершены; все три functional increment Этапа 4 завершены, historical findings S4-AUD-001, S4-RERUN-001, S4-RERUN2-001 и S4-RERUN3-001 сохранены; remediation S4-RERUN4-001 с two-phase janitor cleanup coordination реализована и локально проверена; Stage 4 остаётся IN_PROGRESS до свежего независимого final audit
 Документационная база: сформирована
 ```
 
@@ -660,6 +660,10 @@ quarantine, preprocessing, analyzers и persistence `AnalysisResult`.
   internal `TerminalSettlement`, post-cleanup `finished_at` и recovery
   `FACT_READY` без повторного physical cleanup; локально проверено полным quality
   barrier: 989 passed, 2 skipped, coverage 91%;
+- [x] `S4-RERUN4-001`: вынести janitor/filesystem callbacks из global
+  `TaskRegistry` lock, сохранив atomic cleanup claim, same-analysis registration
+  exclusion, exactly-one cleanup owner и exception-safe retry; локально проверено
+  полным quality barrier: 994 passed, 2 skipped, coverage 91%;
 - [ ] повторить независимый Stage 4 final audit.
 
 ## Обязательные тесты
@@ -694,8 +698,8 @@ recovery не очищает live tasks, не оставляет ordinary abando
 `IN_PROGRESS`. Затем выполняется отдельный final audit branch. Статус `DONE`
 допустим только после audit `PASS`. Finding `S4-AUD-001` независимо подтверждён
 закрытым; remediation `S4-RERUN-001`, `S4-RERUN2-001` и cohesive
-`S4-RERUN3-001` реализованы и локально проверены. Следующее действие — повторный
-независимый Stage 4 final audit.
+`S4-RERUN3-001`, а также `S4-RERUN4-001` реализованы и локально проверены.
+Следующее действие — свежий независимый Stage 4 final audit.
 
 ---
 
