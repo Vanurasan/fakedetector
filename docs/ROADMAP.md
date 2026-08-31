@@ -112,10 +112,10 @@ AFTER_MVP
 ```text
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 4 — Жизненный цикл задачи, хранение и маршрутизация
-Статус этапа: IN_PROGRESS
-Ближайшее действие: свежий независимый Stage 4 final audit после remediation S4-RERUN4-001
+Статус этапа: DONE
+Ближайшее действие: подготовка и начало Stage 5 согласно ROADMAP
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–3 завершены; все три functional increment Этапа 4 завершены, historical findings S4-AUD-001, S4-RERUN-001, S4-RERUN2-001 и S4-RERUN3-001 сохранены; remediation S4-RERUN4-001 с two-phase janitor cleanup coordination реализована и локально проверена; Stage 4 остаётся IN_PROGRESS до свежего независимого final audit
+Реализация программы: Этапы 1–4 завершены; все три functional increment Этапа 4 завершены; historical findings S4-AUD-001, S4-RERUN-001, S4-RERUN2-001, S4-RERUN3-001 и S4-RERUN4-001 независимо подтверждены как CLOSED; independent final audit rerun5 = PASS; quality barrier полностью green: 994 passed, 2 skipped, coverage 91%; repository integrity confirmed; Stage 5 ещё не начат
 Документационная база: сформирована
 ```
 
@@ -147,7 +147,7 @@ AFTER_MVP
 | 1 | Каркас проекта и конфигурация | DONE | Запускаемое приложение |
 | 2 | Доменные модели и репозитории | DONE | Типизированные модели контрактов |
 | 3 | Приём и первичная проверка файлов | DONE | Безопасно принятый или отклонённый файл |
-| 4 | Жизненный цикл задачи, хранение и маршрутизация | IN_PROGRESS | Управляемая задача с очисткой |
+| 4 | Жизненный цикл задачи, хранение и маршрутизация | DONE | Управляемая задача с очисткой |
 | 5 | Предварительная обработка и каркас анализаторов | NOT_STARTED | Единый запуск анализаторов |
 | 6 | Базовые анализаторы и формирование признаков | NOT_STARTED | Реальные нормализованные признаки |
 | 7 | Полнота, риск и рекомендации | NOT_STARTED | Объяснимый итог без псевдовероятности |
@@ -558,7 +558,7 @@ Stage 3 lifecycle.
 
 ---
 
-# Этап 4. Жизненный цикл задачи, хранение и маршрутизация — IN_PROGRESS
+# Этап 4. Жизненный цикл задачи, хранение и маршрутизация — DONE
 
 ## Цель
 
@@ -647,7 +647,7 @@ quarantine, preprocessing, analyzers и persistence `AnalysisResult`.
 - [x] не оставлять abandoned ordinary workspace и не заявлять ложный cleanup
   success для symlink/suspicious/unknown entries.
 
-### Stage 4 final audit remediation — IN_PROGRESS
+### Stage 4 final audit remediation — DONE
 
 - [x] `S4-AUD-001` independently verified closed: factual ownership state
   quarantined `AcceptedSource` синхронизирован с direct cleanup и janitor TTL
@@ -664,7 +664,10 @@ quarantine, preprocessing, analyzers и persistence `AnalysisResult`.
   `TaskRegistry` lock, сохранив atomic cleanup claim, same-analysis registration
   exclusion, exactly-one cleanup owner и exception-safe retry; локально проверено
   полным quality barrier: 994 passed, 2 skipped, coverage 91%;
-- [ ] повторить независимый Stage 4 final audit.
+- [x] independent final audit rerun5 завершён со статусом `PASS`: все historical
+  findings независимо подтверждены как `CLOSED`, новых production defects и
+  post-architecture findings не обнаружено; 994 passed, 2 skipped, coverage 91%,
+  quality barrier полностью green, repository integrity confirmed.
 
 ## Обязательные тесты
 
@@ -694,12 +697,14 @@ recovery не очищает live tasks, не оставляет ordinary abando
 
 ## Финальный аудит Stage 4
 
-После завершения всех трёх functional increments Stage 4 остаётся
-`IN_PROGRESS`. Затем выполняется отдельный final audit branch. Статус `DONE`
-допустим только после audit `PASS`. Finding `S4-AUD-001` независимо подтверждён
-закрытым; remediation `S4-RERUN-001`, `S4-RERUN2-001` и cohesive
-`S4-RERUN3-001`, а также `S4-RERUN4-001` реализованы и локально проверены.
-Следующее действие — свежий независимый Stage 4 final audit.
+Все три functional increments и completion criteria Stage 4 подтверждены
+independent final audit rerun5 со статусом `PASS`. Findings `S4-AUD-001`,
+`S4-RERUN-001`, `S4-RERUN2-001`, `S4-RERUN3-001` и `S4-RERUN4-001` независимо
+подтверждены как `CLOSED`; новых production defects и post-architecture findings
+не обнаружено. Финальный quality barrier полностью green: 994 passed, 2 skipped,
+coverage 91%; repository integrity confirmed. Stage 4 имеет статус `DONE`.
+Следующее действие — подготовка и начало Stage 5 согласно ROADMAP; Stage 5 ещё
+не начат.
 
 ---
 

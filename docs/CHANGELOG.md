@@ -342,6 +342,10 @@ YYYY-MM-DD
 
 ### 2026-08-31
 
+### Changed
+
+- **[Stage 4/Final closure] Stage 4 формально закрыт со статусом `DONE` по результатам independent final audit rerun5 = `PASS`.** Все historical findings `S4-AUD-001`, `S4-RERUN-001`, `S4-RERUN2-001`, `S4-RERUN3-001` и `S4-RERUN4-001` независимо подтверждены как `CLOSED`; новых production defects и post-architecture findings не обнаружено. Финальный barrier: 994 passed, 2 skipped, coverage 91%; Stage 5 ещё не начат.
+
 ### Fixed
 
 - **[Stage 4/S4-RERUN4-001] Устранено выполнение janitor/filesystem callbacks под global `TaskRegistry` lock.** `cleanup_if_inactive()` теперь выполняет two-phase coordination: атомарно проверяет inactive eligibility и выдаёт exactly-one cleanup claim под коротким registry lock, запускает workspace/quarantine callback без него и exception-safe освобождает claim после success, factual failure, ordinary `Exception` или `BaseException`. Same-analysis registration остаётся запрещённой на время physical cleanup, duplicate sweep не получает второго owner, а операции unrelated analysis продолжают обслуживаться; known `AcceptedSource` quarantine capability, orphan path, janitor `_sweep_lock` и terminal architecture сохранены. Локальная проверка: 994 passed, 2 skipped, coverage 91%, Ruff PASS, mypy PASS, poe PASS, pre-commit PASS, CLI PASS, diff check PASS. Stage 4 остаётся `IN_PROGRESS`; следующее действие — свежий независимый Stage 4 final audit.
