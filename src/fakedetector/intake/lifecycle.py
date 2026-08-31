@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
-from fakedetector.core import Clock
+from fakedetector.core import AuthoritativeLifecycleClock
 from fakedetector.domain import (
     AnalysisStatus,
     CleanupResult,
@@ -129,7 +129,7 @@ class FileIntakeService:
         validator: FileValidator,
         temporary_input_owner: LocalTemporaryInputOwner,
         accepted_receiver: AcceptedInputReceiver,
-        clock: Clock,
+        clock: AuthoritativeLifecycleClock,
     ) -> None:
         self._controlled_intake = controlled_intake
         self._validator = validator

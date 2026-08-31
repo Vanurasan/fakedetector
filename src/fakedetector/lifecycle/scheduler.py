@@ -9,7 +9,7 @@ from enum import Enum, auto
 from threading import Condition, RLock, Thread
 
 from fakedetector.config.models import AppConfig
-from fakedetector.core import Clock
+from fakedetector.core import AuthoritativeLifecycleClock
 from fakedetector.domain import AnalysisStatus, MediaType, ProcessingStage
 from fakedetector.lifecycle.cleanup import WorkspaceJanitor
 from fakedetector.lifecycle.execution import (
@@ -63,7 +63,7 @@ class BoundedLocalScheduler:
         self,
         *,
         config: AppConfig,
-        clock: Clock,
+        clock: AuthoritativeLifecycleClock,
         registry: TaskRegistry,
     ) -> None:
         limits = config.limits.max_parallel_tasks
@@ -271,10 +271,18 @@ class BoundedLocalScheduler:
                 self._condition.wait()
 
     def _sweep_best_effort(self) -> None:
+        self._recover_terminal_settlements()
         try:
             self._janitor.sweep()
         except Exception:
             _LOGGER.warning("Stage 4 cleanup recovery sweep failed.")
+
+    def _recover_terminal_settlements(self) -> None:
+        for analysis_id in self._registry.recoverable_terminal_tasks():
+            try:
+                self._processor.settle_terminal(analysis_id)
+            except Exception:
+                _LOGGER.warning("Stage 4 terminal settlement recovery failed.")
 
     def _settle_infrastructure_failure(self, analysis_id: str) -> None:
         try:

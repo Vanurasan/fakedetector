@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path, PureWindowsPath
 
 from fakedetector.config.models import AppConfig
-from fakedetector.core import Clock
+from fakedetector.core import AuthoritativeLifecycleClock
 from fakedetector.domain import AnalysisStatus, ErrorDetail, ProcessingStage
 from fakedetector.intake import Stage3Accepted
 from fakedetector.lifecycle.artifacts import WorkspaceArtifactRegistry
@@ -24,6 +23,7 @@ from fakedetector.lifecycle.models import (
     AnalysisTask,
     TaskExecutionOutcome,
     TaskSnapshot,
+    TerminalSettlementPhase,
     config_snapshot_fingerprint,
 )
 
@@ -42,7 +42,7 @@ class Stage4TaskReceiver:
         self,
         *,
         config: AppConfig,
-        clock: Clock,
+        clock: AuthoritativeLifecycleClock,
         registry: TaskRegistry,
         router: MediaRouter,
         queue: TaskQueue,
@@ -124,7 +124,7 @@ class Stage4LifecycleRunner:
         self,
         *,
         config: AppConfig,
-        clock: Clock,
+        clock: AuthoritativeLifecycleClock,
         registry: TaskRegistry,
         queue: DeterministicTaskQueue,
     ) -> None:
@@ -145,7 +145,13 @@ class Stage4LifecycleRunner:
 class Stage4TaskProcessor:
     """Canonical claim, execution, terminalization, and cleanup-recovery core."""
 
-    def __init__(self, *, config: AppConfig, clock: Clock, registry: TaskRegistry) -> None:
+    def __init__(
+        self,
+        *,
+        config: AppConfig,
+        clock: AuthoritativeLifecycleClock,
+        registry: TaskRegistry,
+    ) -> None:
         self._clock = clock
         self._registry = registry
         self._cleanup = WorkspaceCleanup(config=config.temporary_storage, clock=clock)
@@ -166,7 +172,7 @@ class Stage4TaskProcessor:
         """Finish one task whose exactly-once registry claim already succeeded."""
         analysis_id = task.context.analysis_id
         if task.context.status is AnalysisStatus.FAILED:
-            return self._cleanup_and_finish(task)
+            return self.settle_terminal(analysis_id)
         termination: BaseException | None = None
         try:
             outcome = executor.execute(task)
@@ -179,7 +185,7 @@ class Stage4TaskProcessor:
             termination = error
 
         self._registry.record_outcome(analysis_id, outcome)
-        snapshot = self._cleanup_and_finish(task)
+        snapshot = self.settle_terminal(analysis_id)
         if termination is not None:
             raise termination
         return snapshot
@@ -187,7 +193,7 @@ class Stage4TaskProcessor:
     def fail_pending(self, analysis_id: str) -> TaskSnapshot:
         """Fail one confirmed task that never factually started execution."""
         task = self.claim_pending_failure(analysis_id)
-        return self._cleanup_and_finish(task)
+        return self.settle_terminal(task.context.analysis_id)
 
     def claim_pending_failure(self, analysis_id: str) -> AnalysisTask:
         """Claim a never-started task for shutdown failure terminalization."""
@@ -195,16 +201,40 @@ class Stage4TaskProcessor:
 
     def finish_failed_pending(self, task: AnalysisTask) -> TaskSnapshot:
         """Cleanup one pending task already claimed for shutdown terminalization."""
-        return self._cleanup_and_finish(task)
+        return self.settle_terminal(task.context.analysis_id)
 
-    def _cleanup_and_finish(self, task: AnalysisTask) -> TaskSnapshot:
-        analysis_id = task.context.analysis_id
-        cleanup_result = self._cleanup.cleanup_task(task)
-        if cleanup_result.finished_at is None:
-            cleanup_result = cleanup_result.model_copy(
-                update={"finished_at": datetime.now(UTC)},
+    def settle_terminal(self, analysis_id: str) -> TaskSnapshot:
+        """Own or recover terminal publication without repeating FACT_READY cleanup."""
+        task, owner_token = self._registry.claim_terminal_settlement(analysis_id)
+        try:
+            settlement = self._registry.terminal_settlement(analysis_id, owner_token)
+            if settlement.phase is TerminalSettlementPhase.CLAIMED:
+                self._registry.start_terminal_cleanup(analysis_id, owner_token)
+                settlement = self._registry.terminal_settlement(analysis_id, owner_token)
+            if settlement.phase is TerminalSettlementPhase.CLEANUP_IN_PROGRESS:
+                facts = self._cleanup.cleanup_task(
+                    task,
+                    settlement,
+                    lambda **progress: self._registry.record_cleanup_progress(
+                        analysis_id,
+                        owner_token,
+                        **progress,
+                    ),
+                )
+                self._registry.mark_terminal_facts_ready(analysis_id, owner_token, facts)
+                settlement = self._registry.terminal_settlement(analysis_id, owner_token)
+            if settlement.phase is not TerminalSettlementPhase.FACT_READY:
+                raise RuntimeError("terminal settlement is not fact-ready")
+            lower_bound = task.context.started_at or task.queued_at or task.context.created_at
+            finished_at = self._clock.terminal_now(not_before=lower_bound)
+            self._registry.finalize_terminal_settlement(
+                analysis_id,
+                owner_token,
+                finished_at,
             )
-        self._registry.record_terminal_cleanup_and_finish(analysis_id, cleanup_result)
+        except BaseException:
+            self._registry.release_terminal_settlement(analysis_id, owner_token)
+            raise
         return self._registry.snapshot(analysis_id)
 
 
@@ -226,13 +256,6 @@ def _workspace_path(root_path: str, analysis_id: str) -> Path:
     if workspace.parent != root:
         raise ValueError("unsafe analysis workspace")
     return workspace
-
-
-def _safe_now(clock: Clock) -> datetime | None:
-    try:
-        return clock.now()
-    except Exception:
-        return None
 
 
 def _execution_error() -> ErrorDetail:

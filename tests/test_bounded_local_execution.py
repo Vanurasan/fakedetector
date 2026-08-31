@@ -12,7 +12,7 @@ from threading import Barrier, Event, Lock, Thread, get_ident
 import pytest
 
 from fakedetector.config.models import AppConfig
-from fakedetector.core import Clock, UtcClock
+from fakedetector.core import AuthoritativeLifecycleClock, Clock, UtcClock
 from fakedetector.domain import (
     AnalysisStatus,
     AudioTechnicalParameters,
@@ -363,7 +363,8 @@ def make_runtime(
 ):
     config = make_config(root, image=image, audio=audio, video=video)
     registry = TaskRegistry()
-    actual_clock = clock or UtcClock()
+    raw_clock = clock or UtcClock()
+    actual_clock = AuthoritativeLifecycleClock(raw_clock)
     scheduler = scheduler_factory(config=config, clock=actual_clock, registry=registry)
     receiver = Stage4TaskReceiver(
         config=config,
@@ -392,7 +393,7 @@ def make_intake_service(
     receiver: Stage4TaskReceiver,
     analysis_id: str,
 ) -> FileIntakeService:
-    clock = FixedClock()
+    clock = receiver._clock
     return FileIntakeService(
         controlled_intake=ControlledIntakeService(
             config=config,
@@ -490,16 +491,17 @@ def test_exactly_once_registry_claim_race_executes_and_cleans_once(tmp_path: Pat
     registry = TaskRegistry()
     queue = DeterministicTaskQueue()
     executor = RecordingExecutor()
+    clock = AuthoritativeLifecycleClock(UtcClock())
     receiver = Stage4TaskReceiver(
         config=config,
-        clock=UtcClock(),
+        clock=clock,
         registry=registry,
         router=MediaRouter(dict.fromkeys(MediaType, executor)),
         queue=queue,
     )
     submit(receiver, owner, "claim-race")
     assert queue.pop_next() is not None
-    processor = Stage4TaskProcessor(config=config, clock=UtcClock(), registry=registry)
+    processor = Stage4TaskProcessor(config=config, clock=clock, registry=registry)
     barrier = Barrier(3)
     outcomes: list[object] = []
 
@@ -649,7 +651,40 @@ def test_terminal_clock_failure_does_not_strand_task_or_destroy_worker(tmp_path:
     assert scheduler.is_stopped
 
 
-def test_invalid_started_at_settles_task_without_executor_call_and_worker_remains_usable(
+def test_worker_recovers_fact_ready_settlement_without_repeating_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = RecordingExecutor()
+    _config, registry, scheduler, receiver = make_runtime(tmp_path / "temp", executor)
+    owner = CountingOwner(tmp_path / "temp")
+    real_finalize = registry.finalize_terminal_settlement
+    finalize_calls = 0
+
+    def fail_first_finalize(analysis_id: str, owner_token: object, finished_at: datetime) -> None:
+        nonlocal finalize_calls
+        finalize_calls += 1
+        if finalize_calls == 1:
+            raise LifecycleStateError()
+        real_finalize(analysis_id, owner_token, finished_at)
+
+    monkeypatch.setattr(registry, "finalize_terminal_settlement", fail_first_finalize)
+    scheduler.start()
+    accepted = submit(receiver, owner, "fact-ready-recovery")
+    scheduler.shutdown(drain=True)
+
+    snapshot = registry.snapshot(accepted.analysis_id)
+    assert finalize_calls == 2
+    assert snapshot.status is AnalysisStatus.COMPLETED
+    assert snapshot.stage is ProcessingStage.FINISHED
+    assert snapshot.cleanup is not None
+    assert snapshot.cleanup.finished_at == snapshot.finished_at
+    assert owner.cleanup_calls(accepted.analysis_id) == 1
+    assert accepted.controlled_source.is_released
+    assert not registry.is_active(accepted.analysis_id)
+
+
+def test_regressing_raw_started_sample_degrades_and_worker_remains_usable(
     tmp_path: Path,
 ) -> None:
     clock = WorkerArmableClock(initial=_REGISTERED)
@@ -669,13 +704,15 @@ def test_invalid_started_at_settles_task_without_executor_call_and_worker_remain
     executor.release.set()
     scheduler.shutdown(drain=True)
 
-    failed = registry.snapshot(first.analysis_id)
-    assert failed.status is AnalysisStatus.FAILED
-    assert failed.stage is ProcessingStage.FINISHED
-    assert failed.started_at is None
-    assert failed.finished_at is not None
-    assert failed.cleanup is not None
-    assert failed.cleanup.finished_at == failed.finished_at
+    first_finished = registry.snapshot(first.analysis_id)
+    assert first_finished.status is AnalysisStatus.COMPLETED
+    assert first_finished.stage is ProcessingStage.FINISHED
+    assert first_finished.started_at is not None
+    assert first_finished.queued_at is not None
+    assert first_finished.started_at >= first_finished.queued_at
+    assert first_finished.finished_at is not None
+    assert first_finished.cleanup is not None
+    assert first_finished.cleanup.finished_at == first_finished.finished_at
     assert owner.cleanup_calls(first.analysis_id) == 1
     assert first.controlled_source.is_released
     assert not registry.is_active(first.analysis_id)
@@ -687,7 +724,7 @@ def test_invalid_started_at_settles_task_without_executor_call_and_worker_remain
     assert completed.started_at >= completed.queued_at  # type: ignore[operator]
     assert owner.cleanup_calls(second.analysis_id) == 1
     assert second.controlled_source.is_released
-    assert executor.calls == [second.analysis_id]
+    assert executor.calls == [first.analysis_id, second.analysis_id]
     assert scheduler.is_stopped
 
 

@@ -340,6 +340,16 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-08-31
+
+### Fixed
+
+- **[Stage 4/S4-RERUN3-001] Выполнена cohesive remediation terminal lifecycle.** Один shared `AuthoritativeLifecycleClock` теперь является authoritative domain Stage 3/4, а structural raw `Clock` служит только source of samples: strict UTC/non-regression validation сохраняется, после valid anchor ordinary invalid samples продолжаются по monotonic elapsed без process-wall fallback и hidden `max()` repair, а initial no-anchor failure не фабрикует регистрацию или maintenance time. Minimal internal `TerminalSettlement` создаётся до cleanup side effects, сохраняет factual progress до `FACT_READY` и позволяет `Stage4TaskProcessor` повторить только atomic terminal publication без повторного filesystem workflow. `finished_at` зафиксирован как post-cleanup terminal event с invariant `task.finished_at == cleanup.finished_at`; historical S4-AUD-001, S4-RERUN-001 и S4-RERUN2-001 regressions сохранены. External schema `1.0`, config, dependencies и durable recovery не изменены. Локальная проверка: 989 passed, 2 skipped, coverage 91%, Ruff PASS, mypy PASS, poe PASS, pre-commit PASS, CLI PASS, diff check PASS. Stage 4 остаётся `IN_PROGRESS`; следующее действие — повторный независимый final audit.
+
+### Changed
+
+- **[Stage 4/Terminal time semantics] Прежний process-wall UTC fallback S4-RERUN-001 заменён accepted architecture `AuthoritativeLifecycleClock + TerminalSettlement`.** Причина: wall clock после physical cleanup мог быть раньше уже authoritative lifecycle timestamps или вернуть invalid form. Влияние: raw clock degradation больше не меняет primary/cleanup outcome и не оставляет task в stable active `CLEANUP`; terminal facts сохраняются до успешной strict registry publication.
+
 ### 2026-08-15
 
 ### Fixed

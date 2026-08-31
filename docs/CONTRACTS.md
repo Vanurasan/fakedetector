@@ -346,12 +346,40 @@ Internal application model `AnalysisTask` может агрегировать:
 - cleanup outcome;
 - безопасные lifecycle errors и primary outcome.
 
+До visible terminal publication aggregate может содержать минимальный
+internal-only `TerminalSettlement`. Он не входит в `TaskSnapshot`, external JSON,
+domain schema или persistence model. Его фазы:
+
+```text
+CLAIMED → CLEANUP_IN_PROGRESS → FACT_READY
+```
+
+Claim создаётся только для task в `cleanup` и до первого physical cleanup side
+effect; duplicate owner запрещён. Factual progress cleanup attempts, artifacts,
+source и quarantine сохраняется в settlement. `FACT_READY` означает завершённый
+immediate physical cleanup workflow, который для этой task больше не повторяется.
+
 Это внутренний aggregate, который не меняет внешнюю schema `1.0`.
 
 Локальный типизированный in-process `TaskRegistry` является authoritative source
 текущего живого состояния Stage 4. Он не является `ResultRepository`, JSON-
 persistence, базой данных или restart/durable recovery store. Stage 4 не вводит
 восстановление незавершённых задач после перезапуска процесса.
+
+Stage 3 registration и Stage 4 lifecycle используют один shared
+`AuthoritativeLifecycleClock`. Structural raw `Clock` является только source of
+samples. Valid authoritative sample обязан быть `datetime`, timezone-aware,
+иметь canonical zero UTC offset, не регрессировать и удовлетворять explicit lower
+bound операции. Invalid sample не преобразуется через `astimezone()` и не
+становится authoritative timestamp.
+
+После первого valid sample authoritative calendar anchor продолжается по
+monotonic elapsed time при ordinary raw exception, naive/non-zero-offset,
+regressing или chronology-invalid sample. Process wall clock не используется как
+fallback epoch. До первого valid anchor timestamp не фабрикуется: Stage 3
+registration/handoff не подтверждается, а time-dependent janitor sweep
+пропускается. Lower bound является validation contract и не реализуется через
+`max(sample, not_before)` или иную скрытую chronology repair.
 
 ### 3.4. Receiver commit и каноническая маршрутизация
 
@@ -443,6 +471,14 @@ success без фактического безопасного удаления.
 во время sweep. При success item удаляется. При failure item остаётся в
 quarantine, безопасный технический failure фиксируется/журналируется и success не
 заявляется; следующий eligible sweep может повторить попытку.
+
+После определения primary `completed`/`failed` он остаётся immutable независимо
+от cleanup outcome. Общий `Stage4TaskProcessor` является единственным owner
+physical cleanup и terminal settlement recovery для runner, worker, pending,
+invalid-started-at и `BaseException` paths. После `FACT_READY` recovery выполняет
+только authoritative terminal timestamp и atomic registry publication; filesystem
+cleanup, attempts и quarantine decision не повторяются. `WorkspaceJanitor` не
+terminalizes active task и не восстанавливает primary outcome.
 
 ---
 
@@ -1372,10 +1408,32 @@ internal
   "original_file_deleted": true,
   "intermediate_files_deleted": true,
   "quarantine_used": false,
-  "finished_at": "2026-07-24T14:36:17Z",
+  "finished_at": "2026-07-24T14:36:18Z",
   "errors": []
 }
 ```
+
+Для Stage 4 `finished_at` означает post-cleanup terminal event: timestamp
+получается после завершения immediate cleanup/retry/quarantine workflow, когда
+factual cleanup outcome уже находится в `FACT_READY` и готов к atomic publication.
+Публичный `CleanupResult` становится видимым только одновременно с
+`stage=finished`; cleanup при visible `stage=cleanup` и `finished` без cleanup
+запрещены. Обязательный invariant:
+
+```text
+task.finished_at == task.cleanup.finished_at
+```
+
+Canonical chronology сохраняется:
+
+```text
+executed:     created_at <= queued_at <= started_at <= finished_at
+never-started: created_at <= queued_at <= finished_at, started_at = null
+```
+
+Equality разрешена. Naive и non-zero-offset timestamps отклоняются до mutation.
+Late janitor cleanup quarantined resource не меняет historical `finished_at` или
+зафиксированный `CleanupResult`.
 
 ### 14.4. Правила терминальных результатов
 

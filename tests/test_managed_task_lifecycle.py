@@ -11,12 +11,10 @@ from typing import NoReturn
 
 import pytest
 
-import fakedetector.lifecycle.receiver as receiver_module
 from fakedetector.config.models import AppConfig
-from fakedetector.core import Clock
+from fakedetector.core import AuthoritativeLifecycleClock, Clock
 from fakedetector.domain import (
     AnalysisStatus,
-    CleanupResult,
     CleanupStatus,
     ErrorDetail,
     ImageTechnicalParameters,
@@ -50,6 +48,7 @@ from fakedetector.lifecycle import (
     RouteBindingError,
     Stage4LifecycleRunner,
     Stage4ReceiverError,
+    Stage4TaskProcessor,
     Stage4TaskReceiver,
     TaskExecutionOutcome,
     TaskExecutor,
@@ -58,8 +57,20 @@ from fakedetector.lifecycle import (
     WorkspaceArtifactRegistry,
     config_snapshot_fingerprint,
 )
+from fakedetector.lifecycle.models import CleanupFacts
 
 _REGISTERED = datetime(2026, 8, 15, 9, 0, tzinfo=UTC)
+
+
+def authoritative(clock: Clock | AuthoritativeLifecycleClock) -> AuthoritativeLifecycleClock:
+    if isinstance(clock, AuthoritativeLifecycleClock):
+        return clock
+    existing = getattr(clock, "_authoritative_lifecycle_clock", None)
+    if isinstance(existing, AuthoritativeLifecycleClock):
+        return existing
+    result = AuthoritativeLifecycleClock(clock)
+    clock._authoritative_lifecycle_clock = result  # type: ignore[attr-defined]
+    return result
 
 
 class IncrementingClock:
@@ -208,10 +219,11 @@ def make_stage3_service(
     receiver: Stage4TaskReceiver,
     owner: LocalTemporaryInputOwner,
 ) -> FileIntakeService:
+    shared_clock = authoritative(clock)
     controlled_intake = ControlledIntakeService(
         config=config,
         analysis_id_generator=id_generator,
-        clock=clock,
+        clock=shared_clock,
         temporary_input_owner=owner,
     )
     return FileIntakeService(
@@ -219,7 +231,7 @@ def make_stage3_service(
         validator=FileValidator(config=config, temporary_input_owner=owner),
         temporary_input_owner=owner,
         accepted_receiver=receiver,
-        clock=clock,
+        clock=shared_clock,
     )
 
 
@@ -231,19 +243,20 @@ def make_stage4(
     bindings: dict[MediaType, RecordingExecutor] | None = None,
     queue: DeterministicTaskQueue | None = None,
 ) -> tuple[Stage4TaskReceiver, Stage4LifecycleRunner, TaskRegistry, DeterministicTaskQueue]:
+    shared_clock = authoritative(clock)
     registry = TaskRegistry()
     actual_queue = queue if queue is not None else DeterministicTaskQueue()
     routes = bindings or dict.fromkeys(MediaType, executor)
     receiver = Stage4TaskReceiver(
         config=config,
-        clock=clock,
+        clock=shared_clock,
         registry=registry,
         router=MediaRouter(routes),
         queue=actual_queue,
     )
     runner = Stage4LifecycleRunner(
         config=config,
-        clock=clock,
+        clock=shared_clock,
         registry=registry,
         queue=actual_queue,
     )
@@ -312,6 +325,31 @@ def make_registered_task(
     registry = TaskRegistry()
     registry.reserve(task)
     return task, registry, owner
+
+
+def fact_ready_settlement(registry: TaskRegistry, analysis_id: str) -> object:
+    _task, owner_token = registry.claim_terminal_settlement(analysis_id)
+    registry.start_terminal_cleanup(analysis_id, owner_token)
+    registry.record_cleanup_progress(
+        analysis_id,
+        owner_token,
+        original_file_deleted=True,
+        intermediate_files_deleted=True,
+        attempt_completed=True,
+        quarantine_decided=True,
+    )
+    registry.mark_terminal_facts_ready(
+        analysis_id,
+        owner_token,
+        CleanupFacts(
+            status=CleanupStatus.COMPLETED,
+            original_file_deleted=True,
+            intermediate_files_deleted=True,
+            quarantine_used=False,
+            errors=(),
+        ),
+    )
+    return owner_token
 
 
 @pytest.fixture
@@ -418,17 +456,18 @@ def test_state_machine_rejects_reverse_skip_duplicate_finish_and_terminal_restar
             stage=ProcessingStage.PREPROCESSING,
             started_at=started_at,
         )
-    cleanup = CleanupResult(
-        status=CleanupStatus.COMPLETED,
-        original_file_deleted=True,
-        intermediate_files_deleted=True,
-        quarantine_used=False,
-        finished_at=started_at + timedelta(seconds=1),
-        errors=[],
+    owner_token = fact_ready_settlement(registry, analysis_id)
+    registry.finalize_terminal_settlement(
+        analysis_id,
+        owner_token,
+        started_at + timedelta(seconds=1),
     )
-    registry.record_terminal_cleanup_and_finish(analysis_id, cleanup)
     with pytest.raises(LifecycleStateError):
-        registry.record_terminal_cleanup_and_finish(analysis_id, cleanup)
+        registry.finalize_terminal_settlement(
+            analysis_id,
+            owner_token,
+            started_at + timedelta(seconds=1),
+        )
     with pytest.raises(QueueStateError):
         DeterministicTaskQueue().enqueue(task, RecordingExecutor())
 
@@ -443,17 +482,14 @@ def test_registry_atomically_records_terminal_cleanup_and_rejects_duplicates(
     assert started_at is not None
     registry.claim(analysis_id, started_at)
     registry.record_outcome(analysis_id, TaskExecutionOutcome.completed())
-    provisional = CleanupResult(
-        status=CleanupStatus.COMPLETED,
-        original_file_deleted=True,
-        intermediate_files_deleted=True,
-        quarantine_used=False,
-        finished_at=None,
-        errors=[],
-    )
+    owner_token = fact_ready_settlement(registry, analysis_id)
 
     with pytest.raises(LifecycleStateError):
-        registry.record_terminal_cleanup_and_finish(analysis_id, provisional)
+        registry.finalize_terminal_settlement(
+            analysis_id,
+            object(),
+            finished_at,
+        )
 
     unchanged = registry.snapshot(analysis_id)
     assert unchanged.stage is ProcessingStage.CLEANUP
@@ -461,8 +497,7 @@ def test_registry_atomically_records_terminal_cleanup_and_rejects_duplicates(
     assert unchanged.finished_at is None
     assert registry.is_active(analysis_id)
 
-    terminal = provisional.model_copy(update={"finished_at": finished_at})
-    registry.record_terminal_cleanup_and_finish(analysis_id, terminal)
+    registry.finalize_terminal_settlement(analysis_id, owner_token, finished_at)
 
     snapshot = registry.snapshot(analysis_id)
     assert snapshot.stage is ProcessingStage.FINISHED
@@ -471,8 +506,134 @@ def test_registry_atomically_records_terminal_cleanup_and_rejects_duplicates(
     assert snapshot.cleanup.finished_at == finished_at
     assert not registry.is_active(analysis_id)
     with pytest.raises(LifecycleStateError):
-        registry.record_terminal_cleanup_and_finish(analysis_id, terminal)
+        registry.finalize_terminal_settlement(analysis_id, owner_token, finished_at)
     assert registry.snapshot(analysis_id) == snapshot
+
+
+def test_terminal_settlement_claim_is_cleanup_only_and_has_one_owner(tmp_path: Path) -> None:
+    task, registry, _owner = make_registered_task(tmp_path / "settlement-claim", "claim")
+
+    with pytest.raises(LifecycleStateError):
+        registry.claim_terminal_settlement(task.context.analysis_id)
+
+    move_task_to_queue_boundary(registry, task.context.analysis_id)
+    registry.mark_enqueued(task.context.analysis_id, _REGISTERED)
+    registry.fail_pending(task.context.analysis_id, safe_execution_error())
+    _claimed, owner_token = registry.claim_terminal_settlement(task.context.analysis_id)
+
+    with pytest.raises(LifecycleStateError):
+        registry.claim_terminal_settlement(task.context.analysis_id)
+    assert owner_token is not None
+
+
+def test_registry_generic_transition_cannot_publish_finished_without_cleanup(
+    tmp_path: Path,
+) -> None:
+    task, registry, _owner = make_registered_task(tmp_path / "finish-bypass", "bypass")
+    analysis_id = task.context.analysis_id
+    move_task_to_queue_boundary(registry, analysis_id)
+    registry.mark_enqueued(analysis_id, _REGISTERED)
+    registry.claim(analysis_id, _REGISTERED)
+    registry.record_outcome(analysis_id, TaskExecutionOutcome.completed())
+
+    with pytest.raises(LifecycleStateError):
+        registry.transition(
+            analysis_id,
+            status=AnalysisStatus.COMPLETED,
+            stage=ProcessingStage.FINISHED,
+            finished_at=_REGISTERED,
+        )
+
+    snapshot = registry.snapshot(analysis_id)
+    assert snapshot.stage is ProcessingStage.CLEANUP
+    assert snapshot.cleanup is None
+    assert snapshot.finished_at is None
+
+
+def test_terminal_settlement_progress_survives_reentry_and_fact_ready_is_immutable(
+    tmp_path: Path,
+) -> None:
+    task, registry, _owner = make_registered_task(tmp_path / "settlement-progress", "progress")
+    analysis_id = task.context.analysis_id
+    move_task_to_queue_boundary(registry, analysis_id)
+    registry.mark_enqueued(analysis_id, _REGISTERED)
+    registry.fail_pending(analysis_id, safe_execution_error())
+    _claimed, owner_token = registry.claim_terminal_settlement(analysis_id)
+    registry.start_terminal_cleanup(analysis_id, owner_token)
+    registry.record_cleanup_progress(
+        analysis_id,
+        owner_token,
+        original_file_deleted=False,
+        artifact_cleanup_completed=True,
+        intermediate_files_deleted=False,
+        attempt_completed=True,
+        quarantine_decided=True,
+    )
+    registry.release_terminal_settlement(analysis_id, owner_token)
+
+    _reclaimed, recovery_token = registry.claim_terminal_settlement(analysis_id)
+    recovered = registry.terminal_settlement(analysis_id, recovery_token)
+    assert recovered.artifact_cleanup_completed
+    assert recovered.attempts_completed == 1
+    facts = CleanupFacts(
+        status=CleanupStatus.FAILED,
+        original_file_deleted=False,
+        intermediate_files_deleted=False,
+        quarantine_used=False,
+        errors=(safe_execution_error(),),
+    )
+    registry.mark_terminal_facts_ready(analysis_id, recovery_token, facts)
+
+    with pytest.raises(LifecycleStateError):
+        registry.start_terminal_cleanup(analysis_id, recovery_token)
+    with pytest.raises(LifecycleStateError):
+        registry.record_cleanup_progress(
+            analysis_id,
+            recovery_token,
+            original_file_deleted=False,
+            intermediate_files_deleted=False,
+        )
+
+
+def test_fact_ready_invalid_commit_preserves_facts_and_processor_recovery_skips_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "settlement-recovery"
+    task, registry, _owner = make_registered_task(root, "recovery")
+    analysis_id = task.context.analysis_id
+    move_task_to_queue_boundary(registry, analysis_id)
+    registry.mark_enqueued(analysis_id, _REGISTERED)
+    registry.fail_pending(analysis_id, safe_execution_error())
+    owner_token = fact_ready_settlement(registry, analysis_id)
+
+    with pytest.raises(LifecycleStateError):
+        registry.finalize_terminal_settlement(
+            analysis_id,
+            owner_token,
+            _REGISTERED - timedelta(seconds=1),
+        )
+    assert registry.terminal_settlement(analysis_id, owner_token).facts is not None
+    registry.release_terminal_settlement(analysis_id, owner_token)
+
+    config = make_config(root)
+    processor = Stage4TaskProcessor(
+        config=config,
+        clock=AuthoritativeLifecycleClock(IncrementingClock()),
+        registry=registry,
+    )
+    monkeypatch.setattr(
+        processor._cleanup,
+        "cleanup_task",
+        lambda *_args, **_kwargs: pytest.fail("FACT_READY cleanup must not rerun"),
+    )
+
+    snapshot = processor.settle_terminal(analysis_id)
+
+    assert snapshot.stage is ProcessingStage.FINISHED
+    assert snapshot.cleanup is not None
+    assert snapshot.finished_at == snapshot.cleanup.finished_at
+    assert not registry.is_active(analysis_id)
 
 
 @pytest.mark.parametrize(
@@ -604,25 +765,21 @@ def test_registry_rejects_invalid_executed_terminal_timestamp_without_mutation_a
     registry.mark_enqueued(analysis_id, _REGISTERED)
     registry.claim(analysis_id, _REGISTERED)
     registry.record_outcome(analysis_id, TaskExecutionOutcome.completed())
-    invalid = CleanupResult(
-        status=CleanupStatus.COMPLETED,
-        original_file_deleted=True,
-        intermediate_files_deleted=True,
-        quarantine_used=False,
-        finished_at=_REGISTERED - timedelta(seconds=1),
-        errors=[],
-    )
+    owner_token = fact_ready_settlement(registry, analysis_id)
 
     with pytest.raises(LifecycleStateError):
-        registry.record_terminal_cleanup_and_finish(analysis_id, invalid)
+        registry.finalize_terminal_settlement(
+            analysis_id,
+            owner_token,
+            _REGISTERED - timedelta(seconds=1),
+        )
 
     unchanged = registry.snapshot(analysis_id)
     assert unchanged.stage is ProcessingStage.CLEANUP
     assert unchanged.cleanup is None
     assert unchanged.finished_at is None
 
-    valid = invalid.model_copy(update={"finished_at": _REGISTERED})
-    registry.record_terminal_cleanup_and_finish(analysis_id, valid)
+    registry.finalize_terminal_settlement(analysis_id, owner_token, _REGISTERED)
 
     snapshot = registry.snapshot(analysis_id)
     assert snapshot.stage is ProcessingStage.FINISHED
@@ -640,16 +797,8 @@ def test_registry_accepts_equal_started_and_finished_timestamps(
     registry.mark_enqueued(analysis_id, _REGISTERED)
     registry.claim(analysis_id, _REGISTERED)
     registry.record_outcome(analysis_id, TaskExecutionOutcome.completed())
-    cleanup = CleanupResult(
-        status=CleanupStatus.COMPLETED,
-        original_file_deleted=True,
-        intermediate_files_deleted=True,
-        quarantine_used=False,
-        finished_at=_REGISTERED,
-        errors=[],
-    )
-
-    registry.record_terminal_cleanup_and_finish(analysis_id, cleanup)
+    owner_token = fact_ready_settlement(registry, analysis_id)
+    registry.finalize_terminal_settlement(analysis_id, owner_token, _REGISTERED)
 
     snapshot = registry.snapshot(analysis_id)
     assert snapshot.finished_at == _REGISTERED
@@ -665,17 +814,14 @@ def test_registry_rejects_invalid_never_started_terminal_timestamp_without_mutat
     move_task_to_queue_boundary(registry, analysis_id)
     registry.mark_enqueued(analysis_id, _REGISTERED)
     registry.fail_pending(analysis_id, safe_execution_error())
-    invalid = CleanupResult(
-        status=CleanupStatus.COMPLETED,
-        original_file_deleted=True,
-        intermediate_files_deleted=True,
-        quarantine_used=False,
-        finished_at=_REGISTERED - timedelta(seconds=1),
-        errors=[],
-    )
+    owner_token = fact_ready_settlement(registry, analysis_id)
 
     with pytest.raises(LifecycleStateError):
-        registry.record_terminal_cleanup_and_finish(analysis_id, invalid)
+        registry.finalize_terminal_settlement(
+            analysis_id,
+            owner_token,
+            _REGISTERED - timedelta(seconds=1),
+        )
 
     unchanged = registry.snapshot(analysis_id)
     assert unchanged.stage is ProcessingStage.CLEANUP
@@ -683,8 +829,7 @@ def test_registry_rejects_invalid_never_started_terminal_timestamp_without_mutat
     assert unchanged.cleanup is None
     assert unchanged.finished_at is None
 
-    valid = invalid.model_copy(update={"finished_at": _REGISTERED})
-    registry.record_terminal_cleanup_and_finish(analysis_id, valid)
+    registry.finalize_terminal_settlement(analysis_id, owner_token, _REGISTERED)
 
     snapshot = registry.snapshot(analysis_id)
     assert snapshot.status is AnalysisStatus.FAILED
@@ -843,7 +988,7 @@ def test_preconfirmation_enqueue_failure_rolls_back_and_stage3_cleans(
     assert not (root / outcome.analysis_id).exists()
 
 
-def test_preconfirmation_invalid_queued_at_rolls_back_and_stage3_cleans(
+def test_regressing_raw_queued_sample_uses_shared_authoritative_domain(
     tmp_path: Path,
     media_files: dict[str, Path],
 ) -> None:
@@ -865,14 +1010,15 @@ def test_preconfirmation_invalid_queued_at_rolls_back_and_stage3_cleans(
         receiver=receiver,
         owner=owner,
     )
-
     outcome = process_png(service, media_files)
 
-    assert isinstance(outcome, Stage3Terminal)
-    assert outcome.status is AnalysisStatus.FAILED
-    assert outcome.cleanup is not None
-    assert outcome.cleanup.status is CleanupStatus.COMPLETED
-    assert not registry.contains(outcome.analysis_id)
+    assert isinstance(outcome, Stage3Accepted)
+    snapshot = registry.snapshot("invalid-queued-at")
+    assert snapshot.queued_at is not None
+    assert snapshot.queued_at >= snapshot.created_at
+    assert len(queue) == 1
+    queue.remove(outcome.analysis_id)
+    outcome.controlled_source.cleanup()
     assert len(queue) == 0
     assert not (root / outcome.analysis_id).exists()
 
@@ -1020,10 +1166,9 @@ def test_confirmed_queue_preserves_source_until_run_then_completes_and_cleans(
         (True, AnalysisStatus.FAILED),
     ],
 )
-def test_runner_terminal_clock_failure_uses_post_cleanup_utc_fallback(
+def test_runner_terminal_clock_failure_uses_authoritative_monotonic_degradation(
     tmp_path: Path,
     media_files: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
     raise_error: bool,
     expected_status: AnalysisStatus,
 ) -> None:
@@ -1047,27 +1192,18 @@ def test_runner_terminal_clock_failure_uses_post_cleanup_utc_fallback(
     accepted = process_png(service, media_files)
     assert isinstance(accepted, Stage3Accepted)
     workspace = root / accepted.analysis_id
-    fallback_time = _REGISTERED + timedelta(hours=1)
-
-    class PostCleanupDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None) -> datetime:
-            assert tz is UTC
-            assert accepted.controlled_source.is_released
-            assert not workspace.exists()
-            return fallback_time
-
-    monkeypatch.setattr(receiver_module, "datetime", PostCleanupDatetime)
 
     finished = runner.run_next()
 
     assert finished is not None
     assert finished.status is expected_status
     assert finished.stage is ProcessingStage.FINISHED
-    assert finished.finished_at == fallback_time
+    assert finished.started_at is not None
+    assert finished.finished_at is not None
+    assert finished.finished_at >= finished.started_at
     assert finished.cleanup is not None
     assert finished.cleanup.status is CleanupStatus.COMPLETED
-    assert finished.cleanup.finished_at == fallback_time
+    assert finished.cleanup.finished_at == finished.finished_at
     assert owner.cleanup_calls == 1
     assert accepted.controlled_source.is_released
     assert not workspace.exists()
@@ -1075,6 +1211,117 @@ def test_runner_terminal_clock_failure_uses_post_cleanup_utc_fallback(
     assert len(queue) == 0
     assert executor.calls == [accepted.analysis_id]
     assert "PRIVATE CLOCK" not in repr(finished)
+
+
+@pytest.mark.parametrize(
+    "terminal_sample",
+    [
+        RuntimeError("terminal raw failure"),
+        datetime(2026, 8, 15, 9, 0, 3),
+        datetime(2026, 8, 15, 12, 0, 3, tzinfo=timezone(timedelta(hours=3))),
+        _REGISTERED - timedelta(seconds=1),
+    ],
+)
+@pytest.mark.parametrize(
+    ("raise_error", "expected_status"),
+    [(False, AnalysisStatus.COMPLETED), (True, AnalysisStatus.FAILED)],
+)
+def test_runner_invalid_terminal_raw_samples_degrade_without_stranding(
+    tmp_path: Path,
+    media_files: dict[str, Path],
+    terminal_sample: object,
+    raise_error: bool,
+    expected_status: AnalysisStatus,
+) -> None:
+    root = tmp_path / "temp"
+    config = make_config(root)
+    clock = SequenceClock(
+        _REGISTERED,
+        _REGISTERED + timedelta(seconds=1),
+        _REGISTERED + timedelta(seconds=2),
+        terminal_sample,  # type: ignore[arg-type]
+    )
+    executor = RecordingExecutor(raise_error=raise_error)
+    receiver, runner, registry, _queue = make_stage4(
+        config=config,
+        clock=clock,
+        executor=executor,
+    )
+    owner = LocalTemporaryInputOwner(root)
+    service = make_stage3_service(
+        config=config,
+        clock=clock,
+        id_generator=SequenceIdGenerator(f"terminal-matrix-{expected_status.value}"),
+        receiver=receiver,
+        owner=owner,
+    )
+    accepted = process_png(service, media_files)
+    assert isinstance(accepted, Stage3Accepted)
+
+    finished = runner.run_next()
+
+    assert finished is not None
+    assert finished.status is expected_status
+    assert finished.stage is ProcessingStage.FINISHED
+    assert finished.started_at is not None
+    assert finished.finished_at is not None
+    assert finished.finished_at >= finished.started_at
+    assert finished.cleanup is not None
+    assert finished.cleanup.finished_at == finished.finished_at
+    assert accepted.controlled_source.is_released
+    assert not registry.is_active(accepted.analysis_id)
+
+
+def test_terminal_clock_fault_after_quarantine_preserves_factual_outcome(
+    tmp_path: Path,
+    media_files: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "temp"
+    config = make_config(root)
+    clock = SequenceClock(
+        _REGISTERED,
+        _REGISTERED + timedelta(seconds=1),
+        _REGISTERED + timedelta(seconds=2),
+        _REGISTERED + timedelta(seconds=3),
+        datetime(2026, 8, 15, 9, 0, 4),
+    )
+    executor = RecordingExecutor()
+    receiver, runner, registry, _queue = make_stage4(
+        config=config,
+        clock=clock,
+        executor=executor,
+    )
+    owner = LocalTemporaryInputOwner(root)
+    service = make_stage3_service(
+        config=config,
+        clock=clock,
+        id_generator=SequenceIdGenerator("a" * 32),
+        receiver=receiver,
+        owner=owner,
+    )
+    accepted = process_png(service, media_files)
+    assert isinstance(accepted, Stage3Accepted)
+    cleanup_calls = 0
+
+    def fail_cleanup(_source: OwnedSource) -> NoReturn:
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        raise TemporaryInputCleanupError()
+
+    monkeypatch.setattr(owner, "cleanup", fail_cleanup)
+
+    finished = runner.run_next()
+
+    assert finished is not None
+    assert finished.status is AnalysisStatus.COMPLETED
+    assert finished.stage is ProcessingStage.FINISHED
+    assert finished.cleanup is not None
+    assert finished.cleanup.status is CleanupStatus.FAILED
+    assert finished.cleanup.quarantine_used
+    assert finished.cleanup.finished_at == finished.finished_at
+    assert cleanup_calls == 1 + config.temporary_storage.cleanup_retries
+    assert not registry.is_active(accepted.analysis_id)
 
 
 def test_executor_exception_becomes_safe_failed_and_cleanup_runs_exactly_once(

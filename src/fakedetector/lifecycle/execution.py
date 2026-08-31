@@ -18,7 +18,15 @@ from fakedetector.domain import (
     ValidatedFileDescriptor,
 )
 from fakedetector.domain.models import validate_utc_datetime
-from fakedetector.lifecycle.models import AnalysisTask, TaskExecutionOutcome, TaskSnapshot
+from fakedetector.lifecycle.models import (
+    AnalysisTask,
+    CleanupFacts,
+    TaskExecutionOutcome,
+    TaskSnapshot,
+    TerminalSettlement,
+    TerminalSettlementPhase,
+    TerminalSettlementSnapshot,
+)
 
 _CleanupOutcome = TypeVar("_CleanupOutcome")
 
@@ -203,6 +211,8 @@ class TaskRegistry:
         finished_at: datetime | None = None,
     ) -> None:
         with self._lock:
+            if stage is ProcessingStage.FINISHED:
+                raise LifecycleStateError()
             self._state_machine.transition(
                 self._get(analysis_id),
                 status=status,
@@ -267,32 +277,196 @@ class TaskRegistry:
             task.errors.append(error.model_copy(deep=True))
             return task
 
-    def record_terminal_cleanup_and_finish(
-        self,
-        analysis_id: str,
-        cleanup_result: CleanupResult,
-    ) -> None:
-        """Atomically record factual cleanup and move its task to ``finished``."""
+    def claim_terminal_settlement(self, analysis_id: str) -> tuple[AnalysisTask, object]:
+        """Claim exclusive ownership before the first physical cleanup side effect."""
         with self._lock:
             task = self._get(analysis_id)
+            if task.context.stage is not ProcessingStage.CLEANUP or task.cleanup_result is not None:
+                raise LifecycleStateError()
+            settlement = task.terminal_settlement
+            if settlement is None:
+                settlement = TerminalSettlement(
+                    phase=TerminalSettlementPhase.CLAIMED,
+                    owner_token=object(),
+                    original_file_deleted=task.accepted_source.is_released,
+                )
+                task.terminal_settlement = settlement
+            elif settlement.owner_token is not None:
+                raise LifecycleStateError()
+            else:
+                settlement.owner_token = object()
+            assert settlement.owner_token is not None
+            return task, settlement.owner_token
+
+    def terminal_settlement(
+        self,
+        analysis_id: str,
+        owner_token: object,
+    ) -> TerminalSettlementSnapshot:
+        """Return immutable factual progress to the current settlement owner."""
+        with self._lock:
+            settlement = self._owned_settlement(analysis_id, owner_token)
+            facts = settlement.facts
+            return TerminalSettlementSnapshot(
+                phase=settlement.phase,
+                original_file_deleted=settlement.original_file_deleted,
+                artifact_cleanup_completed=settlement.artifact_cleanup_completed,
+                intermediate_files_deleted=settlement.intermediate_files_deleted,
+                quarantine_used=settlement.quarantine_used,
+                quarantine_decided=settlement.quarantine_decided,
+                attempts_completed=settlement.attempts_completed,
+                facts=(
+                    None
+                    if facts is None
+                    else CleanupFacts(
+                        status=facts.status,
+                        original_file_deleted=facts.original_file_deleted,
+                        intermediate_files_deleted=facts.intermediate_files_deleted,
+                        quarantine_used=facts.quarantine_used,
+                        errors=tuple(error.model_copy(deep=True) for error in facts.errors),
+                    )
+                ),
+            )
+
+    def start_terminal_cleanup(self, analysis_id: str, owner_token: object) -> None:
+        """Move a fresh settlement claim into its single cleanup workflow."""
+        with self._lock:
+            settlement = self._owned_settlement(analysis_id, owner_token)
+            if settlement.phase is not TerminalSettlementPhase.CLAIMED:
+                raise LifecycleStateError()
+            settlement.phase = TerminalSettlementPhase.CLEANUP_IN_PROGRESS
+
+    def record_cleanup_progress(
+        self,
+        analysis_id: str,
+        owner_token: object,
+        *,
+        original_file_deleted: bool,
+        artifact_cleanup_completed: bool | None = None,
+        intermediate_files_deleted: bool,
+        attempt_completed: bool = False,
+        quarantine_used: bool = False,
+        quarantine_decided: bool | None = None,
+    ) -> None:
+        """Persist monotonic factual cleanup progress after physical operations."""
+        with self._lock:
+            settlement = self._owned_settlement(analysis_id, owner_token)
+            if settlement.phase is not TerminalSettlementPhase.CLEANUP_IN_PROGRESS:
+                raise LifecycleStateError()
             if (
-                task.context.stage is not ProcessingStage.CLEANUP
-                or task.cleanup_result is not None
-                or cleanup_result.finished_at is None
+                settlement.original_file_deleted and not original_file_deleted
+                or (
+                    artifact_cleanup_completed is False
+                    and settlement.artifact_cleanup_completed
+                )
+                or settlement.intermediate_files_deleted and not intermediate_files_deleted
+                or settlement.quarantine_used and not quarantine_used
+                or quarantine_decided is False and settlement.quarantine_decided
             ):
                 raise LifecycleStateError()
-            recorded_cleanup = cleanup_result.model_copy(deep=True)
-            finished_at = recorded_cleanup.finished_at
-            if finished_at is None:
+            settlement.original_file_deleted = original_file_deleted
+            if artifact_cleanup_completed is not None:
+                settlement.artifact_cleanup_completed = artifact_cleanup_completed
+            settlement.intermediate_files_deleted = intermediate_files_deleted
+            settlement.quarantine_used = quarantine_used
+            if quarantine_decided is not None:
+                settlement.quarantine_decided = quarantine_decided
+            if attempt_completed:
+                settlement.attempts_completed += 1
+
+    def mark_terminal_facts_ready(
+        self,
+        analysis_id: str,
+        owner_token: object,
+        facts: CleanupFacts,
+    ) -> None:
+        """Freeze cleanup facts and permanently prohibit another physical workflow."""
+        with self._lock:
+            settlement = self._owned_settlement(analysis_id, owner_token)
+            if settlement.phase is not TerminalSettlementPhase.CLEANUP_IN_PROGRESS:
+                raise LifecycleStateError()
+            if settlement.facts is not None:
+                raise LifecycleStateError()
+            if (
+                not settlement.quarantine_decided
+                or facts.original_file_deleted != settlement.original_file_deleted
+                or facts.intermediate_files_deleted != settlement.intermediate_files_deleted
+                or facts.quarantine_used != settlement.quarantine_used
+            ):
+                raise LifecycleStateError()
+            settlement.facts = CleanupFacts(
+                status=facts.status,
+                original_file_deleted=facts.original_file_deleted,
+                intermediate_files_deleted=facts.intermediate_files_deleted,
+                quarantine_used=facts.quarantine_used,
+                errors=tuple(error.model_copy(deep=True) for error in facts.errors),
+            )
+            settlement.phase = TerminalSettlementPhase.FACT_READY
+
+    def finalize_terminal_settlement(
+        self,
+        analysis_id: str,
+        owner_token: object,
+        finished_at: datetime,
+    ) -> None:
+        """Atomically publish cleanup and ``FINISHED`` after all validation succeeds."""
+        with self._lock:
+            task = self._get(analysis_id)
+            settlement = self._owned_settlement(analysis_id, owner_token)
+            if settlement.phase is not TerminalSettlementPhase.FACT_READY:
+                raise LifecycleStateError()
+            facts = settlement.facts
+            if facts is None or task.cleanup_result is not None:
                 raise LifecycleStateError()
             self._validate_finished_at(task, finished_at)
+            recorded_cleanup = CleanupResult(
+                status=facts.status,
+                original_file_deleted=facts.original_file_deleted,
+                intermediate_files_deleted=facts.intermediate_files_deleted,
+                quarantine_used=facts.quarantine_used,
+                finished_at=finished_at,
+                errors=[error.model_copy(deep=True) for error in facts.errors],
+            )
             self._state_machine.transition(
                 task,
                 status=task.context.status,
                 stage=ProcessingStage.FINISHED,
-                finished_at=cleanup_result.finished_at,
+                finished_at=finished_at,
             )
             task.cleanup_result = recorded_cleanup
+            task.terminal_settlement = None
+
+    def release_terminal_settlement(self, analysis_id: str, owner_token: object) -> None:
+        """Allow processor-only re-entry while preserving all settlement facts."""
+        with self._lock:
+            settlement = self._owned_settlement(analysis_id, owner_token)
+            settlement.owner_token = None
+
+    def recoverable_terminal_tasks(self) -> tuple[str, ...]:
+        """List active cleanup settlements that currently have no processor owner."""
+        with self._lock:
+            return tuple(
+                analysis_id
+                for analysis_id, task in self._tasks.items()
+                if task.context.stage is ProcessingStage.CLEANUP
+                and task.terminal_settlement is not None
+                and task.terminal_settlement.owner_token is None
+            )
+
+    def _owned_settlement(
+        self,
+        analysis_id: str,
+        owner_token: object,
+    ) -> TerminalSettlement:
+        task = self._get(analysis_id)
+        settlement = task.terminal_settlement
+        if (
+            task.context.stage is not ProcessingStage.CLEANUP
+            or settlement is None
+            or settlement.owner_token is not owner_token
+        ):
+            raise LifecycleStateError()
+        return settlement
 
     @staticmethod
     def _validate_queued_at(task: AnalysisTask, queued_at: datetime) -> None:

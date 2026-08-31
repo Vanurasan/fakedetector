@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from fakedetector.config.models import AppConfig
-from fakedetector.core import AnalysisIdGenerator, Clock
+from fakedetector.core import AnalysisIdGenerator, AuthoritativeLifecycleClock
 from fakedetector.domain import InputFileDescriptor, SourceContext
 from fakedetector.intake.temporary_input import (
     FileTooLargeError,
@@ -81,7 +81,7 @@ class ControlledIntakeService:
         *,
         config: AppConfig,
         analysis_id_generator: AnalysisIdGenerator,
-        clock: Clock,
+        clock: AuthoritativeLifecycleClock,
         temporary_input_owner: LocalTemporaryInputOwner | None = None,
     ) -> None:
         self._analysis_id_generator = analysis_id_generator

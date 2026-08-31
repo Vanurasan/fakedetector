@@ -14,6 +14,7 @@ import pytest
 import fakedetector.intake.media_tools as media_tools_module
 import fakedetector.intake.temporary_input as temporary_input_module
 from fakedetector.config.models import AppConfig
+from fakedetector.core import AuthoritativeLifecycleClock, Clock
 from fakedetector.domain import (
     AnalysisStatus,
     CleanupStatus,
@@ -57,6 +58,11 @@ class FixedClock:
 
     def now(self) -> datetime:
         return self.timestamp
+
+
+class FailingClock:
+    def now(self) -> datetime:
+        raise RuntimeError("PRIVATE RAW CLOCK FAILURE")
 
 
 class RecordingReceiver:
@@ -125,6 +131,7 @@ def make_service(
     image_limit: int = 20,
     audio_limit: int = 50,
     video_limit: int = 200,
+    raw_clock: Clock | None = None,
 ) -> tuple[FileIntakeService, LocalTemporaryInputOwner, RecordingReceiver]:
     root = tmp_path / "PRIVATE-TEMP"
     config = make_config(
@@ -134,7 +141,7 @@ def make_service(
         video_limit=video_limit,
     )
     owner = LocalTemporaryInputOwner(root, chunk_size=64 * 1024)
-    clock = FixedClock()
+    clock = AuthoritativeLifecycleClock(raw_clock or FixedClock())
     controlled_intake = ControlledIntakeService(
         config=config,
         analysis_id_generator=analysis_id_generator or FixedIdGenerator(),  # type: ignore[arg-type]
@@ -745,6 +752,23 @@ def test_pre_registration_failure_is_safe_typed_exception(
 
     assert str(error_info.value) == "Stage 3 registration failed."
     assert "PRIVATE" not in str(error_info.value)
+    assert receiver.calls == 0
+    assert not (tmp_path / "PRIVATE-TEMP").exists()
+
+
+def test_initial_raw_clock_failure_without_anchor_does_not_register_or_create_workspace(
+    tmp_path: Path,
+) -> None:
+    service, _owner, receiver = make_service(tmp_path, raw_clock=FailingClock())
+
+    with pytest.raises(PreRegistrationError):
+        service.process(
+            BytesIO(b"content"),
+            original_name="sample.png",
+            declared_content_type=None,
+            source=source_context(),
+        )
+
     assert receiver.calls == 0
     assert not (tmp_path / "PRIVATE-TEMP").exists()
 
