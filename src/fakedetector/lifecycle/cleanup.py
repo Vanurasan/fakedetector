@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -13,11 +14,12 @@ from pathlib import Path
 from threading import Lock
 
 from fakedetector.config.models import TemporaryStorageConfig
-from fakedetector.core import Clock
-from fakedetector.domain import CleanupResult, CleanupStatus, ErrorDetail
+from fakedetector.core import AuthoritativeLifecycleClock
+from fakedetector.core.clock import AuthoritativeClockError
+from fakedetector.domain import CleanupStatus, ErrorDetail
 from fakedetector.intake import TemporaryInputCleanupError
 from fakedetector.lifecycle.execution import TaskRegistry
-from fakedetector.lifecycle.models import AnalysisTask
+from fakedetector.lifecycle.models import AnalysisTask, CleanupFacts, TerminalSettlementSnapshot
 
 _SYSTEM_ANALYSIS_ID = re.compile(r"^[0-9a-f]{32}$")
 _LOGGER = logging.getLogger(__name__)
@@ -44,21 +46,44 @@ class SweepResult:
 class WorkspaceCleanup:
     """Resolve one confirmed task's cleanup obligations with configured recovery."""
 
-    def __init__(self, *, config: TemporaryStorageConfig, clock: Clock) -> None:
+    def __init__(
+        self,
+        *,
+        config: TemporaryStorageConfig,
+        clock: AuthoritativeLifecycleClock,
+    ) -> None:
         self._config = config
         self._clock = clock
 
-    def cleanup_task(self, task: AnalysisTask) -> CleanupResult:
+    def cleanup_task(
+        self,
+        task: AnalysisTask,
+        settlement: TerminalSettlementSnapshot,
+        record_progress: Callable[..., None],
+    ) -> CleanupFacts:
         """Attempt only outstanding obligations, then optionally quarantine."""
-        original_deleted = task.accepted_source.is_released
-        intermediate_deleted = False
+        original_deleted = settlement.original_file_deleted or task.accepted_source.is_released
+        artifact_cleanup_completed = settlement.artifact_cleanup_completed
+        intermediate_deleted = settlement.intermediate_files_deleted
+        if original_deleted and intermediate_deleted:
+            return self._facts(
+                original_deleted=True,
+                intermediate_deleted=True,
+                quarantine_used=settlement.quarantine_used,
+            )
 
-        for _attempt in range(1 + self._config.cleanup_retries):
-            if not intermediate_deleted:
+        attempts_remaining = 1 + self._config.cleanup_retries - settlement.attempts_completed
+        for _attempt in range(max(0, attempts_remaining)):
+            if not artifact_cleanup_completed:
                 try:
-                    intermediate_deleted = task.artifacts.cleanup_once().completed
+                    artifact_cleanup_completed = task.artifacts.cleanup_once().completed
                 except Exception:
-                    intermediate_deleted = False
+                    artifact_cleanup_completed = False
+                record_progress(
+                    original_file_deleted=original_deleted,
+                    artifact_cleanup_completed=artifact_cleanup_completed,
+                    intermediate_files_deleted=intermediate_deleted,
+                )
 
             source_intermediates_deleted = False
             if not original_deleted or not intermediate_deleted:
@@ -73,36 +98,64 @@ class WorkspaceCleanup:
                     original_deleted = True
                     source_intermediates_deleted = True
 
-            intermediate_deleted = intermediate_deleted and source_intermediates_deleted
+            intermediate_deleted = artifact_cleanup_completed and source_intermediates_deleted
+            record_progress(
+                original_file_deleted=original_deleted,
+                artifact_cleanup_completed=artifact_cleanup_completed,
+                intermediate_files_deleted=intermediate_deleted,
+                attempt_completed=True,
+            )
             if original_deleted and intermediate_deleted:
-                return self._result(
+                record_progress(
+                    original_file_deleted=True,
+                    artifact_cleanup_completed=artifact_cleanup_completed,
+                    intermediate_files_deleted=True,
+                    quarantine_used=False,
+                    quarantine_decided=True,
+                )
+                return self._facts(
                     original_deleted=True,
                     intermediate_deleted=True,
                     quarantine_used=False,
                 )
 
-        quarantine_used = False
-        if self._config.quarantine_enabled:
+        quarantine_used = settlement.quarantine_used
+        if self._config.quarantine_enabled and not settlement.quarantine_decided:
             try:
                 task.accepted_source._quarantine(self._clock.now())
             except Exception:
                 quarantine_used = False
             else:
                 quarantine_used = True
+            record_progress(
+                original_file_deleted=original_deleted,
+                artifact_cleanup_completed=artifact_cleanup_completed,
+                intermediate_files_deleted=intermediate_deleted,
+                quarantine_used=quarantine_used,
+                quarantine_decided=True,
+            )
+        elif not settlement.quarantine_decided:
+            record_progress(
+                original_file_deleted=original_deleted,
+                artifact_cleanup_completed=artifact_cleanup_completed,
+                intermediate_files_deleted=intermediate_deleted,
+                quarantine_used=quarantine_used,
+                quarantine_decided=True,
+            )
 
-        return self._result(
+        return self._facts(
             original_deleted=original_deleted,
             intermediate_deleted=intermediate_deleted,
             quarantine_used=quarantine_used,
         )
 
-    def _result(
+    def _facts(
         self,
         *,
         original_deleted: bool,
         intermediate_deleted: bool,
         quarantine_used: bool,
-    ) -> CleanupResult:
+    ) -> CleanupFacts:
         completed = original_deleted and intermediate_deleted
         if completed:
             status = CleanupStatus.COMPLETED
@@ -110,13 +163,12 @@ class WorkspaceCleanup:
             status = CleanupStatus.PARTIAL
         else:
             status = CleanupStatus.FAILED
-        return CleanupResult(
+        return CleanupFacts(
             status=status,
             original_file_deleted=original_deleted,
             intermediate_files_deleted=intermediate_deleted,
             quarantine_used=quarantine_used,
-            finished_at=_safe_now(self._clock),
-            errors=[] if completed else [_cleanup_error()],
+            errors=() if completed else (_cleanup_error(),),
         )
 
 
@@ -127,7 +179,7 @@ class WorkspaceJanitor:
         self,
         *,
         config: TemporaryStorageConfig,
-        clock: Clock,
+        clock: AuthoritativeLifecycleClock,
         registry: TaskRegistry,
     ) -> None:
         self._config = config
@@ -140,7 +192,10 @@ class WorkspaceJanitor:
     def sweep(self) -> SweepResult:
         """Run one serialized best-effort workspace then quarantine recovery pass."""
         with self._sweep_lock:
-            now = self._clock.now()
+            try:
+                now = self._clock.now()
+            except AuthoritativeClockError:
+                return SweepResult((), (), (), ())
             deleted, quarantined, workspace_issues = self._sweep_workspaces(now)
             quarantine_deleted, quarantine_issues = self._sweep_quarantine(now)
             issues = (*workspace_issues, *quarantine_issues)
@@ -314,13 +369,6 @@ class WorkspaceJanitor:
         except OSError:
             return None
         return now - modified_at >= ttl
-
-
-def _safe_now(clock: Clock) -> datetime | None:
-    try:
-        return clock.now()
-    except Exception:
-        return None
 
 
 def _cleanup_error() -> ErrorDetail:

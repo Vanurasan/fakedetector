@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 4 — Жизненный цикл задачи, хранение и маршрутизация
 Статус этапа: IN_PROGRESS
-Ближайшее действие: повторный независимый Stage 4 final audit после исправления S4-RERUN2-001
+Ближайшее действие: повторный независимый Stage 4 final audit после remediation S4-RERUN3-001
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–3 завершены; все три functional increment Этапа 4 завершены, remediation S4-AUD-001 и S4-RERUN-001 независимо подтверждены закрытыми, remediation S4-RERUN2-001 реализован и локально проверен; authoritative timestamps Stage 4 теперь требуют канонический UTC-form и lifecycle chronology, Stage 4 остаётся IN_PROGRESS до повторного независимого final audit
+Реализация программы: Этапы 1–3 завершены; все три functional increment Этапа 4 завершены, historical findings S4-AUD-001, S4-RERUN-001 и S4-RERUN2-001 сохранены; cohesive remediation S4-RERUN3-001 с shared AuthoritativeLifecycleClock и explicit TerminalSettlement реализована и локально проверена; Stage 4 остаётся IN_PROGRESS до повторного независимого final audit
 Документационная база: сформирована
 ```
 
@@ -654,6 +654,12 @@ quarantine, preprocessing, analyzers и persistence `AnalysisResult`.
   recovery;
 - [x] `S4-RERUN-001`: исключить stranded active task при сбое terminal
   `Clock.now()` после physical cleanup;
+- [x] `S4-RERUN2-001`: сохранить strict UTC/chronology validation и pre-mutation
+  defense-in-depth для authoritative lifecycle timestamps;
+- [x] `S4-RERUN3-001`: реализовать shared `AuthoritativeLifecycleClock`, explicit
+  internal `TerminalSettlement`, post-cleanup `finished_at` и recovery
+  `FACT_READY` без повторного physical cleanup; локально проверено полным quality
+  barrier: 989 passed, 2 skipped, coverage 91%;
 - [ ] повторить независимый Stage 4 final audit.
 
 ## Обязательные тесты
@@ -687,7 +693,8 @@ recovery не очищает live tasks, не оставляет ordinary abando
 После завершения всех трёх functional increments Stage 4 остаётся
 `IN_PROGRESS`. Затем выполняется отдельный final audit branch. Статус `DONE`
 допустим только после audit `PASS`. Finding `S4-AUD-001` независимо подтверждён
-закрытым, remediation `S4-RERUN-001` исправлена; следующее действие — повторный
+закрытым; remediation `S4-RERUN-001`, `S4-RERUN2-001` и cohesive
+`S4-RERUN3-001` реализованы и локально проверены. Следующее действие — повторный
 независимый Stage 4 final audit.
 
 ---

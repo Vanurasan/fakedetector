@@ -14,6 +14,7 @@ import pytest
 import fakedetector.intake.temporary_input as temporary_input_module
 import fakedetector.lifecycle.cleanup as cleanup_module
 from fakedetector.config.models import AppConfig
+from fakedetector.core import AuthoritativeLifecycleClock
 from fakedetector.domain import (
     AnalysisStatus,
     CleanupResult,
@@ -46,6 +47,11 @@ from fakedetector.lifecycle import (
     WorkspaceCleanup,
     WorkspaceJanitor,
 )
+from fakedetector.lifecycle.models import (
+    CleanupFacts,
+    TerminalSettlementPhase,
+    TerminalSettlementSnapshot,
+)
 
 _NOW = datetime(2026, 8, 15, 15, 0, tzinfo=UTC)
 
@@ -53,6 +59,15 @@ _NOW = datetime(2026, 8, 15, 15, 0, tzinfo=UTC)
 class FixedClock:
     def now(self) -> datetime:
         return _NOW
+
+
+class FailingClock:
+    def now(self) -> datetime:
+        raise RuntimeError("PRIVATE RAW CLOCK FAILURE")
+
+
+def authoritative_clock() -> AuthoritativeLifecycleClock:
+    return AuthoritativeLifecycleClock(FixedClock())
 
 
 class CompletedExecutor:
@@ -146,6 +161,26 @@ def make_task(root: Path, analysis_id: str) -> tuple[AnalysisTask, LocalTemporar
     return task, owner
 
 
+def run_cleanup(task: AnalysisTask, config: AppConfig) -> CleanupFacts:
+    return WorkspaceCleanup(
+        config=config.temporary_storage,
+        clock=authoritative_clock(),
+    ).cleanup_task(
+        task,
+        TerminalSettlementSnapshot(
+            phase=TerminalSettlementPhase.CLEANUP_IN_PROGRESS,
+            original_file_deleted=task.accepted_source.is_released,
+            artifact_cleanup_completed=False,
+            intermediate_files_deleted=False,
+            quarantine_used=False,
+            quarantine_decided=False,
+            attempts_completed=0,
+            facts=None,
+        ),
+        lambda **_progress: None,
+    )
+
+
 def register_finished_task(
     registry: TaskRegistry,
     task: AnalysisTask,
@@ -168,7 +203,33 @@ def register_finished_task(
     registry.claim(analysis_id, _NOW)
     registry.record_outcome(analysis_id, TaskExecutionOutcome.completed())
     assert cleanup_result.finished_at is not None
-    registry.record_terminal_cleanup_and_finish(analysis_id, cleanup_result)
+    _claimed_task, owner_token = registry.claim_terminal_settlement(analysis_id)
+    registry.start_terminal_cleanup(analysis_id, owner_token)
+    registry.record_cleanup_progress(
+        analysis_id,
+        owner_token,
+        original_file_deleted=cleanup_result.original_file_deleted,
+        intermediate_files_deleted=cleanup_result.intermediate_files_deleted,
+        attempt_completed=True,
+        quarantine_used=cleanup_result.quarantine_used,
+        quarantine_decided=True,
+    )
+    registry.mark_terminal_facts_ready(
+        analysis_id,
+        owner_token,
+        CleanupFacts(
+            status=cleanup_result.status,
+            original_file_deleted=cleanup_result.original_file_deleted,
+            intermediate_files_deleted=cleanup_result.intermediate_files_deleted,
+            quarantine_used=cleanup_result.quarantine_used,
+            errors=tuple(cleanup_result.errors),
+        ),
+    )
+    registry.finalize_terminal_settlement(
+        analysis_id,
+        owner_token,
+        cleanup_result.finished_at,
+    )
 
 
 @pytest.mark.parametrize(
@@ -209,10 +270,7 @@ def test_configured_retry_matrix_is_exact_and_factual(
 
     monkeypatch.setattr(owner, "cleanup", cleanup_with_transient_failures)
 
-    result = WorkspaceCleanup(
-        config=config.temporary_storage,
-        clock=FixedClock(),
-    ).cleanup_task(task)
+    result = run_cleanup(task, config)
 
     assert calls == expected_calls
     assert result.status is expected_status
@@ -221,7 +279,7 @@ def test_configured_retry_matrix_is_exact_and_factual(
         assert result.original_file_deleted
         assert result.intermediate_files_deleted
         assert not (root / analysis_id).exists()
-        assert result.errors == []
+        assert result.errors == ()
     else:
         assert not result.original_file_deleted
         assert not result.intermediate_files_deleted
@@ -261,10 +319,7 @@ def test_retry_preserves_deleted_artifact_fact(
     monkeypatch.setattr(Path, "unlink", count_artifact_unlink)
     config = make_config(root, cleanup_retries=2, quarantine_enabled=False)
 
-    result = WorkspaceCleanup(
-        config=config.temporary_storage,
-        clock=FixedClock(),
-    ).cleanup_task(task)
+    result = run_cleanup(task, config)
 
     assert result.status is CleanupStatus.COMPLETED
     assert source_calls == 2
@@ -287,10 +342,7 @@ def test_partial_cleanup_is_factual_and_primary_status_is_independent(
 
     monkeypatch.setattr(owner, "cleanup", delete_source_then_fail)
 
-    result = WorkspaceCleanup(
-        config=config.temporary_storage,
-        clock=FixedClock(),
-    ).cleanup_task(task)
+    result = run_cleanup(task, config)
 
     assert result.status is CleanupStatus.PARTIAL
     assert result.original_file_deleted
@@ -337,11 +389,23 @@ def test_failed_primary_outcome_is_preserved_when_cleanup_exhausts(
         "cleanup",
         lambda _source: (_ for _ in ()).throw(TemporaryInputCleanupError()),
     )
+    _claimed_task, owner_token = registry.claim_terminal_settlement(analysis_id)
+    registry.start_terminal_cleanup(analysis_id, owner_token)
+    settlement = registry.terminal_settlement(analysis_id, owner_token)
     cleanup = WorkspaceCleanup(
         config=config.temporary_storage,
-        clock=FixedClock(),
-    ).cleanup_task(claimed)
-    registry.record_terminal_cleanup_and_finish(analysis_id, cleanup)
+        clock=authoritative_clock(),
+    ).cleanup_task(
+        claimed,
+        settlement,
+        lambda **progress: registry.record_cleanup_progress(
+            analysis_id,
+            owner_token,
+            **progress,
+        ),
+    )
+    registry.mark_terminal_facts_ready(analysis_id, owner_token, cleanup)
+    registry.finalize_terminal_settlement(analysis_id, owner_token, _NOW)
 
     snapshot = registry.snapshot(analysis_id)
     assert snapshot.status is AnalysisStatus.FAILED
@@ -366,10 +430,7 @@ def test_quarantine_success_moves_remaining_workspace_without_claiming_cleanup(
 
     monkeypatch.setattr(owner, "cleanup", always_fail)
 
-    result = WorkspaceCleanup(
-        config=config.temporary_storage,
-        clock=FixedClock(),
-    ).cleanup_task(task)
+    result = run_cleanup(task, config)
 
     assert calls == 3
     assert result.status is CleanupStatus.FAILED
@@ -397,10 +458,7 @@ def test_cleanup_after_cleanup_exhaustion_quarantine_releases_same_accepted_sour
         raise TemporaryInputCleanupError()
 
     monkeypatch.setattr(owner, "cleanup", fail_initial_cleanup)
-    result = WorkspaceCleanup(
-        config=config.temporary_storage,
-        clock=FixedClock(),
-    ).cleanup_task(task)
+    result = run_cleanup(task, config)
     monkeypatch.setattr(owner, "cleanup", real_cleanup)
     quarantine_item = tmp_path / "quarantine" / analysis_id
 
@@ -441,10 +499,7 @@ def test_quarantine_collision_does_not_overwrite_or_lose_either_item(
     )
     config = make_config(root, cleanup_retries=0, quarantine_enabled=True)
 
-    result = WorkspaceCleanup(
-        config=config.temporary_storage,
-        clock=FixedClock(),
-    ).cleanup_task(task)
+    result = run_cleanup(task, config)
 
     assert result.status is CleanupStatus.FAILED
     assert not result.quarantine_used
@@ -481,10 +536,7 @@ def test_quarantine_move_failure_retains_prior_controlled_location_and_state(
         return real_rename(path, target)
 
     monkeypatch.setattr(Path, "rename", fail_workspace_move)
-    result = WorkspaceCleanup(
-        config=config.temporary_storage,
-        clock=FixedClock(),
-    ).cleanup_task(task)
+    result = run_cleanup(task, config)
 
     assert result.status is CleanupStatus.FAILED
     assert not result.quarantine_used
@@ -527,7 +579,7 @@ def test_workspace_ttl_boundary_and_active_exclusion(tmp_path: Path) -> None:
 
     result = WorkspaceJanitor(
         config=config.temporary_storage,
-        clock=FixedClock(),
+        clock=authoritative_clock(),
         registry=registry,
     ).sweep()
 
@@ -553,7 +605,7 @@ def test_workspace_retry_exhaustion_quarantines_but_not_again_in_same_sweep(
     )
     janitor = WorkspaceJanitor(
         config=config.temporary_storage,
-        clock=FixedClock(),
+        clock=authoritative_clock(),
         registry=TaskRegistry(),
     )
     real_rmtree = cleanup_module.shutil.rmtree
@@ -579,6 +631,28 @@ def test_workspace_retry_exhaustion_quarantines_but_not_again_in_same_sweep(
     assert datetime.fromtimestamp(quarantine_item.stat().st_mtime, UTC) == _NOW
 
 
+def test_janitor_without_authoritative_anchor_skips_time_dependent_sweep(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "temp"
+    analysis_id = "9" * 32
+    workspace = create_workspace(root, analysis_id, _NOW - timedelta(days=1))
+    config = make_config(root, ttl_minutes=60, quarantine_enabled=False)
+    janitor = WorkspaceJanitor(
+        config=config.temporary_storage,
+        clock=AuthoritativeLifecycleClock(FailingClock()),
+        registry=TaskRegistry(),
+    )
+
+    result = janitor.sweep()
+
+    assert result.workspaces_deleted == ()
+    assert result.workspaces_quarantined == ()
+    assert result.quarantine_deleted == ()
+    assert result.issues == ()
+    assert workspace.is_dir()
+
+
 def test_registry_cleanup_claim_closes_registration_race(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -591,7 +665,7 @@ def test_registry_cleanup_claim_closes_registration_race(
     config = make_config(root, quarantine_enabled=False)
     janitor = WorkspaceJanitor(
         config=config.temporary_storage,
-        clock=FixedClock(),
+        clock=authoritative_clock(),
         registry=registry,
     )
     entered_cleanup = Event()
@@ -651,10 +725,15 @@ def test_quarantine_ttl_releases_known_controlled_source_through_owner(
         "cleanup",
         lambda _source: (_ for _ in ()).throw(TemporaryInputCleanupError()),
     )
-    cleanup_result = WorkspaceCleanup(
-        config=config.temporary_storage,
-        clock=FixedClock(),
-    ).cleanup_task(task)
+    cleanup_facts = run_cleanup(task, config)
+    cleanup_result = CleanupResult(
+        status=cleanup_facts.status,
+        original_file_deleted=cleanup_facts.original_file_deleted,
+        intermediate_files_deleted=cleanup_facts.intermediate_files_deleted,
+        quarantine_used=cleanup_facts.quarantine_used,
+        finished_at=_NOW,
+        errors=list(cleanup_facts.errors),
+    )
     monkeypatch.setattr(owner, "cleanup", real_cleanup)
     quarantine_item = tmp_path / "quarantine" / analysis_id
     os.utime(quarantine_item, ((_NOW - timedelta(hours=24)).timestamp(),) * 2)
@@ -663,7 +742,7 @@ def test_quarantine_ttl_releases_known_controlled_source_through_owner(
 
     result = WorkspaceJanitor(
         config=config.temporary_storage,
-        clock=FixedClock(),
+        clock=authoritative_clock(),
         registry=registry,
     ).sweep()
 
@@ -700,10 +779,15 @@ def test_failed_known_quarantine_ttl_cleanup_remains_controlled_and_retryable(
         "cleanup",
         lambda _source: (_ for _ in ()).throw(TemporaryInputCleanupError()),
     )
-    cleanup_result = WorkspaceCleanup(
-        config=config.temporary_storage,
-        clock=FixedClock(),
-    ).cleanup_task(task)
+    cleanup_facts = run_cleanup(task, config)
+    cleanup_result = CleanupResult(
+        status=cleanup_facts.status,
+        original_file_deleted=cleanup_facts.original_file_deleted,
+        intermediate_files_deleted=cleanup_facts.intermediate_files_deleted,
+        quarantine_used=cleanup_facts.quarantine_used,
+        finished_at=_NOW,
+        errors=list(cleanup_facts.errors),
+    )
     monkeypatch.setattr(owner, "cleanup", real_cleanup)
     quarantine_item = tmp_path / "quarantine" / analysis_id
     os.utime(quarantine_item, ((_NOW - timedelta(hours=24)).timestamp(),) * 2)
@@ -711,7 +795,7 @@ def test_failed_known_quarantine_ttl_cleanup_remains_controlled_and_retryable(
     register_finished_task(registry, task, cleanup_result)
     janitor = WorkspaceJanitor(
         config=config.temporary_storage,
-        clock=FixedClock(),
+        clock=authoritative_clock(),
         registry=registry,
     )
     real_rmtree = temporary_input_module.shutil.rmtree
@@ -759,7 +843,7 @@ def test_orphan_quarantine_ttl_retries_once_per_sweep_and_retains_failure(
     config = make_config(root, quarantine_ttl_hours=24)
     janitor = WorkspaceJanitor(
         config=config.temporary_storage,
-        clock=FixedClock(),
+        clock=authoritative_clock(),
         registry=TaskRegistry(),
     )
     calls = 0
@@ -810,7 +894,7 @@ def test_suspicious_entries_are_retained_and_symlink_is_not_followed(tmp_path: P
 
     result = WorkspaceJanitor(
         config=config.temporary_storage,
-        clock=FixedClock(),
+        clock=authoritative_clock(),
         registry=TaskRegistry(),
     ).sweep()
 
@@ -839,10 +923,11 @@ def test_scheduler_invokes_startup_post_terminal_and_shutdown_sweeps(
 
     monkeypatch.setattr(WorkspaceJanitor, "sweep", count_sweep)
     executor = CompletedExecutor()
-    scheduler = BoundedLocalScheduler(config=config, clock=FixedClock(), registry=registry)
+    clock = authoritative_clock()
+    scheduler = BoundedLocalScheduler(config=config, clock=clock, registry=registry)
     receiver = Stage4TaskReceiver(
         config=config,
-        clock=FixedClock(),
+        clock=clock,
         registry=registry,
         router=MediaRouter(dict.fromkeys(MediaType, executor)),
         queue=scheduler,

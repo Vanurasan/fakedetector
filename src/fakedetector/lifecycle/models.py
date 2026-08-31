@@ -6,6 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum, auto
 from pathlib import Path
 
 from fakedetector.config.models import AppConfig
@@ -139,6 +140,54 @@ class TaskExecutionOutcome:
         return cls(status=AnalysisStatus.FAILED, errors=(error,))
 
 
+class TerminalSettlementPhase(Enum):
+    """Internal-only physical cleanup settlement progress."""
+
+    CLAIMED = auto()
+    CLEANUP_IN_PROGRESS = auto()
+    FACT_READY = auto()
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupFacts:
+    """Timestamp-free factual cleanup outcome retained before publication."""
+
+    status: CleanupStatus
+    original_file_deleted: bool
+    intermediate_files_deleted: bool
+    quarantine_used: bool
+    errors: tuple[ErrorDetail, ...]
+
+
+@dataclass(slots=True)
+class TerminalSettlement:
+    """Minimal recoverable in-memory state hidden from public task snapshots."""
+
+    phase: TerminalSettlementPhase
+    owner_token: object | None
+    original_file_deleted: bool = False
+    artifact_cleanup_completed: bool = False
+    intermediate_files_deleted: bool = False
+    quarantine_used: bool = False
+    quarantine_decided: bool = False
+    attempts_completed: int = 0
+    facts: CleanupFacts | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalSettlementSnapshot:
+    """Immutable processor-facing view of recoverable settlement state."""
+
+    phase: TerminalSettlementPhase
+    original_file_deleted: bool
+    artifact_cleanup_completed: bool
+    intermediate_files_deleted: bool
+    quarantine_used: bool
+    quarantine_decided: bool
+    attempts_completed: int
+    facts: CleanupFacts | None
+
+
 @dataclass(slots=True)
 class AnalysisTask:
     """Internal application aggregate retaining the accepted-source capability."""
@@ -153,6 +202,7 @@ class AnalysisTask:
     errors: list[ErrorDetail] = field(default_factory=list)
     route: MediaType | None = None
     execution_claimed: bool = False
+    terminal_settlement: TerminalSettlement | None = None
 
     def __post_init__(self) -> None:
         if self.context.analysis_id != self.accepted_source.analysis_id:

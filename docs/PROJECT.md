@@ -422,6 +422,17 @@ Stage 3 отвечает на вопрос: можно ли безопасно �
 дальнейший lifecycle анализа, очередь, маршрутизацию, состояния и полную
 последующую очистку.
 
+Lifecycle timestamps Stage 3/4 принадлежат одному authoritative clock domain.
+Structural `Clock` является только источником raw samples. Один созданный в
+composition root и совместно используемый `AuthoritativeLifecycleClock` проверяет
+strict UTC form и неубывание времени. После первого valid anchor invalid raw sample
+или обычное исключение raw clock не переключает lifecycle на process wall clock:
+authoritative time продолжается от calendar anchor по фактически прошедшему
+monotonic времени. До первого valid anchor время не фабрикуется: регистрация не
+подтверждается, а time-dependent maintenance sweep безопасно пропускается.
+
+**Статус clock domain: FIXED.**
+
 Передача ownership подтверждается не самим вызовом Stage 4 receiver, а его
 нормальным возвратом после логического commit: receiver проверил identity
 `Stage3Accepted`, создал правдивые `AnalysisContext` и внутреннюю задачу,
@@ -544,6 +555,28 @@ Validator работает с controlled source, но не владеет worksp
 - гарантировать выполнение завершающей очистки, насколько это технически возможно.
 
 Первая версия использует внутренний механизм приложения, без внешнего брокера.
+
+После определения immutable primary outcome terminal lifecycle координируется
+минимальным internal-only `TerminalSettlement`:
+
+```text
+CLAIMED
+→ CLEANUP_IN_PROGRESS
+→ FACT_READY
+→ visible FINISHED
+```
+
+Settlement claim создаётся до первого physical cleanup side effect. Он хранит
+только необходимый factual progress cleanup/retry/quarantine и не является
+внешней моделью, workflow engine, journal или persistence record. `FACT_READY`
+означает, что immediate physical cleanup workflow полностью завершён и больше не
+запускается для этой задачи. После него `Stage4TaskProcessor` восстанавливает
+только terminal timestamp и atomic publication `CleanupResult + FINISHED`.
+Filesystem operations не выполняются под global registry lock; duplicate cleanup
+owner и duplicate finalization запрещены. Durable recovery после restart процесса
+в Stage 4 не вводится.
+
+**Статус terminal settlement architecture: FIXED.**
 
 ### 6.7. Временное хранилище
 
@@ -1223,6 +1256,8 @@ runtime/
   handle без раскрытия внутреннего пути во внешнем или файловом дескрипторе;
 - до успешной передачи ownership cleanup остаётся ответственностью intake;
 - после передачи ownership дальнейшая очистка относится к lifecycle задачи;
+- factual cleanup progress фиксируется internal `TerminalSettlement` до
+  authoritative terminal publication;
 - первая cleanup attempt выполняется всегда, а `cleanup_retries=N` означает до
   `N` дополнительных немедленных последовательных попыток после неё;
 - `quarantine` используется только после исчерпания cleanup attempts и только
@@ -1233,7 +1268,10 @@ runtime/
   системного `analysis_id` и не является долговременным repository;
 - TTL workspace и quarantine обслуживается детерминированными Stage 4 sweeps без
   отдельного daemon или background timer; живой workspace никогда не очищается
-  только на основании filesystem age.
+  только на основании filesystem age;
+- `finished_at` Stage 4 является post-cleanup terminal event: он получается после
+  завершения immediate cleanup/retry/quarantine workflow и публикуется атомарно
+  вместе с factual `CleanupResult` и `FINISHED`.
 
 **Политика cleanup recovery: FIXED — Option A, minimal deterministic local
 policy.**
