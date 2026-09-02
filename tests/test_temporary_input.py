@@ -19,6 +19,7 @@ from fakedetector.intake import (
     LocalTemporaryInputOwner,
     TemporaryInputCleanupError,
 )
+from fakedetector.intake.temporary_input import PreparedSourceRef
 
 
 class SyntheticStream:
@@ -214,6 +215,58 @@ def test_transfer_moves_ownership_and_invalidates_stale_handle(tmp_path: Path) -
     assert accepted_source.is_released
     assert owned_source.is_released
     assert not (tmp_path / "temp" / "moved-source").exists()
+
+
+def test_accepted_source_supports_trusted_local_path_access_after_handoff(
+    tmp_path: Path,
+) -> None:
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    owned_source = owner.create("accepted-local-path")
+    owner.ingest(owned_source, BytesIO(b"accepted-content"), 100)
+    accepted_source = owner.transfer(owned_source)
+
+    observed = accepted_source.with_local_source_path(
+        lambda path: (path.name, path.read_bytes()),
+    )
+
+    assert observed == ("source", b"accepted-content")
+    assert not hasattr(accepted_source, "source_path")
+    accepted_source.cleanup()
+
+
+def test_released_accepted_source_rejects_trusted_local_path_access(tmp_path: Path) -> None:
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    owned_source = owner.create("released-accepted")
+    owner.ingest(owned_source, BytesIO(b"content"), 100)
+    accepted_source = owner.transfer(owned_source)
+    accepted_source.cleanup()
+
+    with pytest.raises(IntakeSystemError):
+        accepted_source.with_local_source_path(lambda path: path.read_bytes())
+
+
+def test_prepared_source_ref_is_capability_narrow_and_preserves_ownership_checks(
+    tmp_path: Path,
+) -> None:
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    owned_source = owner.create("prepared-source")
+    owner.ingest(owned_source, BytesIO(b"prepared-content"), 100)
+    accepted_source = owner.transfer(owned_source)
+    source_ref = PreparedSourceRef(accepted_source)
+
+    assert source_ref.analysis_id == "prepared-source"
+    with source_ref.open_for_read() as source:
+        assert source.read() == b"prepared-content"
+    assert source_ref.with_local_source_path(lambda path: path.name) == "source"
+    assert not any(
+        hasattr(source_ref, attribute)
+        for attribute in ("cleanup", "transfer", "path", "source_path", "workspace_path")
+    )
+    assert str(tmp_path) not in repr(source_ref)
+
+    accepted_source.cleanup()
+    with pytest.raises(IntakeSystemError):
+        source_ref.with_local_source_path(lambda path: path.read_bytes())
 
 
 def test_quarantined_accepted_source_remains_readable_and_cleanup_releases_it(

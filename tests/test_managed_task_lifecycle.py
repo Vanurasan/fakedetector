@@ -408,9 +408,11 @@ def test_context_and_task_snapshot_are_truthful_safe_and_read_only(
     assert task.context.media_type is MediaType.IMAGE
     assert task.context.started_at is None
     assert task.context.finished_at is None
+    assert task.stage5_data is None
     assert snapshot.queued_at is not None
     assert snapshot.route is MediaType.IMAGE
     assert "accepted_source" not in {item.name for item in fields(TaskSnapshot)}
+    assert "stage5_data" not in {item.name for item in fields(TaskSnapshot)}
     assert "workspace_path" not in {item.name for item in fields(TaskSnapshot)}
     assert str(tmp_path) not in repr(snapshot)
     with pytest.raises(FrozenInstanceError):
@@ -908,10 +910,59 @@ def test_artifact_registry_rejects_user_controlled_paths(
 def test_artifact_registry_tracks_and_cleans_application_obligations(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     artifact = workspace / "frames" / "001.png"
-    artifact.parent.mkdir(parents=True)
-    artifact.write_bytes(b"generated")
+    workspace.mkdir()
     registry = WorkspaceArtifactRegistry(workspace)
-    registry.register("frame_001", "frames/001.png")
+    artifact_ref = registry.register("frame_001", "frames/001.png")
+
+    assert not artifact.exists()
+
+    def create_artifact(path: Path) -> None:
+        path.parent.mkdir()
+        path.write_bytes(b"generated")
+
+    registry.with_local_artifact_path(artifact_ref, create_artifact)
+
+    assert registry.cleanup_obligations() == (artifact,)
+    assert registry.cleanup_once().completed
+    assert not artifact.exists()
+
+
+def test_artifact_registry_rejects_foreign_ref_and_duplicate_target(tmp_path: Path) -> None:
+    first = WorkspaceArtifactRegistry(tmp_path / "first")
+    second = WorkspaceArtifactRegistry(tmp_path / "second")
+    artifact_ref = first.register("frame_001", "frames/001.png")
+
+    with pytest.raises(ArtifactRegistrationError):
+        second.with_local_artifact_path(artifact_ref, lambda path: path)
+    with pytest.raises(ArtifactRegistrationError):
+        first.register("frame_002", "frames/001.png")
+
+
+def test_completed_or_missing_artifact_obligation_cannot_reopen(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    registry = WorkspaceArtifactRegistry(workspace)
+    artifact_ref = registry.register("missing_artifact", "missing.bin")
+
+    assert registry.cleanup_once().completed
+    assert registry.cleanup_obligations() == (workspace / "missing.bin",)
+    with pytest.raises(ArtifactRegistrationError):
+        registry.with_local_artifact_path(artifact_ref, lambda path: path)
+
+
+def test_artifact_obligation_survives_failure_during_physical_creation(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    artifact = workspace / "partial.bin"
+    registry = WorkspaceArtifactRegistry(workspace)
+    artifact_ref = registry.register("partial_artifact", "partial.bin")
+
+    def fail_after_partial_create(path: Path) -> NoReturn:
+        path.write_bytes(b"partial")
+        raise OSError("creation failed")
+
+    with pytest.raises(OSError, match="creation failed"):
+        registry.with_local_artifact_path(artifact_ref, fail_after_partial_create)
 
     assert registry.cleanup_obligations() == (artifact,)
     assert registry.cleanup_once().completed

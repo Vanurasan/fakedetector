@@ -12,6 +12,7 @@ from pathlib import Path
 from fakedetector.config.models import AppConfig
 from fakedetector.domain import (
     AnalysisStatus,
+    AnalyzerResult,
     CleanupResult,
     CleanupStatus,
     ErrorDetail,
@@ -24,6 +25,7 @@ from fakedetector.domain import (
 from fakedetector.domain.models import validate_utc_datetime
 from fakedetector.intake import AcceptedSource
 from fakedetector.lifecycle.artifacts import WorkspaceArtifactRegistry
+from fakedetector.preprocessing._models import PreparedMedia
 
 
 def config_snapshot_fingerprint(config: AppConfig) -> str:
@@ -188,6 +190,17 @@ class TerminalSettlementSnapshot:
     facts: CleanupFacts | None
 
 
+@dataclass(frozen=True, slots=True)
+class Stage5TaskData:
+    """Internal prepared state and ordered analyzer results retained by one task."""
+
+    prepared_media: PreparedMedia
+    analyzer_results: tuple[AnalyzerResult, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "analyzer_results", tuple(self.analyzer_results))
+
+
 @dataclass(slots=True)
 class AnalysisTask:
     """Internal application aggregate retaining the accepted-source capability."""
@@ -197,6 +210,7 @@ class AnalysisTask:
     validated_file: ValidatedFileDescriptor
     accepted_source: AcceptedSource
     artifacts: WorkspaceArtifactRegistry
+    stage5_data: Stage5TaskData | None = None
     queued_at: datetime | None = None
     cleanup_result: CleanupResult | None = None
     errors: list[ErrorDetail] = field(default_factory=list)
@@ -213,6 +227,22 @@ class AnalysisTask:
             raise ValueError("task validated descriptor does not match validation")
         if self.context.media_type is not self.validated_file.media_type:
             raise ValueError("task media type does not match validated descriptor")
+        if self.stage5_data is not None:
+            prepared_media = self.stage5_data.prepared_media
+            if prepared_media.analysis_id != self.context.analysis_id:
+                raise ValueError("task Stage 5 identity does not match context")
+            if prepared_media.media_type is not self.context.media_type:
+                raise ValueError("task Stage 5 media type does not match context")
+            if not prepared_media.source_file_ref._references(self.accepted_source):
+                raise ValueError("task Stage 5 source capability does not match task source")
+            if any(
+                not self.artifacts._matches_registered_artifact(
+                    artifact.artifact_ref,
+                    artifact.artifact_id,
+                )
+                for artifact in prepared_media.artifacts
+            ):
+                raise ValueError("task Stage 5 artifact capability does not match task registry")
 
     def snapshot(self) -> TaskSnapshot:
         """Copy the current aggregate into an immutable capability-free projection."""

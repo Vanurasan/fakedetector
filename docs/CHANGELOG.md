@@ -346,6 +346,10 @@ YYYY-MM-DD
 
 - **[Stage 5/Architecture] Stage 5 PLAN принят с owner clarifications и нормативно зафиксирован до implementation.** Internal prepared models и private worker transport не раскрывают physical paths наружу; artifacts регистрируются до создания и остаются в Stage 4 cleanup lifecycle; analyzers выполняются последовательно в spawned workers с normal `TIMEOUT` только после confirmed stop/reap; общий processing budget является monotonic и начинается на входе `Stage5ExecutionService.execute(task)`. Production code, external schema `1.0` и закрытая Stage 4 architecture не изменялись; Stage 5 остаётся `NOT_STARTED`, next action — Stage 5 Increment 1: internal models + source/artifact capability boundary.
 
+### Added
+
+- **[Stage 5/Increment 1] Реализована внутренняя source/artifact capability boundary и immutable prepared state.** `PreparedSourceRef` делегирует controlled read и trusted local-path callback принятому `AcceptedSource` без cleanup/transfer/path API; `WorkspaceArtifactRegistry.register()` теперь возвращает registry-owned opaque ref и резервирует cleanup obligation до physical create/write, запрещая duplicate target и использование foreign/completed ref. Private `PreparedArtifact`, `PreparedMedia` и скрытый от `TaskSnapshot` `Stage5TaskData` добавлены без public export, schema/config/dependency expansion, preprocessing logic, analyzer execution или отдельной cleanup subsystem. Полный barrier: 1006 passed, 2 skipped, coverage 90%; следующий шаг — Stage 5 Increment 2.
+
 ### 2026-08-31
 
 ### Changed

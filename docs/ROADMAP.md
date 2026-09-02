@@ -112,10 +112,10 @@ AFTER_MVP
 ```text
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 5 — Предварительная обработка и каркас анализаторов
-Статус этапа: NOT_STARTED
-Ближайшее действие: Stage 5 Increment 1 — internal models + source/artifact capability boundary
+Статус этапа: IN_PROGRESS
+Ближайшее действие: Stage 5 Increment 2 — bounded subprocess primitive + Stage 3 parity migration
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–4 завершены; все три functional increment Этапа 4 завершены; historical findings S4-AUD-001, S4-RERUN-001, S4-RERUN2-001, S4-RERUN3-001 и S4-RERUN4-001 независимо подтверждены как CLOSED; independent final audit rerun5 = PASS; quality barrier полностью green: 994 passed, 2 skipped, coverage 91%; repository integrity confirmed; Stage 5 architecture PLAN принят с owner clarifications и зафиксирован как prerequisite, implementation Stage 5 ещё не начат
+Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increment 1 реализовал internal models и source/artifact capability boundary без preprocessing/analyzer execution; полный quality barrier green: 1006 passed, 2 skipped, coverage 90%; Stage 5 Increment 1 = DONE, Increment 2 = NOT_STARTED
 Документационная база: сформирована
 ```
 
@@ -148,7 +148,7 @@ AFTER_MVP
 | 2 | Доменные модели и репозитории | DONE | Типизированные модели контрактов |
 | 3 | Приём и первичная проверка файлов | DONE | Безопасно принятый или отклонённый файл |
 | 4 | Жизненный цикл задачи, хранение и маршрутизация | DONE | Управляемая задача с очисткой |
-| 5 | Предварительная обработка и каркас анализаторов | NOT_STARTED | Единый запуск анализаторов |
+| 5 | Предварительная обработка и каркас анализаторов | IN_PROGRESS | Единый запуск анализаторов |
 | 6 | Базовые анализаторы и формирование признаков | NOT_STARTED | Реальные нормализованные признаки |
 | 7 | Полнота, риск и рекомендации | NOT_STARTED | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | NOT_STARTED | Пользователь и система получают результат |
@@ -708,7 +708,7 @@ coverage 91%; repository integrity confirmed. Stage 4 имеет статус `D
 
 ---
 
-# Этап 5. Предварительная обработка и каркас анализаторов — NOT_STARTED
+# Этап 5. Предварительная обработка и каркас анализаторов — IN_PROGRESS
 
 ## Цель
 
@@ -718,7 +718,7 @@ coverage 91%; repository integrity confirmed. Stage 4 имеет статус `D
 
 ```text
 Stage 5 architecture PLAN: ACCEPTED WITH OWNER CLARIFICATIONS
-Implementation status: NOT_STARTED
+Implementation status: IN_PROGRESS
 ```
 
 Архитектурная prerequisite подготовлена и зафиксирована документацией.
@@ -734,14 +734,14 @@ timestamp.
 
 ## Implementation decomposition
 
-Все increments имеют статус `NOT_STARTED`:
+Текущие статусы increments:
 
-1. **Increment 1:** internal models + source/artifact capability boundary.
-2. **Increment 2:** bounded subprocess primitive + Stage 3 parity migration.
-3. **Increment 3:** image/audio/video preprocessing.
-4. **Increment 4:** analyzer registry/orchestration + hard process timeout.
-5. **Increment 5:** integrated Stage 4 → Stage 5 lifecycle.
-6. **Final Stage 5 audit:** отдельный последующий increment/branch после
+1. **Increment 1 — DONE:** internal models + source/artifact capability boundary.
+2. **Increment 2 — NOT_STARTED:** bounded subprocess primitive + Stage 3 parity migration.
+3. **Increment 3 — NOT_STARTED:** image/audio/video preprocessing.
+4. **Increment 4 — NOT_STARTED:** analyzer registry/orchestration + hard process timeout.
+5. **Increment 5 — NOT_STARTED:** integrated Stage 4 → Stage 5 lifecycle.
+6. **Final Stage 5 audit — NOT_STARTED:** отдельный последующий increment/branch после
    functional readiness.
 
 ## Обязательные задачи
