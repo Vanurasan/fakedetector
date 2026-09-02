@@ -340,6 +340,12 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-02
+
+### Decision
+
+- **[Stage 5/Architecture] Stage 5 PLAN принят с owner clarifications и нормативно зафиксирован до implementation.** Internal prepared models и private worker transport не раскрывают physical paths наружу; artifacts регистрируются до создания и остаются в Stage 4 cleanup lifecycle; analyzers выполняются последовательно в spawned workers с normal `TIMEOUT` только после confirmed stop/reap; общий processing budget является monotonic и начинается на входе `Stage5ExecutionService.execute(task)`. Production code, external schema `1.0` и закрытая Stage 4 architecture не изменялись; Stage 5 остаётся `NOT_STARTED`, next action — Stage 5 Increment 1: internal models + source/artifact capability boundary.
+
 ### 2026-08-31
 
 ### Changed
