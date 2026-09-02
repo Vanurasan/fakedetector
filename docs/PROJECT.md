@@ -605,31 +605,49 @@ owner и duplicate finalization запрещены. Durable recovery после 
 необходимом для создаваемого представления, и переиспользует либо дополняет уже
 подтверждённые технические параметры.
 
+`PreparedMedia` и `PreparedArtifact` являются immutable internal application
+values с непрозрачными ссылками. Они не образуют новую public domain schema, не
+сериализуются в `AnalysisResult`, не публикуют физические filesystem paths и не
+встраивают media bytes в JSON. Stream consumers получают controlled read access
+к существующему `AcceptedSource`; узкая trusted-operation boundary может открыть
+локальный source только доверенной preprocessing/FFmpeg infrastructure, но не
+arbitrary analyzer code и не через обычные поля `AnalyzerRequest`.
+
+Все создаваемые Stage 5 filesystem artifacts заранее резервируются в
+существующем `WorkspaceArtifactRegistry` как cleanup obligations и только затем
+физически создаются. Их lifecycle остаётся частью
+`WorkspaceArtifactRegistry → WorkspaceCleanup → Stage4TaskProcessor terminal
+cleanup`; отдельная Stage 5 cleanup subsystem не вводится.
+
 Для изображений:
 
-- извлечение метаданных;
-- безопасное декодирование;
-- нормализация рабочей копии;
-- получение технических параметров.
+- lossless PNG working representation без resize, с применённой EXIF orientation
+  и RGB/RGBA normalization;
+- bounded safe metadata без raw EXIF/XMP/ICC blobs;
+- first-frame normalized representation для multi-frame image с сохранением
+  factual frame count и явным предупреждением об отсутствии полного temporal
+  analysis.
 
 Для аудио:
 
-- извлечение метаданных;
-- декодирование;
-- нормализация частоты дискретизации при необходимости;
-- разбиение на фрагменты;
-- построение спектральных представлений;
-- получение технических параметров.
+- lossless signed 16-bit PCM WAV fragments с сохранением исходных sample rate и
+  channel count, без произвольного resample, mono downmix, gain или loudness
+  normalization;
+- фактический последний partial fragment без silence padding;
+- spectrogram только когда representation разрешена конфигурацией и действительно
+  требуется включённому анализатору;
+- потоковое декодирование без загрузки full decoded audio в Python memory.
 
 Для видео:
 
-- извлечение параметров контейнера и потоков;
-- извлечение метаданных;
-- выбор или извлечение ключевых кадров;
-- извлечение аудиодорожки;
-- подготовка временных сегментов;
-- передача кадров визуальным анализаторам;
-- передача аудиодорожки аудиоанализаторам.
+- periodic sampled representative frames в PNG; `keyframe_interval_seconds`
+  означает интервал этой выборки, а не codec/I-frame interval;
+- deterministic target timestamp/index без заявления factual packet/frame PTS,
+  если он не измерен;
+- optional audio extraction только при наличии дорожки и необходимости/
+  разрешении representation;
+- обработка без загрузки full video в Python memory; видео без audio является
+  нормальным фактическим случаем.
 
 ### 6.9. Модуль управления анализаторами
 
@@ -642,6 +660,32 @@ owner и duplicate finalization запрещены. Durable recovery после 
 - изолировать сбой отдельного анализатора;
 - собирать длительность, статус, ошибки и результаты;
 - не позволять анализаторам напрямую формировать итоговый риск.
+
+Stage 5 выполняет анализаторы одной задачи последовательно в порядке ID из
+per-media `enabled` config. Registered, но disabled analyzer не входит в active
+plan и не получает вызов applicability; enabled analyzer может завершиться как
+`not_applicable` или быть пропущен runtime policy как `skipped`. Настройки каждого
+enabled analyzer проходят analyzer-owned typed validation до начала task
+execution.
+
+Generic analyzer invocation изолируется отдельным spawned child process без
+матрицы execution modes. Parent преобразует internal models в private picklable
+`WorkerRequest`; trusted worker локально создаёт read-only analyzer inputs.
+Внутренние filesystem locations этого transport не являются public API, не
+логируются и не попадают в `PreparedMedia`, `AnalyzerRequest`, `AnalyzerResult`
+или внешний JSON; media bytes через IPC не передаются.
+
+Нормальный analyzer timeout публикуется только после подтверждённых
+terminate/kill и join/reap worker. Невозможность подтвердить остановку после
+предусмотренной escalation является fatal infrastructure/orchestration failure:
+обычный `timeout` и cleanup при предположительно отсутствующем reader в этом
+случае запрещены.
+
+`limits.processing_timeout_seconds` задаёт общий monotonic budget Stage 5. Он
+начинается при входе в `Stage5ExecutionService.execute(task)` после Stage 4 claim
+в состоянии `RUNNING / PREPROCESSING`; каждая bounded operation получает минимум
+собственного timeout и remaining overall budget. Исчерпание общего budget —
+task-level processing failure, а не набор обычных analyzer timeout.
 
 ### 6.10. Анализаторы
 
@@ -658,6 +702,12 @@ owner и duplicate finalization запрещены. Durable recovery после 
 - не записывать итоговый отчёт напрямую;
 - не присваивать окончательный уровень риска;
 - корректно сообщать `not_applicable`, ошибку или успешный результат согласно контракту.
+
+Анализатор не получает `TaskRegistry`, не меняет lifecycle, не управляет cleanup,
+не вызывает `ResultRepository` и в Stage 5 не формирует `Finding`, полноту, риск
+или final JSON. Stage 5 framework доказывается только fake/test analyzers с
+`score = null` и пустыми `candidate_findings`; они не включаются в default config
+и не являются forensic capabilities.
 
 Точные модели данных и статусы определяются в `CONTRACTS.md`.
 
@@ -796,8 +846,12 @@ JsonFileResultRepository
 9. Для допустимого файла `ValidatedFileDescriptor` и непрозрачное владение
    controlled source передаются дальнейшему lifecycle.
 10. Принятая задача поступает во внутреннюю очередь обработки.
-11. Выполняется предварительная обработка по типу медиа.
-12. Запускаются включённые и применимые анализаторы.
+11. `Stage4TaskProcessor` подтверждает execution claim и публикует
+    `RUNNING / PREPROCESSING`; `Stage5ExecutionService`, реализующий существующий
+    `TaskExecutor.execute(task) -> TaskExecutionOutcome`, фиксирует общий
+    monotonic processing deadline и выполняет подготовку по типу медиа.
+12. Через authoritative `TaskRegistry` публикуется `RUNNING / ANALYSIS`, после
+    чего включённые анализаторы запускаются последовательно в active order.
 13. Ошибки отдельных анализаторов фиксируются; остальные анализаторы продолжают работу, если это безопасно и возможно.
 14. Результаты анализаторов преобразуются в признаки.
 15. Рассчитывается риск и полнота анализа.
@@ -808,6 +862,15 @@ JsonFileResultRepository
 20. Итоговый JSON сохраняется атомарно через `ResultRepository`.
 21. Технические события записываются в журнал.
 22. Результат возвращается WebUI или API.
+
+Stage 5 заканчивается primary outcome и не меняет terminal ownership:
+`Stage4TaskProcessor` остаётся владельцем settlement, переходов
+`COMPLETED | FAILED / CLEANUP → same primary status / FINISHED`, cleanup и
+FINISHED publication. Concrete preprocessors и analyzers lifecycle самостоятельно
+не изменяют. До Stages 6–8 подготовленные данные и `AnalyzerResult[]` хранятся
+только внутри in-process task aggregate; Stage 5 не создаёт `Finding`, полноту,
+риск, `AnalysisResult`, persistence, HTTP/WebUI analysis, SQLite, broker, durable
+recovery или реальные forensic analyzers.
 
 Логический запрет: специализированные анализаторы не должны запускаться до успешного прохождения первичной проверки.
 

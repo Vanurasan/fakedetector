@@ -111,11 +111,11 @@ AFTER_MVP
 
 ```text
 Общий статус: IN_PROGRESS
-Текущий этап: Этап 4 — Жизненный цикл задачи, хранение и маршрутизация
-Статус этапа: DONE
-Ближайшее действие: подготовка и начало Stage 5 согласно ROADMAP
+Текущий этап: Этап 5 — Предварительная обработка и каркас анализаторов
+Статус этапа: NOT_STARTED
+Ближайшее действие: Stage 5 Increment 1 — internal models + source/artifact capability boundary
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–4 завершены; все три functional increment Этапа 4 завершены; historical findings S4-AUD-001, S4-RERUN-001, S4-RERUN2-001, S4-RERUN3-001 и S4-RERUN4-001 независимо подтверждены как CLOSED; independent final audit rerun5 = PASS; quality barrier полностью green: 994 passed, 2 skipped, coverage 91%; repository integrity confirmed; Stage 5 ещё не начат
+Реализация программы: Этапы 1–4 завершены; все три functional increment Этапа 4 завершены; historical findings S4-AUD-001, S4-RERUN-001, S4-RERUN2-001, S4-RERUN3-001 и S4-RERUN4-001 независимо подтверждены как CLOSED; independent final audit rerun5 = PASS; quality barrier полностью green: 994 passed, 2 skipped, coverage 91%; repository integrity confirmed; Stage 5 architecture PLAN принят с owner clarifications и зафиксирован как prerequisite, implementation Stage 5 ещё не начат
 Документационная база: сформирована
 ```
 
@@ -714,6 +714,36 @@ coverage 91%; repository integrity confirmed. Stage 4 имеет статус `D
 
 Создать расширяемый механизм подготовки image/audio/video и единый контракт выполнения анализаторов.
 
+## Архитектурная prerequisite
+
+```text
+Stage 5 architecture PLAN: ACCEPTED WITH OWNER CLARIFICATIONS
+Implementation status: NOT_STARTED
+```
+
+Архитектурная prerequisite подготовлена и зафиксирована документацией.
+
+Принятые owner clarifications нормативно закреплены в `PROJECT.md` и
+`CONTRACTS.md`: generic analyzer timeout реализуется spawned child process per
+invocation; opaque parent capabilities преобразуются в private picklable
+`WorkerRequest`; normal `TIMEOUT` публикуется только после confirmed stop/reap,
+а unreapable worker является fatal infrastructure failure; общий
+`limits.processing_timeout_seconds` начинается как monotonic budget на входе
+`Stage5ExecutionService.execute(task)` без добавления нового Stage 4 claim
+timestamp.
+
+## Implementation decomposition
+
+Все increments имеют статус `NOT_STARTED`:
+
+1. **Increment 1:** internal models + source/artifact capability boundary.
+2. **Increment 2:** bounded subprocess primitive + Stage 3 parity migration.
+3. **Increment 3:** image/audio/video preprocessing.
+4. **Increment 4:** analyzer registry/orchestration + hard process timeout.
+5. **Increment 5:** integrated Stage 4 → Stage 5 lifecycle.
+6. **Final Stage 5 audit:** отдельный последующий increment/branch после
+   functional readiness.
+
 ## Обязательные задачи
 
 ### Предварительная обработка изображения
@@ -729,7 +759,7 @@ coverage 91%; repository integrity confirmed. Stage 4 имеет статус `D
 
 - [ ] декодировать проверенный source в объёме, необходимом для подготовки;
 - [ ] переиспользовать либо дополнить подтверждённые параметры;
-- [ ] нормализовать представление;
+- [ ] создать canonical signed 16-bit PCM WAV fragments без resample/downmix;
 - [ ] разделить на фрагменты по конфигурации;
 - [ ] построить спектрограмму только при необходимости;
 - [ ] зарегистрировать артефакты.
@@ -739,7 +769,7 @@ coverage 91%; repository integrity confirmed. Stage 4 имеет статус `D
 - [ ] переиспользовать проверенный source и при необходимости дополнить параметры
   через FFmpeg/ffprobe безопасным вызовом;
 - [ ] не загружать всё видео в память;
-- [ ] извлечь ключевые кадры/сегменты;
+- [ ] извлечь periodic sampled representative frames/сегменты;
 - [ ] извлечь аудиодорожку при наличии;
 - [ ] зарегистрировать артефакты;
 - [ ] ограничить время внешних процессов.

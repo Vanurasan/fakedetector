@@ -214,7 +214,7 @@ timeout
 | Значение | Смысл |
 |---|---|
 | `completed` | Анализатор выполнился и сформировал корректный результат |
-| `skipped` | Анализатор применим, но отключён или пропущен политикой |
+| `skipped` | Включённый анализатор пропущен runtime policy |
 | `not_applicable` | Входные данные не удовлетворяют условиям применимости |
 | `error` | Анализатор завершился ошибкой |
 | `timeout` | Превышено разрешённое время выполнения |
@@ -306,6 +306,23 @@ Terminal lifecycle задачи проходит через `cleanup → finishe
 нельзя повторно поставить в очередь или перезапустить как ту же задачу; повторный
 analysis требует нового task lifecycle по каноническим контрактам.
 
+Stage 5 уточняет фактический участок этой state machine без изменения Stage 4
+ownership:
+
+```text
+QUEUED / QUEUED
+→ RUNNING / PREPROCESSING
+→ RUNNING / ANALYSIS
+→ COMPLETED | FAILED / CLEANUP
+→ same primary status / FINISHED
+```
+
+`TaskRegistry` остаётся единственной authority lifecycle mutations. Concrete
+preprocessor и analyzer их не выполняют. `Stage4TaskProcessor` сохраняет
+ownership execution claim, primary outcome, terminal settlement, cleanup и
+FINISHED publication. Canonical `Stage5ExecutionService` реализует существующий
+port `TaskExecutor.execute(task) -> TaskExecutionOutcome`, не меняя его signature.
+
 ### 3.2. Внутренний контекст задачи `AnalysisContext`
 
 Минимальные поля:
@@ -345,6 +362,13 @@ Internal application model `AnalysisTask` может агрегировать:
 - factual `queued_at`;
 - cleanup outcome;
 - безопасные lifecycle errors и primary outcome.
+
+На Stage 5 aggregate также может содержать registry-controlled internal
+`Stage5TaskData` с `PreparedMedia` и упорядоченным `AnalyzerResult[]`. Эти factual
+данные хранятся только in-process для последующих Stages 6–8: отдельный
+repository, persistence, промежуточный `AnalysisResult` и
+`ResultRepository.save()` не создаются, а `TaskSnapshot` не обязан публиковать
+Stage 5 internals.
 
 До visible terminal publication aggregate может содержать минимальный
 internal-only `TerminalSettlement`. Он не входит в `TaskSnapshot`, external JSON,
@@ -927,7 +951,12 @@ wiring реализуется на соответствующей последу
 
 ### 7.1. Общая модель `PreparedMedia`
 
-Предварительная обработка возвращает ссылки на контролируемые рабочие артефакты и типизированные параметры, но не встраивает бинарные данные в JSON.
+`PreparedMedia` и `PreparedArtifact` — immutable/frozen internal application
+models с непрозрачными internal references. Они не являются external/public
+domain schema, не сериализуются в `AnalysisResult` или `AnalyzerResult`, не
+публикуют physical filesystem paths и не встраивают binary media data в JSON.
+Canonical public `AnalyzerResult` сохраняется и не заменяется альтернативной
+моделью.
 
 Общие поля:
 
@@ -935,7 +964,7 @@ wiring реализуется на соответствующей последу
 |---|---|---|
 | `analysis_id` | string | Связь с задачей |
 | `media_type` | `MediaType` | Маршрут обработки |
-| `source_file_ref` | internal ref | Ссылка на исходный временный файл |
+| `source_file_ref` | opaque internal ref | Контролируемая ссылка на принятый source |
 | `artifacts` | array of `PreparedArtifact` | Созданные промежуточные данные |
 | `metadata` | object | Извлечённые метаданные |
 | `warnings` | array | Предупреждения подготовки |
@@ -955,14 +984,54 @@ wiring реализуется на соответствующей последу
 
 ```text
 normalized_image
-key_frame
+sampled_frame
 audio_fragment
 spectrogram
 extracted_audio_track
 metadata_snapshot
 ```
 
-Внутренние файловые ссылки не включаются во внешний итоговый результат.
+Artifact IDs и physical locations создаются приложением и не выводятся из
+`original_name`, MIME, `SourceContext` или `external_reference`. Для каждого
+filesystem artifact cleanup obligation сначала резервируется/регистрируется в
+существующем `WorkspaceArtifactRegistry`, и только затем выполняется physical
+creation/write. Partial или ещё не созданный после сбоя artifact остаётся
+известной cleanup obligation. Отдельная Stage 5 cleanup subsystem не создаётся.
+
+### 7.3. Controlled source access
+
+Stage 5 переиспользует opaque `AcceptedSource`. Stream consumers получают
+controlled read access. Trusted preprocessing/FFmpeg infrastructure может
+использовать узкую callback boundary по смыслу
+`AcceptedSource.with_local_source_path(trusted_operation)`, но physical path не
+становится public property, не передаётся arbitrary analyzer code, не входит в
+`AnalyzerRequest`, safe result/error или serialization и не меняет Stage 3/4
+ownership semantics.
+
+### 7.4. Нормативные preprocessing representations
+
+- Image: lossless PNG без resize, RGB/RGBA normalization и применённая EXIF
+  orientation; исходный `ValidatedFileDescriptor` не переписывается, metadata
+  bounded и safe, raw EXIF/XMP/ICC blobs не сохраняются. Для multi-frame input
+  normalized representation содержит первый отображаемый frame, существующий
+  factual `frame_count` сохраняется, metadata явно фиксирует scope `first_frame`,
+  а warnings сообщают, что representation не покрывает temporal behavior. Такое
+  представление не называется полным temporal analysis.
+- Audio: lossless signed 16-bit PCM WAV fragments с исходными sample rate и
+  channel count, без произвольного resample, mono downmix, gain/loudness
+  normalization и silence padding последнего partial fragment. Fragment duration
+  берётся из существующей config; spectrogram создаётся только при одновременном
+  разрешении config и фактической потребности enabled analyzer. Full decoded audio
+  не загружается в Python memory.
+- Video: full video не загружается в Python memory. Existing
+  `keyframe_interval_seconds` означает интервал periodic sampled representative
+  frames, а не codec/I-frames. `sampled_frame` сохраняется как PNG с deterministic
+  target timestamp/index; target timestamp не считается factual packet/frame PTS
+  без измерения. Video without audio допустимо; audio extraction выполняется
+  только при наличии дорожки и необходимости/разрешении representation;
+  рекомендуемое Stage 5 lossless representation извлечённой video audio track —
+  FLAC. Это internal artifact representation, а не external/public schema или
+  новое config field.
 
 ---
 
@@ -984,11 +1053,18 @@ metadata_snapshot
 
 Анализатор не должен:
 
+- получать `TaskRegistry` или изменять task status/stage;
+- управлять cleanup;
 - самостоятельно формировать итоговый риск;
 - записывать итоговый JSON напрямую;
+- вызывать `ResultRepository`;
 - управлять HTTP-ответом;
 - хранить исходный файл долговременно;
-- создавать признак без указания источника и версии.
+- создавать Stage 6 `Finding` в рамках Stage 5 framework proof.
+
+Stage 5 использует только fake/test analyzers: они не являются forensic
+capabilities, возвращают `score=null` и `candidate_findings=[]`, не включаются в
+default config и доказывают только framework execution paths.
 
 ### 8.2. Логический интерфейс
 
@@ -1009,7 +1085,13 @@ class Analyzer(Protocol):
     ) -> AnalyzerResult: ...
 ```
 
-Синхронность интерфейса является логической. Оркестратор может выполнять анализатор в потоке или отдельном процессе.
+Синхронность интерфейса является логической. Generic Stage 5 adapter выполняет
+каждый analyzer invocation в отдельном spawned child process; matrix
+`execution_mode` на Stage 5 не вводится.
+
+`ApplicabilityResult` минимально различает `applicable=true` и
+`applicable=false` с безопасной причиной. При `false` метод `analyze()` не
+вызывается.
 
 ### 8.3. `AnalyzerRequest`
 
@@ -1024,6 +1106,8 @@ class Analyzer(Protocol):
 - сведения о качестве входа, необходимые методу.
 
 Не содержит API-токенов, пользовательских паролей и несвязанных данных источника.
+Physical workspace/source paths также не являются обычными полями
+`AnalyzerRequest`.
 
 ### 8.4. `AnalyzerResult`
 
@@ -1076,6 +1160,68 @@ class Analyzer(Protocol):
 - при `status=not_applicable` поле `applicable=false`;
 - при `error` и `timeout` ошибка обязательна;
 - при `skipped` должна быть указана безопасная причина.
+
+Registered, но disabled analyzer не входит в active plan: applicability и
+`analyze()` не вызываются, `AnalyzerResult` не создаётся. Enabled analyzer,
+пропущенный runtime policy, получает `skipped`; enabled, но неприменимый —
+`not_applicable`. Результаты детерминированно упорядочены по ID из per-media
+`enabled` config, и внутри task analyzers выполняются sequentially, не более
+одного generic worker одновременно.
+
+До task execution registry/config validation обнаруживает unknown или duplicate
+enabled analyzer ID, media mismatch и invalid analyzer settings. Raw
+`analyzers.settings` проходит analyzer-owned typed validation. Future
+analyzer-specific settings не добавляются целиком в global `AppConfig` schema.
+
+### 8.5. Worker timeout и private transport
+
+Parent internal models преобразуются в private picklable `WorkerRequest`, который
+передаётся trusted spawned worker; opaque parent capabilities напрямую не
+pickle-ятся. Worker-local read-only inputs затем формируют `AnalyzerRequest`.
+Private request может содержать controlled internal filesystem locations
+подготовленных artifacts, но они не являются reusable public API, не попадают в
+public prepared fields, `AnalysisResult`, `AnalyzerResult` или safe logs/errors.
+Media bytes через IPC не передаются.
+
+Нормальный `AnalyzerResult.status=timeout` допускается только после deadline,
+terminate, bounded join, при необходимости kill и подтверждённого join/reap.
+Если после escalation stop/reap подтвердить невозможно, это fatal
+infrastructure/orchestration failure, а не analyzer timeout; ordinary cleanup не
+выполняется так, будто активного reader гарантированно нет. Требование отсутствия
+abandoned worker относится к supported normal timeout paths и не обещает
+абсолютной гарантии против отказа ОС.
+
+### 8.6. Overall processing budget и continue policy
+
+`limits.processing_timeout_seconds` — общий monotonic Stage 5 processing budget.
+Deadline фиксируется на входе `Stage5ExecutionService.execute(task)` сразу после
+Stage 4 execution claim при `RUNNING / PREPROCESSING`. Каждая bounded operation
+использует `min(operation/analyzer timeout, remaining overall budget)`; wall
+datetime не используется как duration source. Новый monotonic claim timestamp
+или другое поле Stage 4 aggregate только ради этого budget не вводится.
+
+Analyzer-specific timeout при доступном overall budget создаёт factual
+`AnalyzerResult` со `status=AnalyzerStatus.TIMEOUT`, после чего последовательное
+выполнение продолжается по continue policy. Исчерпание общего budget является
+task-level processing failure; оставшиеся enabled analyzers после начала
+`ANALYSIS` могут получить `SKIPPED`, а Stage 5 не рассчитывает completeness или
+risk.
+
+В schema `1.0` runtime policy принадлежит
+`error_handling.continue_if_analyzer_fails`. Существующий
+`analyzers.defaults.continue_on_error` — legacy duplicate; пока оба поля есть,
+они обязаны совпадать, иначе startup завершается `invalid_configuration`.
+Отдельные global/default semantics не вводятся. Удаление или deprecation требует
+будущей schema revision. `error_handling.mark_partial_on_analyzer_failure` Stage
+5 не применяет: completeness, `partial` и final status policy принадлежат Stage 7.
+
+### 8.7. Safe external-process boundary
+
+Reusable bounded subprocess primitive отвечает только за process safety:
+argument list, `shell=False`, disabled stdin, controlled cwd, bounded stdout,
+bounded/discarded stderr, timeout и terminate/kill/reap с safe factual outcome.
+Stage 3 и Stage 5 используют отдельные semantic adapters поверх primitive;
+существующие Stage 3 media rejection и infrastructure semantics не меняются.
 
 ---
 
