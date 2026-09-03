@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-import io
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
 
 import fakedetector.intake.media_tools as media_tools_module
+from fakedetector.core._bounded_process import (
+    ProcessInfrastructureError,
+    ProcessInfrastructurePhase,
+    ProcessOutputLimitError,
+    ProcessResult,
+    ProcessTimeoutError,
+)
 from fakedetector.intake.media_tools import (
     FFmpegMediaInspector,
     MediaRejectedError,
@@ -49,41 +54,6 @@ def probe_payload(*, audio: bool = True, video: bool = False) -> dict[str, objec
     }
 
 
-class FakeProcess:
-    def __init__(self, *, output: bytes = b"", return_code: int = 0) -> None:
-        self.stdout = io.BytesIO(output)
-        self.return_code = return_code
-        self.killed = False
-        self.wait_calls = 0
-
-    def wait(self, timeout: float | None = None) -> int:
-        self.wait_calls += 1
-        return self.return_code
-
-    def kill(self) -> None:
-        self.killed = True
-
-
-class TimeoutProcess(FakeProcess):
-    def wait(self, timeout: float | None = None) -> int:
-        self.wait_calls += 1
-        if self.wait_calls == 1:
-            raise subprocess.TimeoutExpired("safe-executable", timeout)
-        return self.return_code
-
-
-class FailingStdout:
-    def __init__(self, message: str) -> None:
-        self._message = message
-        self.closed = False
-
-    def read(self, _size: int) -> bytes:
-        raise OSError(self._message)
-
-    def close(self) -> None:
-        self.closed = True
-
-
 def test_probe_uses_bounded_safe_arguments_and_parses_only_required_json(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -94,13 +64,12 @@ def test_probe_uses_bounded_safe_arguments_and_parses_only_required_json(
     source_path = workspace_path / "source"
     source_path.touch()
     calls: list[tuple[list[str], dict[str, object]]] = []
-    process = FakeProcess(output=json.dumps(probe_payload()).encode())
 
-    def fake_popen(arguments: list[str], **kwargs: object) -> FakeProcess:
+    def fake_run(arguments: list[str], **kwargs: object) -> ProcessResult:
         calls.append((arguments, kwargs))
-        return process
+        return ProcessResult(return_code=0, stdout=json.dumps(probe_payload()).encode())
 
-    monkeypatch.setattr(media_tools_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(media_tools_module, "run_bounded_process", fake_run)
 
     probe = FFmpegMediaInspector(ffprobe_executable="trusted-ffprobe").probe(source_path)
 
@@ -111,11 +80,9 @@ def test_probe_uses_bounded_safe_arguments_and_parses_only_required_json(
     assert "-show_entries" in arguments
     assert "tags" not in " ".join(arguments)
     assert kwargs == {
-        "shell": False,
-        "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.PIPE,
-        "stderr": subprocess.DEVNULL,
         "cwd": workspace_path,
+        "timeout_seconds": 15.0,
+        "stdout_limit_bytes": 64 * 1024,
     }
     assert original_name not in str(kwargs["cwd"])
 
@@ -134,11 +101,11 @@ def test_bounded_decode_uses_null_sink_without_artifacts(
     source_path.touch()
     calls: list[tuple[list[str], dict[str, object]]] = []
 
-    def fake_popen(arguments: list[str], **kwargs: object) -> FakeProcess:
+    def fake_run(arguments: list[str], **kwargs: object) -> ProcessResult:
         calls.append((arguments, kwargs))
-        return FakeProcess()
+        return ProcessResult(return_code=0, stdout=None)
 
-    monkeypatch.setattr(media_tools_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(media_tools_module, "run_bounded_process", fake_run)
     inspector = FFmpegMediaInspector(ffmpeg_executable="trusted-ffmpeg")
 
     if media_type == "audio":
@@ -152,11 +119,9 @@ def test_bounded_decode_uses_null_sink_without_artifacts(
     assert arguments[arguments.index("-t") + 1] == "1"
     assert arguments[-3:] == ["-f", "null", "-"]
     assert str(source_path) in arguments
-    assert kwargs["shell"] is False
-    assert kwargs["stdin"] == subprocess.DEVNULL
-    assert kwargs["stdout"] == subprocess.DEVNULL
-    assert kwargs["stderr"] == subprocess.DEVNULL
     assert kwargs["cwd"] == workspace_path
+    assert kwargs["timeout_seconds"] == 15.0
+    assert "stdout_limit_bytes" not in kwargs
     assert original_name not in str(kwargs["cwd"])
     if media_type == "video":
         assert arguments[arguments.index("-frames:v") + 1] == "3"
@@ -168,18 +133,15 @@ def test_process_start_failure_is_safe_system_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sentinel = "PRIVATE EXECUTABLE PATH"
+    def fail_run(arguments: list[str], **kwargs: object) -> ProcessResult:
+        raise ProcessInfrastructureError("start")
 
-    def fail_popen(arguments: list[str], **kwargs: object) -> FakeProcess:
-        raise OSError(sentinel)
-
-    monkeypatch.setattr(media_tools_module.subprocess, "Popen", fail_popen)
+    monkeypatch.setattr(media_tools_module, "run_bounded_process", fail_run)
 
     with pytest.raises(MediaToolSystemError) as error_info:
         FFmpegMediaInspector().probe(tmp_path / "source")
 
     assert error_info.value.phase == "process_start"
-    assert sentinel not in str(error_info.value)
     assert error_info.value.__cause__ is None
 
 
@@ -190,9 +152,9 @@ def test_successful_malformed_probe_output_is_system_failure(
     output: bytes,
 ) -> None:
     monkeypatch.setattr(
-        media_tools_module.subprocess,
-        "Popen",
-        lambda arguments, **kwargs: FakeProcess(output=output),
+        media_tools_module,
+        "run_bounded_process",
+        lambda arguments, **kwargs: ProcessResult(return_code=0, stdout=output),
     )
 
     with pytest.raises(MediaToolSystemError, match="infrastructure") as error_info:
@@ -201,85 +163,69 @@ def test_successful_malformed_probe_output_is_system_failure(
     assert error_info.value.phase == "ffprobe_output"
 
 
-def test_probe_output_limit_kills_process_and_rejects_input(
+def test_probe_output_limit_maps_to_normative_rejection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    process = FakeProcess(output=b"x" * (64 * 1024 + 1))
+    def fail_run(arguments: list[str], **kwargs: object) -> ProcessResult:
+        raise ProcessOutputLimitError
+
     monkeypatch.setattr(
-        media_tools_module.subprocess,
-        "Popen",
-        lambda arguments, **kwargs: process,
+        media_tools_module,
+        "run_bounded_process",
+        fail_run,
     )
 
     with pytest.raises(MediaRejectedError) as error_info:
         FFmpegMediaInspector().probe(tmp_path / "source")
 
     assert error_info.value.phase == "ffprobe_output_limit"
-    assert process.killed
 
 
-def test_probe_stdout_read_failure_kills_reaps_and_is_safe_system_failure(
+@pytest.mark.parametrize(
+    ("process_phase", "media_phase"),
+    [
+        ("stdout_read", "ffprobe_stdout_read"),
+        ("stdout_close", "ffprobe_stdout_close"),
+        ("wait", "process_wait"),
+        ("termination", "process_wait"),
+    ],
+)
+def test_probe_infrastructure_failure_preserves_safe_phase(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    process_phase: ProcessInfrastructurePhase,
+    media_phase: str,
 ) -> None:
-    sentinel = "PRIVATE PIPE PATH"
-    process = FakeProcess()
-    failing_stdout = FailingStdout(sentinel)
-    process.stdout = failing_stdout  # type: ignore[assignment]
+    def fail_run(arguments: list[str], **kwargs: object) -> ProcessResult:
+        raise ProcessInfrastructureError(process_phase)
+
     monkeypatch.setattr(
-        media_tools_module.subprocess,
-        "Popen",
-        lambda arguments, **kwargs: process,
+        media_tools_module,
+        "run_bounded_process",
+        fail_run,
     )
 
     with pytest.raises(MediaToolSystemError) as error_info:
         FFmpegMediaInspector().probe(tmp_path / "source")
 
-    assert error_info.value.phase == "ffprobe_stdout_read"
-    assert sentinel not in str(error_info.value)
+    assert error_info.value.phase == media_phase
     assert error_info.value.__cause__ is None
-    assert process.killed
-    assert process.wait_calls == 1
-    assert failing_stdout.closed
-
-
-def test_probe_stdout_read_failure_remains_system_failure_during_timeout_cleanup(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    sentinel = "PRIVATE PIPE PATH"
-    process = TimeoutProcess()
-    failing_stdout = FailingStdout(sentinel)
-    process.stdout = failing_stdout  # type: ignore[assignment]
-    monkeypatch.setattr(
-        media_tools_module.subprocess,
-        "Popen",
-        lambda arguments, **kwargs: process,
-    )
-
-    with pytest.raises(MediaToolSystemError) as error_info:
-        FFmpegMediaInspector(timeout_seconds=0.01).probe(tmp_path / "source")
-
-    assert error_info.value.phase == "ffprobe_stdout_read"
-    assert sentinel not in str(error_info.value)
-    assert process.killed
-    assert process.wait_calls == 2
-    assert failing_stdout.closed
 
 
 @pytest.mark.parametrize("operation", ["probe", "decode"])
-def test_timeout_kills_and_reaps_process_as_normative_media_failure(
+def test_timeout_maps_to_normative_media_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
 ) -> None:
-    output = json.dumps(probe_payload()).encode() if operation == "probe" else b""
-    process = TimeoutProcess(output=output)
+    def fail_run(arguments: list[str], **kwargs: object) -> ProcessResult:
+        raise ProcessTimeoutError
+
     monkeypatch.setattr(
-        media_tools_module.subprocess,
-        "Popen",
-        lambda arguments, **kwargs: process,
+        media_tools_module,
+        "run_bounded_process",
+        fail_run,
     )
     inspector = FFmpegMediaInspector(timeout_seconds=0.01)
 
@@ -290,8 +236,6 @@ def test_timeout_kills_and_reaps_process_as_normative_media_failure(
             inspector.decode_audio(tmp_path / "source")
 
     assert error_info.value.phase.endswith("timeout")
-    assert process.killed
-    assert process.wait_calls == 2
 
 
 @pytest.mark.parametrize("operation", ["probe", "decode"])
@@ -300,11 +244,13 @@ def test_decoder_nonzero_return_is_normative_rejection_without_raw_stderr(
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
 ) -> None:
-    process = FakeProcess(return_code=7)
     monkeypatch.setattr(
-        media_tools_module.subprocess,
-        "Popen",
-        lambda arguments, **kwargs: process,
+        media_tools_module,
+        "run_bounded_process",
+        lambda arguments, **kwargs: ProcessResult(
+            return_code=7,
+            stdout=json.dumps(probe_payload()).encode() if operation == "probe" else None,
+        ),
     )
     inspector = FFmpegMediaInspector()
 
@@ -315,6 +261,41 @@ def test_decoder_nonzero_return_is_normative_rejection_without_raw_stderr(
             inspector.decode_audio(tmp_path / "source")
 
     assert "PRIVATE" not in str(error_info.value)
+
+
+def test_decode_infrastructure_failure_maps_to_safe_system_phase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_run(arguments: list[str], **kwargs: object) -> ProcessResult:
+        raise ProcessInfrastructureError("termination")
+
+    monkeypatch.setattr(media_tools_module, "run_bounded_process", fail_run)
+
+    with pytest.raises(MediaToolSystemError) as error_info:
+        FFmpegMediaInspector().decode_audio(tmp_path / "source")
+
+    assert error_info.value.phase == "process_wait"
+    assert error_info.value.__cause__ is None
+
+
+def test_source_path_with_metacharacters_remains_one_argv_element(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "trusted space & semicolon; dollar$(literal)" / "source"
+    observed_arguments: list[str] = []
+
+    def fake_run(arguments: list[str], **kwargs: object) -> ProcessResult:
+        observed_arguments.extend(arguments)
+        return ProcessResult(return_code=0, stdout=json.dumps(probe_payload()).encode())
+
+    monkeypatch.setattr(media_tools_module, "run_bounded_process", fake_run)
+
+    FFmpegMediaInspector().probe(source_path)
+
+    assert observed_arguments[-1] == str(source_path.absolute())
+    assert observed_arguments.count(str(source_path.absolute())) == 1
 
 
 def test_attached_picture_does_not_make_audio_container_video() -> None:

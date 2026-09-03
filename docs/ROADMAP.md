@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 5 — Предварительная обработка и каркас анализаторов
 Статус этапа: IN_PROGRESS
-Ближайшее действие: Stage 5 Increment 2 — bounded subprocess primitive + Stage 3 parity migration
+Ближайшее действие: Stage 5 Increment 3 — image/audio/video preprocessing
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increment 1 реализовал internal models и source/artifact capability boundary без preprocessing/analyzer execution; полный quality barrier green: 1006 passed, 2 skipped, coverage 90%; Stage 5 Increment 1 = DONE, Increment 2 = NOT_STARTED
+Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increment 1 реализовал internal models и source/artifact capability boundary; Increment 2 реализовал shared bounded subprocess primitive и parity migration Stage 3 без preprocessing/analyzer execution; полный quality barrier green: 1035 passed, 2 skipped, coverage 91%; Stage 5 Increments 1–2 = DONE, Increment 3 = NOT_STARTED
 Документационная база: сформирована
 ```
 
@@ -737,12 +737,18 @@ timestamp.
 Текущие статусы increments:
 
 1. **Increment 1 — DONE:** internal models + source/artifact capability boundary.
-2. **Increment 2 — NOT_STARTED:** bounded subprocess primitive + Stage 3 parity migration.
+2. **Increment 2 — DONE:** bounded subprocess primitive + Stage 3 parity migration.
 3. **Increment 3 — NOT_STARTED:** image/audio/video preprocessing.
 4. **Increment 4 — NOT_STARTED:** analyzer registry/orchestration + hard process timeout.
 5. **Increment 5 — NOT_STARTED:** integrated Stage 4 → Stage 5 lifecycle.
 6. **Final Stage 5 audit — NOT_STARTED:** отдельный последующий increment/branch после
    functional readiness.
+
+Increment 2 выделил private shared process boundary с hard-bounded stdout,
+discard-режимом, explicit cwd, `shell=False`, disabled stdin, timeout и
+подтверждённым terminate/kill/reap. `FFmpegMediaInspector` мигрирован без
+изменения Stage 3 argument construction и rejected/failed semantics. Следующее
+действие — Stage 5 Increment 3: image/audio/video preprocessing.
 
 ## Обязательные задачи
 

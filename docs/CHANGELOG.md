@@ -340,6 +340,12 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-03
+
+### Added
+
+- **[Stage 5/Increment 2] Реализован private shared bounded subprocess primitive и выполнена parity migration Stage 3.** Primitive принимает только application-built argv, использует `shell=False`, disabled stdin, explicit trusted cwd, discard либо hard-bounded stdout и возвращает timeout/output-limit только после подтверждённого stop/reap; unsafe process details не попадают в ошибки. `FFmpegMediaInspector` переведён на эту boundary с сохранением ffprobe/ffmpeg arguments, лимитов и rejected/failed mappings. Cross-platform regression-тесты подтверждают literal shell metacharacters, cwd, non-zero/start/read/wait failures, timeout, output bounding и отсутствие живого reader после возврата. Полный barrier: 1035 passed, 2 skipped, coverage 91%; следующий шаг — Stage 5 Increment 3.
+
 ### 2026-09-02
 
 ### Decision
