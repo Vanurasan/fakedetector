@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 5 — Предварительная обработка и каркас анализаторов
 Статус этапа: IN_PROGRESS
-Ближайшее действие: Stage 5 Increment 3 — image/audio/video preprocessing
+Ближайшее действие: Stage 5 Increment 4 — analyzer registry/orchestration + spawned-process timeout
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increment 1 реализовал internal models и source/artifact capability boundary; Increment 2 реализовал shared bounded subprocess primitive и parity migration Stage 3 без preprocessing/analyzer execution; полный quality barrier green: 1035 passed, 2 skipped, coverage 91%; Stage 5 Increments 1–2 = DONE, Increment 3 = NOT_STARTED
+Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increments 1–3 реализовали internal models/capability boundary, shared bounded subprocess primitive с parity migration Stage 3 и image/audio/video preprocessing без analyzer execution или Stage 4 integration; полный quality barrier green: 1062 passed, 2 skipped, coverage 91%; Stage 5 Increments 1–3 = DONE, Increment 4 = NOT_STARTED
 Документационная база: сформирована
 ```
 
@@ -738,7 +738,7 @@ timestamp.
 
 1. **Increment 1 — DONE:** internal models + source/artifact capability boundary.
 2. **Increment 2 — DONE:** bounded subprocess primitive + Stage 3 parity migration.
-3. **Increment 3 — NOT_STARTED:** image/audio/video preprocessing.
+3. **Increment 3 — DONE:** image/audio/video preprocessing.
 4. **Increment 4 — NOT_STARTED:** analyzer registry/orchestration + hard process timeout.
 5. **Increment 5 — NOT_STARTED:** integrated Stage 4 → Stage 5 lifecycle.
 6. **Final Stage 5 audit — NOT_STARTED:** отдельный последующий increment/branch после
@@ -747,38 +747,48 @@ timestamp.
 Increment 2 выделил private shared process boundary с hard-bounded stdout,
 discard-режимом, explicit cwd, `shell=False`, disabled stdin, timeout и
 подтверждённым terminate/kill/reap. `FFmpegMediaInspector` мигрирован без
-изменения Stage 3 argument construction и rejected/failed semantics. Следующее
-действие — Stage 5 Increment 3: image/audio/video preprocessing.
+изменения Stage 3 argument construction и rejected/failed semantics.
+
+Increment 3 добавил внутренний детерминированный dispatcher и реализации
+предобработки для image/audio/video. Все создаваемые файлы резервируются в
+`WorkspaceArtifactRegistry` до физического создания; `PreparedMedia` содержит
+только непрозрачные ссылки и ограниченные неизменяемые метаданные. Для image
+создаётся PNG первого отображаемого кадра с применённой EXIF orientation, для
+audio — PCM s16le WAV, фактические фрагменты и спектрограмма по требованию, для
+video — ограниченный набор периодических PNG-кадров и FLAC-аудиодорожка по
+требованию.
+Следующее действие — Stage 5 Increment 4: analyzer registry/orchestration +
+spawned-process timeout.
 
 ## Обязательные задачи
 
 ### Предварительная обработка изображения
 
-- [ ] переиспользовать проверенный source и безопасно открыть изображение для
+- [x] переиспользовать проверенный source и безопасно открыть изображение для
   подготовки аналитических представлений;
-- [ ] переиспользовать либо дополнить подтверждённые технические параметры;
-- [ ] извлечь доступные метаданные;
-- [ ] создать нормализованную рабочую копию;
-- [ ] зарегистрировать промежуточный артефакт.
+- [x] переиспользовать либо дополнить подтверждённые технические параметры;
+- [x] извлечь доступные метаданные;
+- [x] создать нормализованную рабочую копию;
+- [x] зарегистрировать промежуточный артефакт.
 
 ### Предварительная обработка аудио
 
-- [ ] декодировать проверенный source в объёме, необходимом для подготовки;
-- [ ] переиспользовать либо дополнить подтверждённые параметры;
-- [ ] создать canonical signed 16-bit PCM WAV fragments без resample/downmix;
-- [ ] разделить на фрагменты по конфигурации;
-- [ ] построить спектрограмму только при необходимости;
-- [ ] зарегистрировать артефакты.
+- [x] декодировать проверенный source в объёме, необходимом для подготовки;
+- [x] переиспользовать либо дополнить подтверждённые параметры;
+- [x] создать canonical signed 16-bit PCM WAV fragments без resample/downmix;
+- [x] разделить на фрагменты по конфигурации;
+- [x] построить спектрограмму только при необходимости;
+- [x] зарегистрировать артефакты.
 
 ### Предварительная обработка видео
 
-- [ ] переиспользовать проверенный source и при необходимости дополнить параметры
+- [x] переиспользовать проверенный source и при необходимости дополнить параметры
   через FFmpeg/ffprobe безопасным вызовом;
-- [ ] не загружать всё видео в память;
-- [ ] извлечь periodic sampled representative frames/сегменты;
-- [ ] извлечь аудиодорожку при наличии;
-- [ ] зарегистрировать артефакты;
-- [ ] ограничить время внешних процессов.
+- [x] не загружать всё видео в память;
+- [x] извлечь periodic sampled representative frames/сегменты;
+- [x] извлечь аудиодорожку при наличии;
+- [x] зарегистрировать артефакты;
+- [x] ограничить время внешних процессов.
 
 ### Каркас анализаторов
 
@@ -793,16 +803,16 @@ discard-режимом, explicit cwd, `shell=False`, disabled stdin, timeout и
 
 ## Обязательные тесты
 
-- [ ] подготовка валидного изображения;
-- [ ] подготовка валидного аудио;
-- [ ] подготовка валидного видео;
-- [ ] повреждённые данные дают контролируемую ошибку;
-- [ ] внешний процесс вызывается без shell-инъекции;
+- [x] подготовка валидного изображения;
+- [x] подготовка валидного аудио;
+- [x] подготовка валидного видео;
+- [x] повреждённые данные дают контролируемую ошибку;
+- [x] внешний процесс вызывается без shell-инъекции;
 - [ ] disabled analyzer не запускается;
 - [ ] not applicable отражается корректно;
 - [ ] error одного анализатора не останавливает остальные;
 - [ ] timeout отражается;
-- [ ] артефакты попадают в очистку.
+- [x] артефакты попадают в очистку.
 
 ## Критерий завершения
 

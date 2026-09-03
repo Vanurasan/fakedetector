@@ -1,0 +1,595 @@
+"""Internal image, audio, and video preprocessing with opaque capabilities."""
+
+from __future__ import annotations
+
+import math
+import warnings
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from functools import partial
+from pathlib import Path
+from typing import Protocol, cast
+
+from PIL import Image, ImageOps, UnidentifiedImageError
+
+from fakedetector.config.models import (
+    AudioPreprocessingConfig,
+    ImagePreprocessingConfig,
+    PreprocessingConfig,
+    VideoPreprocessingConfig,
+)
+from fakedetector.domain import (
+    AudioTechnicalParameters,
+    ImageTechnicalParameters,
+    MediaType,
+    ValidatedFileDescriptor,
+    VideoTechnicalParameters,
+)
+from fakedetector.intake.temporary_input import IntakeSystemError, PreparedSourceRef
+from fakedetector.lifecycle.artifacts import (
+    ArtifactRegistrationError,
+    WorkspaceArtifactRef,
+    WorkspaceArtifactRegistry,
+)
+from fakedetector.preprocessing._errors import PreprocessingError
+from fakedetector.preprocessing._media_tools import _FFmpegPreprocessingTool
+from fakedetector.preprocessing._models import PreparedArtifact, PreparedMedia
+
+_MULTI_FRAME_WARNING = (
+    "Normalized image represents only the first displayed frame and does not cover "
+    "the source's temporal behavior."
+)
+_MAX_VIDEO_SAMPLED_FRAMES = 120
+
+
+@dataclass(frozen=True, slots=True)
+class PreprocessingRequirements:
+    """Representations explicitly requested by the future analyzer orchestration layer."""
+
+    audio_spectrogram: bool = False
+    video_audio_track: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PreprocessingRequest:
+    """Minimal capabilities and validated facts needed by one preprocessor."""
+
+    analysis_id: str
+    validated_file: ValidatedFileDescriptor
+    source_file_ref: PreparedSourceRef = field(repr=False)
+    artifact_registry: WorkspaceArtifactRegistry = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.analysis_id:
+            raise ValueError("analysis_id must not be empty")
+        if not isinstance(self.validated_file, ValidatedFileDescriptor):
+            raise TypeError("validated_file must be a ValidatedFileDescriptor")
+        if not isinstance(self.source_file_ref, PreparedSourceRef):
+            raise TypeError("source_file_ref must be a PreparedSourceRef")
+        if not isinstance(self.artifact_registry, WorkspaceArtifactRegistry):
+            raise TypeError("artifact_registry must be a WorkspaceArtifactRegistry")
+        if self.source_file_ref.analysis_id != self.analysis_id:
+            raise ValueError("preprocessing source identity does not match request")
+
+
+class Preprocessor(Protocol):
+    """Narrow internal contract implemented by each media preprocessor."""
+
+    media_type: MediaType
+
+    def prepare(
+        self,
+        request: PreprocessingRequest,
+        requirements: PreprocessingRequirements,
+    ) -> PreparedMedia:
+        """Create registered representations for one validated controlled source."""
+        ...
+
+
+class ImagePreprocessor:
+    """Build a first-displayed-frame, orientation-normalized PNG representation."""
+
+    media_type = MediaType.IMAGE
+
+    def __init__(self, config: ImagePreprocessingConfig) -> None:
+        self._config = config
+
+    def prepare(
+        self,
+        request: PreprocessingRequest,
+        requirements: PreprocessingRequirements,
+    ) -> PreparedMedia:
+        del requirements
+        parameters = _parameters(request, ImageTechnicalParameters, self.media_type)
+        normalized: Image.Image | None = None
+        normalized_facts: dict[str, object] | None = None
+        artifacts: list[PreparedArtifact] = []
+        try:
+            if self._config.normalize_for_analysis:
+                normalized = _decode_normalized_image(request.source_file_ref)
+                normalized_facts = {
+                    "format": "png",
+                    "mode": normalized.mode,
+                    "width": normalized.width,
+                    "height": normalized.height,
+                    "scope": "first_frame",
+                }
+                artifact_ref = _register(
+                    request.artifact_registry,
+                    "image_normalized",
+                    "preprocessing/image/normalized.png",
+                )
+                _with_artifact_path(
+                    request.artifact_registry,
+                    artifact_ref,
+                    lambda target: _save_png(normalized, target, "image_normalize"),
+                )
+                artifacts.append(
+                    PreparedArtifact(
+                        artifact_id="image_normalized",
+                        artifact_type="normalized_image",
+                        artifact_ref=artifact_ref,
+                        format="png",
+                    )
+                )
+        finally:
+            if normalized is not None:
+                normalized.close()
+
+        metadata: dict[str, object] = {
+            "source": _image_source_metadata(parameters, self._config.extract_metadata),
+        }
+        if normalized_facts is not None:
+            metadata["normalized"] = normalized_facts
+            metadata["frame_scope"] = "first_frame"
+        frame_count = parameters.frame_count or 1
+        image_warnings = (
+            (_MULTI_FRAME_WARNING,) if normalized_facts is not None and frame_count > 1 else ()
+        )
+        return _prepared_media(request, self.media_type, artifacts, metadata, image_warnings)
+
+
+class AudioPreprocessor:
+    """Create canonical PCM WAV, deterministic fragments, and optional spectrogram."""
+
+    media_type = MediaType.AUDIO
+
+    def __init__(
+        self,
+        config: AudioPreprocessingConfig,
+        *,
+        media_tool: _FFmpegPreprocessingTool,
+    ) -> None:
+        self._config = config
+        self._media_tool = media_tool
+
+    def prepare(
+        self,
+        request: PreprocessingRequest,
+        requirements: PreprocessingRequirements,
+    ) -> PreparedMedia:
+        parameters = _parameters(request, AudioTechnicalParameters, self.media_type)
+        normalized_ref = _register(
+            request.artifact_registry,
+            "audio_normalized",
+            "preprocessing/audio/normalized.wav",
+        )
+        _with_source_and_artifact(
+            request,
+            normalized_ref,
+            lambda source, target: self._media_tool.normalized_audio(
+                source,
+                target,
+                sample_rate_hz=parameters.sample_rate_hz,
+                channels=parameters.channels,
+            ),
+        )
+        artifacts = [
+            PreparedArtifact(
+                artifact_id="audio_normalized",
+                artifact_type="normalized_audio",
+                artifact_ref=normalized_ref,
+                format="wav",
+            )
+        ]
+
+        intervals = _fragment_intervals(
+            parameters.duration_seconds,
+            self._config.fragment_duration_seconds,
+        )
+        for fragment_index, (start, end) in enumerate(intervals):
+            artifact_id = f"audio_fragment_{fragment_index:04d}"
+            fragment_ref = _register(
+                request.artifact_registry,
+                artifact_id,
+                f"preprocessing/audio/fragments/{fragment_index:04d}.wav",
+            )
+            _with_two_artifacts(
+                request.artifact_registry,
+                normalized_ref,
+                fragment_ref,
+                partial(
+                    self._media_tool.audio_fragment,
+                    start_seconds=start,
+                    duration_seconds=end - start,
+                    sample_rate_hz=parameters.sample_rate_hz,
+                    channels=parameters.channels,
+                ),
+            )
+            artifacts.append(
+                PreparedArtifact(
+                    artifact_id=artifact_id,
+                    artifact_type="audio_fragment",
+                    artifact_ref=fragment_ref,
+                    format="wav",
+                    start_time_seconds=start,
+                    end_time_seconds=end,
+                )
+            )
+
+        spectrogram_created = self._config.build_spectrogram and requirements.audio_spectrogram
+        if spectrogram_created:
+            spectrogram_ref = _register(
+                request.artifact_registry,
+                "audio_spectrogram",
+                "preprocessing/audio/spectrogram.png",
+            )
+            _with_two_artifacts(
+                request.artifact_registry,
+                normalized_ref,
+                spectrogram_ref,
+                self._media_tool.spectrogram,
+            )
+            artifacts.append(
+                PreparedArtifact(
+                    artifact_id="audio_spectrogram",
+                    artifact_type="spectrogram",
+                    artifact_ref=spectrogram_ref,
+                    format="png",
+                )
+            )
+
+        metadata: dict[str, object] = {
+            "duration_seconds": parameters.duration_seconds,
+            "sample_rate_hz": parameters.sample_rate_hz,
+            "channels": parameters.channels,
+            "normalized_format": "wav",
+            "sample_format": "pcm_s16le",
+            "fragment_duration_seconds": self._config.fragment_duration_seconds,
+            "fragment_count": len(intervals),
+            "spectrogram_created": spectrogram_created,
+        }
+        if self._config.extract_metadata:
+            metadata["source_codec"] = parameters.codec
+            metadata["source_bitrate_bps"] = parameters.bitrate_bps
+        return _prepared_media(request, self.media_type, artifacts, metadata)
+
+
+class VideoPreprocessor:
+    """Create bounded periodic representative frames and optional lossless audio."""
+
+    media_type = MediaType.VIDEO
+
+    def __init__(
+        self,
+        config: VideoPreprocessingConfig,
+        *,
+        media_tool: _FFmpegPreprocessingTool,
+    ) -> None:
+        self._config = config
+        self._media_tool = media_tool
+
+    def prepare(
+        self,
+        request: PreprocessingRequest,
+        requirements: PreprocessingRequirements,
+    ) -> PreparedMedia:
+        parameters = _parameters(request, VideoTechnicalParameters, self.media_type)
+        timestamps, truncated = _video_timestamps(
+            parameters.duration_seconds,
+            self._config.keyframe_interval_seconds,
+        )
+        artifacts: list[PreparedArtifact] = []
+        for frame_index, timestamp in enumerate(timestamps):
+            artifact_id = f"video_frame_{frame_index:04d}"
+            frame_ref = _register(
+                request.artifact_registry,
+                artifact_id,
+                f"preprocessing/video/frames/{frame_index:04d}.png",
+            )
+            _with_source_and_artifact(
+                request,
+                frame_ref,
+                partial(
+                    self._media_tool.sampled_frame,
+                    timestamp_seconds=timestamp,
+                ),
+            )
+            artifacts.append(
+                PreparedArtifact(
+                    artifact_id=artifact_id,
+                    artifact_type="sampled_frame",
+                    artifact_ref=frame_ref,
+                    format="png",
+                    start_time_seconds=timestamp,
+                    frame_index=frame_index,
+                )
+            )
+
+        audio_created = (
+            parameters.has_audio
+            and self._config.extract_audio_track
+            and requirements.video_audio_track
+        )
+        if audio_created:
+            audio_ref = _register(
+                request.artifact_registry,
+                "video_audio_track",
+                "preprocessing/video/audio.flac",
+            )
+            _with_source_and_artifact(
+                request,
+                audio_ref,
+                self._media_tool.extracted_audio,
+            )
+            artifacts.append(
+                PreparedArtifact(
+                    artifact_id="video_audio_track",
+                    artifact_type="extracted_audio_track",
+                    artifact_ref=audio_ref,
+                    format="flac",
+                )
+            )
+
+        metadata: dict[str, object] = {
+            "duration_seconds": parameters.duration_seconds,
+            "width": parameters.width,
+            "height": parameters.height,
+            "fps": parameters.fps,
+            "has_audio": parameters.has_audio,
+            "sampling_scope": "periodic_representative_frames",
+            "sampling_interval_seconds": self._config.keyframe_interval_seconds,
+            "sampled_frame_count": len(timestamps),
+            "target_timestamps_seconds": timestamps,
+            "timestamp_semantics": "deterministic_target",
+            "audio_track_created": audio_created,
+        }
+        if self._config.extract_metadata:
+            metadata.update(
+                {
+                    "source_container": parameters.container,
+                    "source_video_codec": parameters.video_codec,
+                    "source_audio_codec": parameters.audio_codec,
+                    "source_bitrate_bps": parameters.bitrate_bps,
+                }
+            )
+        video_warnings = (
+            (
+                (
+                    "Representative frame sampling was capped at the internal resource limit; "
+                    "later source timestamps are not represented."
+                ),
+            )
+            if truncated
+            else ()
+        )
+        return _prepared_media(request, self.media_type, artifacts, metadata, video_warnings)
+
+
+class PreprocessingDispatcher:
+    """Select exactly one concrete preprocessor by validated MediaType."""
+
+    def __init__(
+        self,
+        config: PreprocessingConfig,
+        *,
+        process_timeout_seconds: float,
+        ffmpeg_executable: str = "ffmpeg",
+    ) -> None:
+        media_tool = _FFmpegPreprocessingTool(
+            executable=ffmpeg_executable,
+            timeout_seconds=process_timeout_seconds,
+        )
+        self._preprocessors: dict[MediaType, Preprocessor] = {
+            MediaType.IMAGE: ImagePreprocessor(config.image),
+            MediaType.AUDIO: AudioPreprocessor(config.audio, media_tool=media_tool),
+            MediaType.VIDEO: VideoPreprocessor(config.video, media_tool=media_tool),
+        }
+
+    def prepare(
+        self,
+        request: PreprocessingRequest,
+        requirements: PreprocessingRequirements | None = None,
+    ) -> PreparedMedia:
+        """Dispatch without extension guessing, analyzer execution, or lifecycle mutation."""
+        active_requirements = requirements or PreprocessingRequirements()
+        try:
+            preprocessor = self._preprocessors[request.validated_file.media_type]
+        except KeyError:
+            raise PreprocessingError("invariant", "media_type") from None
+        return preprocessor.prepare(request, active_requirements)
+
+
+def _parameters[Parameter](
+    request: PreprocessingRequest,
+    expected_type: type[Parameter],
+    expected_media_type: MediaType,
+) -> Parameter:
+    if request.validated_file.media_type is not expected_media_type:
+        raise PreprocessingError("invariant", "media_type")
+    parameters = request.validated_file.technical_parameters
+    if not isinstance(parameters, expected_type):
+        raise PreprocessingError("invariant", "technical_parameters")
+    return parameters
+
+
+def _decode_normalized_image(source_ref: PreparedSourceRef) -> Image.Image:
+    try:
+        with source_ref.open_for_read() as source, warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(source) as image:
+                image.seek(0)
+                image.load()
+                oriented = ImageOps.exif_transpose(image)
+                try:
+                    if _requires_alpha(oriented):
+                        return oriented.convert("RGBA")
+                    return oriented.convert("RGB")
+                finally:
+                    if oriented is not image:
+                        oriented.close()
+    except IntakeSystemError:
+        raise PreprocessingError("source_read", "image_source") from None
+    except (
+        UnidentifiedImageError,
+        OSError,
+        SyntaxError,
+        ValueError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        EOFError,
+    ):
+        raise PreprocessingError("decode", "image_decode") from None
+
+
+def _requires_alpha(image: Image.Image) -> bool:
+    if "A" not in image.getbands() and not (image.mode == "P" and "transparency" in image.info):
+        return False
+    rgba = image.convert("RGBA")
+    try:
+        alpha = rgba.getchannel("A")
+        try:
+            minimum, _maximum = cast(tuple[int, int], alpha.getextrema())
+            return minimum < 255
+        finally:
+            alpha.close()
+    finally:
+        rgba.close()
+
+
+def _save_png(image: Image.Image, target: Path, phase: str) -> None:
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            raise OSError
+        image.save(target, format="PNG")
+    except OSError:
+        raise PreprocessingError("artifact_write", phase) from None
+
+
+def _image_source_metadata(
+    parameters: ImageTechnicalParameters,
+    include_optional: bool,
+) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "width": parameters.width,
+        "height": parameters.height,
+        "frame_count": parameters.frame_count or 1,
+    }
+    if include_optional:
+        metadata.update(
+            {
+                "format": parameters.format,
+                "color_mode": parameters.color_mode,
+                "has_metadata": parameters.has_metadata,
+            }
+        )
+    return metadata
+
+
+def _fragment_intervals(
+    duration_seconds: float,
+    fragment_seconds: int,
+) -> tuple[tuple[float, float], ...]:
+    count = max(1, math.ceil(duration_seconds / fragment_seconds))
+    return tuple(
+        (
+            fragment_index * float(fragment_seconds),
+            min(duration_seconds, (fragment_index + 1) * float(fragment_seconds)),
+        )
+        for fragment_index in range(count)
+    )
+
+
+def _video_timestamps(
+    duration_seconds: float,
+    interval_seconds: int,
+) -> tuple[tuple[float, ...], bool]:
+    requested_count = max(1, math.ceil(duration_seconds / interval_seconds))
+    count = min(requested_count, _MAX_VIDEO_SAMPLED_FRAMES)
+    return tuple(frame_index * float(interval_seconds) for frame_index in range(count)), (
+        requested_count > count
+    )
+
+
+def _register(
+    registry: WorkspaceArtifactRegistry,
+    artifact_id: str,
+    relative_path: str,
+) -> WorkspaceArtifactRef:
+    try:
+        return registry.register(artifact_id, relative_path)
+    except ArtifactRegistrationError:
+        raise PreprocessingError("invariant", "artifact_registration") from None
+
+
+def _with_artifact_path[OperationResult](
+    registry: WorkspaceArtifactRegistry,
+    artifact_ref: WorkspaceArtifactRef,
+    operation: Callable[[Path], OperationResult],
+) -> OperationResult:
+    try:
+        return registry.with_local_artifact_path(artifact_ref, operation)
+    except ArtifactRegistrationError:
+        raise PreprocessingError("invariant", "artifact_capability") from None
+
+
+def _with_source_and_artifact[OperationResult](
+    request: PreprocessingRequest,
+    artifact_ref: WorkspaceArtifactRef,
+    operation: Callable[[Path, Path], OperationResult],
+) -> OperationResult:
+    try:
+        return request.source_file_ref.with_local_source_path(
+            lambda source: _with_artifact_path(
+                request.artifact_registry,
+                artifact_ref,
+                lambda target: operation(source, target),
+            )
+        )
+    except IntakeSystemError:
+        raise PreprocessingError("source_read", "controlled_source") from None
+
+
+def _with_two_artifacts[OperationResult](
+    registry: WorkspaceArtifactRegistry,
+    source_ref: WorkspaceArtifactRef,
+    target_ref: WorkspaceArtifactRef,
+    operation: Callable[[Path, Path], OperationResult],
+) -> OperationResult:
+    return _with_artifact_path(
+        registry,
+        source_ref,
+        lambda source: _with_artifact_path(
+            registry,
+            target_ref,
+            lambda target: operation(source, target),
+        ),
+    )
+
+
+def _prepared_media(
+    request: PreprocessingRequest,
+    media_type: MediaType,
+    artifacts: list[PreparedArtifact],
+    metadata: dict[str, object],
+    media_warnings: tuple[str, ...] = (),
+) -> PreparedMedia:
+    return PreparedMedia(
+        analysis_id=request.analysis_id,
+        media_type=media_type,
+        source_file_ref=request.source_file_ref,
+        artifacts=tuple(artifacts),
+        metadata=metadata,
+        warnings=media_warnings,
+    )

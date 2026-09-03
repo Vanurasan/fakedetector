@@ -344,6 +344,8 @@ YYYY-MM-DD
 
 ### Added
 
+- **[Stage 5/Increment 3] Реализован внутренний слой предобработки image/audio/video.** `ImagePreprocessor` создаёт PNG первого отображаемого кадра без resize, применяет EXIF orientation, сохраняет фактическое число кадров и предупреждает об ограничении multi-frame представления; `AudioPreprocessor` потоково создаёт PCM s16le WAV, детерминированные фактические фрагменты без дополнения тишиной и спектрограмму только при одновременном разрешении конфигурации и явном требовании; `VideoPreprocessor` создаёт ограниченный набор периодических representative PNG-кадров и lossless FLAC-аудиодорожку только при наличии audio и явном требовании. Детерминированный dispatcher выбирает реализацию только по проверенному `MediaType`; каждый создаваемый файл регистрируется до физического создания и возвращается через непрозрачную ссылку без раскрытия путей. Полный barrier: 1062 passed, 2 skipped, coverage 91%; следующий шаг — Stage 5 Increment 4.
+
 - **[Stage 5/Increment 2] Реализован private shared bounded subprocess primitive и выполнена parity migration Stage 3.** Primitive принимает только application-built argv, использует `shell=False`, disabled stdin, explicit trusted cwd, discard либо hard-bounded stdout и возвращает timeout/output-limit только после подтверждённого stop/reap; unsafe process details не попадают в ошибки. `FFmpegMediaInspector` переведён на эту boundary с сохранением ffprobe/ffmpeg arguments, лимитов и rejected/failed mappings. Cross-platform regression-тесты подтверждают literal shell metacharacters, cwd, non-zero/start/read/wait failures, timeout, output bounding и отсутствие живого reader после возврата. Полный barrier: 1035 passed, 2 skipped, coverage 91%; следующий шаг — Stage 5 Increment 3.
 
 ### 2026-09-02
