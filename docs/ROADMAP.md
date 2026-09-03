@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 5 — Предварительная обработка и каркас анализаторов
 Статус этапа: IN_PROGRESS
-Ближайшее действие: Stage 5 Increment 4 — analyzer registry/orchestration + spawned-process timeout
+Ближайшее действие: Stage 5 Increment 5 — integrated Stage 4 → Stage 5 lifecycle
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increments 1–3 реализовали internal models/capability boundary, shared bounded subprocess primitive с parity migration Stage 3 и image/audio/video preprocessing без analyzer execution или Stage 4 integration; полный quality barrier green: 1062 passed, 2 skipped, coverage 91%; Stage 5 Increments 1–3 = DONE, Increment 4 = NOT_STARTED
+Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increments 1–4 реализовали internal models/capability boundary, shared bounded subprocess primitive с parity migration Stage 3, image/audio/video preprocessing и analyzer registry/orchestration со spawned-process timeout без Stage 4 integration; полный quality barrier green: 1121 passed, 2 skipped, coverage 90%; Stage 5 Increments 1–4 = DONE, Increment 5 = NOT_STARTED
 Документационная база: сформирована
 ```
 
@@ -739,7 +739,7 @@ timestamp.
 1. **Increment 1 — DONE:** internal models + source/artifact capability boundary.
 2. **Increment 2 — DONE:** bounded subprocess primitive + Stage 3 parity migration.
 3. **Increment 3 — DONE:** image/audio/video preprocessing.
-4. **Increment 4 — NOT_STARTED:** analyzer registry/orchestration + hard process timeout.
+4. **Increment 4 — DONE:** analyzer registry/orchestration + hard process timeout.
 5. **Increment 5 — NOT_STARTED:** integrated Stage 4 → Stage 5 lifecycle.
 6. **Final Stage 5 audit — NOT_STARTED:** отдельный последующий increment/branch после
    functional readiness.
@@ -757,8 +757,17 @@ Increment 3 добавил внутренний детерминированны
 audio — PCM s16le WAV, фактические фрагменты и спектрограмма по требованию, для
 video — ограниченный набор периодических PNG-кадров и FLAC-аудиодорожка по
 требованию.
-Следующее действие — Stage 5 Increment 4: analyzer registry/orchestration +
-spawned-process timeout.
+
+Increment 4 добавил внутренний analyzer contract, закрытый worker-resolvable
+registry с analyzer-specific typed settings validation и последовательный
+orchestrator в точном порядке per-media `enabled`. Каждый фактически запущенный
+analyzer выполняется в отдельном explicit-spawn worker; private bounded transport
+не переносит parent capabilities или media bytes. Analyzer exception и
+serialization failure дают безопасный canonical `ERROR`, а canonical `TIMEOUT`
+возникает только после подтверждённого terminate/kill/reap; unreapable worker
+остаётся fatal infrastructure failure. Framework подтверждён только internal fake
+analyzers без score, findings и default-config activation.
+Следующее действие — Stage 5 Increment 5: integrated Stage 4 → Stage 5 lifecycle.
 
 ## Обязательные задачи
 
@@ -792,14 +801,14 @@ spawned-process timeout.
 
 ### Каркас анализаторов
 
-- [ ] реализовать протокол `Analyzer`;
-- [ ] реализовать registry;
-- [ ] включать анализаторы конфигурацией;
-- [ ] проверять применимость;
-- [ ] реализовать timeout;
-- [ ] изолировать ошибку отдельного анализатора;
-- [ ] реализовать тестовый анализатор для каждого маршрута или общий fake analyzer;
-- [ ] собирать `AnalyzerResult`.
+- [x] реализовать протокол `Analyzer`;
+- [x] реализовать registry;
+- [x] включать анализаторы конфигурацией;
+- [x] проверять применимость;
+- [x] реализовать timeout;
+- [x] изолировать ошибку отдельного анализатора;
+- [x] реализовать тестовый анализатор для каждого маршрута или общий fake analyzer;
+- [x] собирать `AnalyzerResult`.
 
 ## Обязательные тесты
 
@@ -808,10 +817,10 @@ spawned-process timeout.
 - [x] подготовка валидного видео;
 - [x] повреждённые данные дают контролируемую ошибку;
 - [x] внешний процесс вызывается без shell-инъекции;
-- [ ] disabled analyzer не запускается;
-- [ ] not applicable отражается корректно;
-- [ ] error одного анализатора не останавливает остальные;
-- [ ] timeout отражается;
+- [x] disabled analyzer не запускается;
+- [x] not applicable отражается корректно;
+- [x] error одного анализатора не останавливает остальные;
+- [x] timeout отражается;
 - [x] артефакты попадают в очистку.
 
 ## Критерий завершения
