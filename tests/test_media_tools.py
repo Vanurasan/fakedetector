@@ -25,6 +25,22 @@ from fakedetector.intake.media_tools import (
 )
 
 
+class _UnconfirmedSafetyBarrier:
+    def try_confirm_safe(self) -> bool:
+        return False
+
+
+def _process_infrastructure_error(
+    phase: ProcessInfrastructurePhase,
+) -> ProcessInfrastructureError:
+    if phase == "termination":
+        return ProcessInfrastructureError(
+            phase,
+            _cleanup_safety_barrier=_UnconfirmedSafetyBarrier(),
+        )
+    return ProcessInfrastructureError(phase)
+
+
 def probe_payload(*, audio: bool = True, video: bool = False) -> dict[str, object]:
     streams: list[dict[str, object]] = []
     if audio:
@@ -198,7 +214,7 @@ def test_probe_infrastructure_failure_preserves_safe_phase(
     media_phase: str,
 ) -> None:
     def fail_run(arguments: list[str], **kwargs: object) -> ProcessResult:
-        raise ProcessInfrastructureError(process_phase)
+        raise _process_infrastructure_error(process_phase)
 
     monkeypatch.setattr(
         media_tools_module,
@@ -268,7 +284,7 @@ def test_decode_infrastructure_failure_maps_to_safe_system_phase(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fail_run(arguments: list[str], **kwargs: object) -> ProcessResult:
-        raise ProcessInfrastructureError("termination")
+        raise _process_infrastructure_error("termination")
 
     monkeypatch.setattr(media_tools_module, "run_bounded_process", fail_run)
 

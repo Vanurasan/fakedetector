@@ -1511,3 +1511,29 @@ def test_execution_outcome_rejects_non_terminal_and_inconsistent_values() -> Non
         TaskExecutionOutcome(status=AnalysisStatus.COMPLETED, errors=(safe_execution_error(),))
     with pytest.raises(ValueError):
         TaskExecutionOutcome(status=AnalysisStatus.FAILED)
+
+
+def test_failed_execution_outcome_keeps_cleanup_barrier_private_and_nonsemantic() -> None:
+    class Barrier:
+        def try_confirm_safe(self) -> bool:
+            return False
+
+    first_barrier = Barrier()
+    second_barrier = Barrier()
+    first = TaskExecutionOutcome.failed(
+        safe_execution_error(),
+        _cleanup_safety_barrier=first_barrier,
+    )
+    second = TaskExecutionOutcome.failed(
+        safe_execution_error(),
+        _cleanup_safety_barrier=second_barrier,
+    )
+
+    assert first == second
+    assert "Barrier" not in repr(first)
+    assert "cleanup_safety" not in repr(first)
+    with pytest.raises(ValueError):
+        TaskExecutionOutcome(
+            status=AnalysisStatus.COMPLETED,
+            _cleanup_safety_barrier=first_barrier,
+        )

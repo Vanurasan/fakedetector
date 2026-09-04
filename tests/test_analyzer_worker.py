@@ -109,6 +109,18 @@ class _FakeProcess:
         self.closed = True
 
 
+class _JoinFailureProcess(_FakeProcess):
+    def __init__(self) -> None:
+        super().__init__(terminate_stops=False, kill_stops=False)
+        self.alive = False
+        self.join_fails = True
+
+    def join(self, timeout: float | None = None) -> None:
+        self.join_timeouts.append(timeout)
+        if self.join_fails:
+            raise OSError("PRIVATE join detail")
+
+
 class _FakeBackend:
     def __init__(self, process: _FakeProcess) -> None:
         self.process = process
@@ -243,18 +255,50 @@ def test_unreapable_worker_is_fatal_and_never_timeout(tmp_path: Path) -> None:
     backend = _FakeBackend(process)
     runner = _SpawnedWorkerRunner(backend=backend, monotonic=lambda: 0.0)
 
+    barrier = None
     try:
         runner.run(_request(tmp_path), 0.05)
     except AnalyzerInfrastructureError as error:
         assert error.phase == "worker_reap"
+        barrier = error._cleanup_safety_barrier
     else:
         raise AssertionError("unreapable worker was incorrectly returned as timeout")
 
+    assert barrier is not None
     assert process.terminated and process.killed
     assert process.alive
     assert not process.closed
     assert backend.receive.closed and backend.send.closed
     assert all(timeout is not None for timeout in process.join_timeouts)
+    assert barrier.try_confirm_safe() is False
+    process.alive = False
+    assert barrier.try_confirm_safe() is True
+    assert barrier.try_confirm_safe() is True
+    assert process.closed
+    assert max(timeout for timeout in process.join_timeouts if timeout is not None) <= 0.2
+
+
+def test_stopped_worker_with_unconfirmed_join_defers_cleanup_safety(
+    tmp_path: Path,
+) -> None:
+    process = _JoinFailureProcess()
+    backend = _FakeBackend(process)
+    runner = _SpawnedWorkerRunner(backend=backend, monotonic=lambda: 0.0)
+
+    try:
+        runner.run(_request(tmp_path), 0.05)
+    except AnalyzerInfrastructureError as error:
+        assert error.phase == "worker_reap"
+        barrier = error._cleanup_safety_barrier
+    else:
+        raise AssertionError("unconfirmed worker join was not retained")
+
+    assert barrier is not None
+    assert barrier.try_confirm_safe() is False
+    assert not process.closed
+    process.join_fails = False
+    assert barrier.try_confirm_safe() is True
+    assert process.closed
 
 
 def test_repeated_real_timeouts_leave_no_spawned_children(tmp_path: Path) -> None:

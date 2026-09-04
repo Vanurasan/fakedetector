@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from io import UnsupportedOperation
 from pathlib import Path, PurePath
 from types import MappingProxyType
-from typing import BinaryIO, ClassVar, Protocol
+from typing import BinaryIO, ClassVar, Protocol, cast
 
 from pydantic import BaseModel
 
@@ -18,6 +19,126 @@ from fakedetector.domain import AnalyzerResult, MediaType, ValidatedFileDescript
 from fakedetector.preprocessing._requirements import PreprocessingRequirements
 
 _SAFE_REASON_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+class _UnderlyingBinaryStream(Protocol):
+    def read(self, size: int = -1) -> bytes: ...
+
+    def read1(self, size: int = -1) -> bytes: ...
+
+    def readline(self, size: int = -1) -> bytes: ...
+
+    def readlines(self, hint: int = -1) -> list[bytes]: ...
+
+    def readinto(self, buffer: bytearray) -> int | None: ...
+
+    def seek(self, offset: int, whence: int = 0) -> int: ...
+
+    def tell(self) -> int: ...
+
+    def fileno(self) -> int: ...
+
+    def readable(self) -> bool: ...
+
+    def seekable(self) -> bool: ...
+
+    def isatty(self) -> bool: ...
+
+    def close(self) -> None: ...
+
+    def __next__(self) -> bytes: ...
+
+
+class _ReadOnlyBinaryStream:
+    """Proxy only underlying read operations into the worker I/O taxonomy."""
+
+    __slots__ = ("_closed", "_stream")
+
+    def __init__(self, stream: BinaryIO) -> None:
+        self._stream = cast(_UnderlyingBinaryStream, stream)
+        self._closed = False
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def read(self, size: int = -1) -> bytes:
+        return _controlled_input_operation(self._stream.read, size)
+
+    def read1(self, size: int = -1) -> bytes:
+        return _controlled_input_operation(self._stream.read1, size)
+
+    def readline(self, size: int = -1) -> bytes:
+        return _controlled_input_operation(self._stream.readline, size)
+
+    def readlines(self, hint: int = -1) -> list[bytes]:
+        return _controlled_input_operation(self._stream.readlines, hint)
+
+    def readinto(self, buffer: bytearray) -> int | None:
+        return _controlled_input_operation(self._stream.readinto, buffer)
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return _controlled_input_operation(self._stream.seek, offset, whence)
+
+    def tell(self) -> int:
+        return _controlled_input_operation(self._stream.tell)
+
+    def fileno(self) -> int:
+        return _controlled_input_operation(self._stream.fileno)
+
+    def readable(self) -> bool:
+        return _controlled_input_operation(self._stream.readable)
+
+    def seekable(self) -> bool:
+        return _controlled_input_operation(self._stream.seekable)
+
+    def isatty(self) -> bool:
+        return _controlled_input_operation(self._stream.isatty)
+
+    def writable(self) -> bool:
+        return False
+
+    def write(self, _data: bytes) -> int:
+        raise UnsupportedOperation("not writable")
+
+    def writelines(self, _lines: object) -> None:
+        raise UnsupportedOperation("not writable")
+
+    def truncate(self, _size: int | None = None) -> int:
+        raise UnsupportedOperation("not writable")
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        _controlled_input_operation(self._stream.close)
+        self._closed = True
+
+    def __iter__(self) -> _ReadOnlyBinaryStream:
+        return self
+
+    def __next__(self) -> bytes:
+        return _controlled_input_operation(self._stream.__next__)
+
+    def __enter__(self) -> _ReadOnlyBinaryStream:
+        return self
+
+    def __exit__(
+        self,
+        _exception_type: object,
+        _exception: object,
+        _traceback: object,
+    ) -> None:
+        self.close()
+
+
+def _controlled_input_operation[InputOperationResult](
+    operation: Callable[..., InputOperationResult],
+    *args: object,
+) -> InputOperationResult:
+    try:
+        return operation(*args)
+    except OSError:
+        raise _AnalyzerInputReadError() from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,8 +176,11 @@ class _ReadOnlyAnalyzerInput:
             source = self._local_path.open("rb")
         except OSError:
             raise _AnalyzerInputReadError() from None
-        with source:
-            yield source
+        stream = _ReadOnlyBinaryStream(source)
+        try:
+            yield cast(BinaryIO, stream)
+        finally:
+            stream.close()
 
 
 @dataclass(frozen=True, slots=True)

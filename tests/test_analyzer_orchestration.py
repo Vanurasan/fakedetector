@@ -15,15 +15,18 @@ import yaml
 
 import fakedetector
 import fakedetector.analyzers as analyzers_package
+import fakedetector.analyzers._worker as analyzer_worker_module
 import fakedetector.domain as domain
 from fakedetector.analyzers._catalog import (
     _framework_test_registrations,
     _resolve_worker_definition,
+    _WorkerAnalyzerDefinition,
 )
 from fakedetector.analyzers._errors import AnalyzerInfrastructureError
 from fakedetector.analyzers._models import (
     AnalyzerArtifactInput,
     AnalyzerRequest,
+    ApplicabilityResult,
     _ReadOnlyAnalyzerInput,
 )
 from fakedetector.analyzers._orchestrator import AnalyzerOrchestrator, _WorkerRunner
@@ -445,6 +448,178 @@ class _ExecutingRunner:
         )
 
 
+class _FailingControlledStream:
+    def __init__(self, operation: str) -> None:
+        self._operation = operation
+        self.closed = False
+
+    def read(self, _size: int = -1) -> bytes:
+        self._raise_if("read")
+        return b"controlled"
+
+    def seek(self, _offset: int, _whence: int = 0) -> int:
+        self._raise_if("seek")
+        return 0
+
+    def tell(self) -> int:
+        self._raise_if("tell")
+        return 0
+
+    def close(self) -> None:
+        self._raise_if("close")
+        self.closed = True
+
+    def __iter__(self) -> _FailingControlledStream:
+        return self
+
+    def __next__(self) -> bytes:
+        self._raise_if("iteration")
+        raise StopIteration
+
+    def _raise_if(self, operation: str) -> None:
+        if self._operation == operation:
+            raise OSError("PRIVATE raw controlled I/O detail")
+
+
+class _StreamOperationAnalyzer:
+    def __init__(
+        self,
+        definition: _WorkerAnalyzerDefinition,
+        *,
+        target: str,
+        operation: str,
+    ) -> None:
+        self.analyzer_id = definition.analyzer_id
+        self.analyzer_name = definition.analyzer_name
+        self.analyzer_version = definition.analyzer_version
+        self.group = definition.group
+        self.supported_media_types = definition.supported_media_types
+        self._target = target
+        self._operation = operation
+
+    def check_applicability(self, request: AnalyzerRequest) -> ApplicabilityResult:
+        del request
+        return ApplicabilityResult(True)
+
+    def analyze(self, request: AnalyzerRequest) -> AnalyzerResult:
+        controlled_input = (
+            request.source if self._target == "source" else request.artifacts[0].content
+        )
+        with controlled_input.open_for_read() as stream:
+            if self._operation == "analyzer_oserror":
+                raise OSError("PRIVATE analyzer logic detail")
+            if self._operation == "read":
+                stream.read(1)
+            elif self._operation == "seek":
+                stream.seek(0)
+            elif self._operation == "tell":
+                stream.tell()
+            elif self._operation == "iteration":
+                next(iter(stream))
+            elif self._operation != "close":
+                raise AssertionError("unknown stream operation")
+        return AnalyzerResult(
+            analyzer_id=self.analyzer_id,
+            analyzer_version=self.analyzer_version,
+            media_type=request.media_type,
+            group=self.group,
+            status=AnalyzerStatus.COMPLETED,
+            applicable=True,
+            started_at=None,
+            finished_at=None,
+            duration_ms=0,
+            score=None,
+            score_name=None,
+            summary="Controlled stream operation completed.",
+            raw_metrics={},
+            candidate_findings=[],
+            warnings=[],
+            errors=[],
+        )
+
+
+def _install_stream_operation_analyzer(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    target: str,
+    operation: str,
+) -> None:
+    definition = _resolve_worker_definition("framework_test.image")
+    assert definition is not None
+    analyzer = _StreamOperationAnalyzer(
+        definition,
+        target=target,
+        operation=operation,
+    )
+    replacement = replace(definition, factory=lambda: analyzer)
+    monkeypatch.setattr(
+        analyzer_worker_module,
+        "_resolve_worker_definition",
+        lambda worker_key: replacement if worker_key == replacement.worker_key else None,
+    )
+
+
+@pytest.mark.parametrize("target", ["source", "artifact"])
+@pytest.mark.parametrize("operation", ["read", "seek", "tell", "iteration", "close"])
+def test_controlled_stream_lifetime_failure_is_worker_infrastructure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+    operation: str,
+) -> None:
+    runner = _ExecutingRunner()
+    orchestrator = _orchestrator(
+        _config(MediaType.IMAGE, ["fake_image_analyzer"]),
+        runner=runner,
+    )
+    _install_stream_operation_analyzer(
+        monkeypatch,
+        target=target,
+        operation=operation,
+    )
+    with _prepared_case(tmp_path) as case:
+        monkeypatch.setattr(
+            Path,
+            "open",
+            lambda *_args, **_kwargs: _FailingControlledStream(operation),
+        )
+        with pytest.raises(AnalyzerInfrastructureError) as error:
+            orchestrator.execute(case.prepared, case.descriptor, case.registry)
+
+    assert error.value.phase == "worker_internal"
+    assert len(runner.requests) == 1
+    assert "PRIVATE" not in str(error.value)
+    assert "OSError" not in str(error.value)
+    assert str(tmp_path) not in str(error.value)
+
+
+def test_analyzer_raised_oserror_remains_analyzer_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _ExecutingRunner()
+    orchestrator = _orchestrator(
+        _config(MediaType.IMAGE, ["fake_image_analyzer"]),
+        runner=runner,
+    )
+    _install_stream_operation_analyzer(
+        monkeypatch,
+        target="source",
+        operation="analyzer_oserror",
+    )
+
+    with _prepared_case(tmp_path) as case:
+        results = orchestrator.execute(case.prepared, case.descriptor, case.registry)
+
+    assert len(results) == 1
+    assert results[0].status is AnalyzerStatus.ERROR
+    assert results[0].errors[0].code == "analyzer_error"
+    serialized = results[0].model_dump_json()
+    assert "PRIVATE" not in serialized
+    assert "OSError" not in serialized
+    assert str(tmp_path) not in serialized
+
+
 def test_controlled_source_read_failure_is_fatal_and_stops_orchestration(
     tmp_path: Path,
 ) -> None:
@@ -611,8 +786,32 @@ def test_worker_local_analyzer_request_has_only_read_capabilities(tmp_path: Path
         )
     with request.source.open_for_read() as stream:
         assert stream.read() == b"source"
+        assert not stream.closed
+        stream.seek(0)
+        assert stream.read1() == b"source"
+        stream.seek(0)
+        assert stream.readline() == b"source"
+        stream.seek(0)
+        assert stream.readlines() == [b"source"]
+        stream.seek(0)
+        buffer = bytearray(6)
+        assert stream.readinto(buffer) == 6
+        assert bytes(buffer) == b"source"
+        assert stream.tell() == 6
+        assert isinstance(stream.fileno(), int)
+        assert stream.readable()
+        assert stream.seekable()
+        assert not stream.isatty()
+        assert not stream.writable()
         with pytest.raises(UnsupportedOperation):
             stream.write(b"mutation")
+        with pytest.raises(UnsupportedOperation):
+            stream.writelines([b"mutation"])
+        with pytest.raises(UnsupportedOperation):
+            stream.truncate()
+        with stream as nested_stream:
+            assert nested_stream is stream
+    assert stream.closed
 
 
 def _walk_graph(value: object, seen: set[int] | None = None) -> Iterator[object]:

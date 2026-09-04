@@ -10,6 +10,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 from fakedetector.config.models import AppConfig
+from fakedetector.core._cleanup_safety import _CleanupSafetyBarrier
 from fakedetector.domain import (
     AnalysisStatus,
     AnalyzerResult,
@@ -124,6 +125,11 @@ class TaskExecutionOutcome:
 
     status: AnalysisStatus
     errors: tuple[ErrorDetail, ...] = ()
+    _cleanup_safety_barrier: _CleanupSafetyBarrier | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if self.status not in {AnalysisStatus.COMPLETED, AnalysisStatus.FAILED}:
@@ -132,14 +138,30 @@ class TaskExecutionOutcome:
             raise ValueError("completed execution outcome cannot contain errors")
         if self.status is AnalysisStatus.FAILED and not self.errors:
             raise ValueError("failed execution outcome requires a safe error")
+        if self.status is AnalysisStatus.COMPLETED and self._cleanup_safety_barrier is not None:
+            raise ValueError("completed execution outcome cannot defer cleanup")
+        if self._cleanup_safety_barrier is not None and not isinstance(
+            self._cleanup_safety_barrier,
+            _CleanupSafetyBarrier,
+        ):
+            raise TypeError("cleanup safety barrier does not implement its private contract")
 
     @classmethod
     def completed(cls) -> TaskExecutionOutcome:
         return cls(status=AnalysisStatus.COMPLETED)
 
     @classmethod
-    def failed(cls, error: ErrorDetail) -> TaskExecutionOutcome:
-        return cls(status=AnalysisStatus.FAILED, errors=(error,))
+    def failed(
+        cls,
+        error: ErrorDetail,
+        *,
+        _cleanup_safety_barrier: _CleanupSafetyBarrier | None = None,
+    ) -> TaskExecutionOutcome:
+        return cls(
+            status=AnalysisStatus.FAILED,
+            errors=(error,),
+            _cleanup_safety_barrier=_cleanup_safety_barrier,
+        )
 
 
 class TerminalSettlementPhase(Enum):
@@ -167,6 +189,11 @@ class TerminalSettlement:
 
     phase: TerminalSettlementPhase
     owner_token: object | None
+    _cleanup_safety_barrier: _CleanupSafetyBarrier | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     original_file_deleted: bool = False
     artifact_cleanup_completed: bool = False
     intermediate_files_deleted: bool = False

@@ -11,6 +11,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
+from threading import Lock
 from typing import Protocol, cast
 
 from pydantic import ValidationError
@@ -150,6 +151,7 @@ class _SpawnedWorkerRunner:
             raise AnalyzerInfrastructureError("spawn_setup") from None
 
         process_started = False
+        process_cleanup_deferred = False
         send_connection_open = True
         try:
             try:
@@ -171,7 +173,7 @@ class _SpawnedWorkerRunner:
 
             if not response_ready:
                 if not self._is_alive(process):
-                    self._bounded_join(process, 0.0)
+                    self._confirm_reaped(process)
                     raise AnalyzerInfrastructureError("worker_no_response")
                 self._stop_and_reap(process)
                 return _WorkerRun(
@@ -196,7 +198,7 @@ class _SpawnedWorkerRunner:
                     kind=_WorkerRunKind.TIMEOUT,
                     duration_ms=_duration_ms(started_at, self._monotonic()),
                 )
-            self._bounded_join(process, 0.0)
+            self._confirm_reaped(process)
             if process.exitcode != 0:
                 raise AnalyzerInfrastructureError("worker_exit")
             return _WorkerRun(
@@ -204,52 +206,111 @@ class _SpawnedWorkerRunner:
                 duration_ms=_duration_ms(started_at, self._monotonic()),
                 response=response,
             )
+        except AnalyzerInfrastructureError as error:
+            process_cleanup_deferred = error._cleanup_safety_barrier is not None
+            raise
         finally:
             _close_connection(receive_connection)
             if send_connection_open:
                 _close_connection(send_connection)
-            if not process_started or _known_stopped(process):
+            if not process_started or (not process_cleanup_deferred and _known_stopped(process)):
                 with suppress(OSError, ValueError):
                     process.close()
 
     def _stop_and_reap(self, process: _WorkerProcess) -> None:
-        if not self._is_alive(process):
-            self._bounded_join(process, 0.0)
+        barrier = _WorkerReapBarrier(process)
+        if barrier.try_confirm_safe():
             return
+        raise AnalyzerInfrastructureError(
+            "worker_reap",
+            _cleanup_safety_barrier=barrier,
+        )
 
-        with suppress(OSError, RuntimeError, ValueError):
-            process.terminate()
-        self._bounded_join(process, _TERMINATE_JOIN_SECONDS, tolerate_failure=True)
-        if not self._is_alive(process):
+    def _confirm_reaped(self, process: _WorkerProcess) -> None:
+        try:
             self._bounded_join(process, 0.0)
-            return
-
-        with suppress(OSError, RuntimeError, ValueError):
-            process.kill()
-        self._bounded_join(process, _KILL_JOIN_SECONDS, tolerate_failure=True)
-        if self._is_alive(process):
-            raise AnalyzerInfrastructureError("worker_reap")
-        self._bounded_join(process, 0.0)
+        except AnalyzerInfrastructureError:
+            self._stop_and_reap(process)
+            raise
 
     @staticmethod
     def _bounded_join(
         process: _WorkerProcess,
         timeout: float,
-        *,
-        tolerate_failure: bool = False,
     ) -> None:
         try:
             process.join(max(0.0, timeout))
         except (OSError, RuntimeError, ValueError):
-            if not tolerate_failure:
-                raise AnalyzerInfrastructureError("worker_join") from None
+            raise AnalyzerInfrastructureError("worker_join") from None
 
     @staticmethod
     def _is_alive(process: _WorkerProcess) -> bool:
         try:
             return process.is_alive()
         except (OSError, RuntimeError, ValueError):
-            raise AnalyzerInfrastructureError("worker_state") from None
+            barrier = _WorkerReapBarrier(process)
+            raise AnalyzerInfrastructureError(
+                "worker_reap",
+                _cleanup_safety_barrier=barrier,
+            ) from None
+
+
+class _WorkerReapBarrier:
+    """Retain one unresolved worker and retry stop/reap with fixed bounds."""
+
+    def __init__(self, process: _WorkerProcess) -> None:
+        self._process: _WorkerProcess | None = process
+        self._confirmed = False
+        self._lock = Lock()
+
+    def try_confirm_safe(self) -> bool:
+        """Return true only after a bounded join confirms the worker stopped."""
+        with self._lock:
+            if self._confirmed:
+                return True
+            process = self._process
+            if process is None:
+                return False
+
+            if self._confirm_stopped(process):
+                return self._mark_confirmed(process)
+
+            with suppress(OSError, RuntimeError, ValueError):
+                process.terminate()
+            self._try_join(process, _TERMINATE_JOIN_SECONDS)
+            if self._confirm_stopped(process):
+                return self._mark_confirmed(process)
+
+            with suppress(OSError, RuntimeError, ValueError):
+                process.kill()
+            self._try_join(process, _KILL_JOIN_SECONDS)
+            if self._confirm_stopped(process):
+                return self._mark_confirmed(process)
+            return False
+
+    @staticmethod
+    def _try_join(process: _WorkerProcess, timeout: float) -> bool:
+        try:
+            process.join(max(0.0, timeout))
+        except (OSError, RuntimeError, ValueError):
+            return False
+        return True
+
+    @classmethod
+    def _confirm_stopped(cls, process: _WorkerProcess) -> bool:
+        try:
+            if process.is_alive():
+                return False
+        except (OSError, RuntimeError, ValueError):
+            return False
+        return cls._try_join(process, 0.0)
+
+    def _mark_confirmed(self, process: _WorkerProcess) -> bool:
+        with suppress(OSError, ValueError):
+            process.close()
+        self._confirmed = True
+        self._process = None
+        return True
 
 
 def _worker_main(send_connection: _Connection, request: _WorkerRequest) -> None:

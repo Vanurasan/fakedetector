@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Callable
 from copy import copy
 from datetime import UTC, datetime, timedelta
@@ -13,6 +14,7 @@ from typing import NoReturn, cast
 import pytest
 import yaml
 
+import fakedetector.core._bounded_process as bounded_process_module
 import fakedetector.lifecycle as lifecycle
 from fakedetector.analyzers._catalog import _framework_test_registrations
 from fakedetector.analyzers._errors import AnalyzerInfrastructureError
@@ -64,6 +66,7 @@ from fakedetector.lifecycle import (
 )
 from fakedetector.lifecycle._stage5 import Stage5ExecutionService
 from fakedetector.preprocessing._errors import PreprocessingError
+from fakedetector.preprocessing._media_tools import _FFmpegPreprocessingTool
 from fakedetector.preprocessing._models import (
     PreparedArtifact,
     PreparedMedia,
@@ -194,18 +197,41 @@ class _RecordingPreprocessing:
         )
 
 
+class _ControlledSafetyBarrier:
+    def __init__(
+        self,
+        *,
+        safe: bool,
+        lock_probe: Callable[[], None] | None = None,
+        raise_once: bool = False,
+    ) -> None:
+        self.safe = safe
+        self.lock_probe = lock_probe
+        self.raise_once = raise_once
+        self.calls = 0
+
+    def try_confirm_safe(self) -> bool:
+        self.calls += 1
+        if self.lock_probe is not None:
+            self.lock_probe()
+        if self.raise_once:
+            self.raise_once = False
+            raise RuntimeError("PRIVATE cleanup safety detail")
+        return self.safe
+
+
 class _SequencedRunner:
     def __init__(
         self,
         *kinds: _WorkerRunKind,
         clock: _ManualMonotonic | None = None,
         consume_seconds: tuple[float, ...] = (),
-        fatal: bool = False,
+        fatal_barrier: _ControlledSafetyBarrier | None = None,
     ) -> None:
         self._kinds = list(kinds)
         self._clock = clock
         self._consume_seconds = consume_seconds
-        self._fatal = fatal
+        self._fatal_barrier = fatal_barrier
         self.requests: list[_WorkerRequest] = []
         self.timeouts: list[float] = []
 
@@ -215,8 +241,11 @@ class _SequencedRunner:
         index = len(self.requests) - 1
         if self._clock is not None and index < len(self._consume_seconds):
             self._clock.advance(self._consume_seconds[index])
-        if self._fatal:
-            raise AnalyzerInfrastructureError("worker_reap")
+        if self._fatal_barrier is not None:
+            raise AnalyzerInfrastructureError(
+                "worker_reap",
+                _cleanup_safety_barrier=self._fatal_barrier,
+            )
         kind = self._kinds.pop(0) if self._kinds else _WorkerRunKind.RESPONSE
         if kind is _WorkerRunKind.TIMEOUT:
             return _WorkerRun(kind, duration_ms=1)
@@ -225,6 +254,58 @@ class _SequencedRunner:
             duration_ms=1,
             response=_execute_worker(request),
         )
+
+
+class _DeferredProcess:
+    def __init__(self) -> None:
+        self.safe = False
+        self.terminate_calls = 0
+        self.kill_calls = 0
+        self.wait_timeouts: list[float | None] = []
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.wait_timeouts.append(timeout)
+        if not self.safe:
+            raise subprocess.TimeoutExpired("PRIVATE command", timeout)
+        return 0
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+
+
+class _FFmpegTerminationPreprocessing:
+    def __init__(self) -> None:
+        self._tool = _FFmpegPreprocessingTool(executable="ffmpeg", timeout_seconds=1.0)
+
+    def prepare(
+        self,
+        request: PreprocessingRequest,
+        requirements: PreprocessingRequirements,
+        *,
+        remaining_timeout_seconds: Callable[[], float] | None = None,
+    ) -> PreparedMedia:
+        del requirements
+        assert remaining_timeout_seconds is not None
+        artifact_ref = request.artifact_registry.register(
+            "ffmpeg_output",
+            "preprocessing/ffmpeg/output.png",
+        )
+
+        request.source_file_ref.with_local_source_path(
+            lambda source: request.artifact_registry.with_local_artifact_path(
+                artifact_ref,
+                lambda target: self._tool.sampled_frame(
+                    source,
+                    target,
+                    timestamp_seconds=0.0,
+                    timeout_seconds=remaining_timeout_seconds(),
+                ),
+            )
+        )
+        raise AssertionError("unreapable FFmpeg unexpectedly completed")
 
 
 class _ForbiddenRunner:
@@ -790,17 +871,18 @@ def test_stage5_rejects_a_different_config_snapshot_before_preprocessing(
     _cleanup_task(task)
 
 
-def test_fatal_analyzer_infrastructure_failure_uses_stage4_cleanup(
+def test_fatal_analyzer_infrastructure_failure_cleans_after_safety_confirmation(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "temp"
     config = _config(root, enabled=["fake_image_analyzer"])
     task, registry = _claimed_task(root, config)
+    barrier = _ControlledSafetyBarrier(safe=True)
     service = _service(
         config,
         registry,
         _RecordingPreprocessing(create_artifact=True),
-        runner=_SequencedRunner(fatal=True),
+        runner=_SequencedRunner(fatal_barrier=barrier),
         monotonic=_ManualMonotonic(),
     )
     final = Stage4TaskProcessor(
@@ -815,6 +897,219 @@ def test_fatal_analyzer_infrastructure_failure_uses_stage4_cleanup(
     assert final.cleanup is not None and final.cleanup.intermediate_files_deleted
     assert task.stage5_data is not None
     assert task.stage5_data.analyzer_results == ()
+    assert task.accepted_source.is_released
+    assert barrier.calls == 1
+
+
+def test_unreapable_worker_defers_cleanup_until_recovery_confirms_safe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "temp"
+    config = _config(root, enabled=["fake_image_analyzer"])
+    task, registry = _claimed_task(root, config)
+    barrier = _ControlledSafetyBarrier(safe=False)
+    barrier.lock_probe = lambda: _assert_registry_unlocked(
+        registry,
+        task.context.analysis_id,
+    )
+    service = _service(
+        config,
+        registry,
+        _RecordingPreprocessing(create_artifact=True),
+        runner=_SequencedRunner(fatal_barrier=barrier),
+        monotonic=_ManualMonotonic(),
+    )
+    processor = Stage4TaskProcessor(
+        config=config,
+        clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
+        registry=registry,
+    )
+    cleanup_calls = 0
+    settlement_events: list[str] = []
+    real_cleanup = processor._cleanup.cleanup_task
+    real_mark_facts_ready = registry.mark_terminal_facts_ready
+    real_finalize = registry.finalize_terminal_settlement
+
+    def count_cleanup(*args: object, **kwargs: object):
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        return real_cleanup(*args, **kwargs)
+
+    def record_facts_ready(*args: object, **kwargs: object) -> None:
+        real_mark_facts_ready(*args, **kwargs)
+        settlement_events.append("fact_ready")
+
+    def record_finished(*args: object, **kwargs: object) -> None:
+        assert settlement_events == ["fact_ready"]
+        real_finalize(*args, **kwargs)
+        settlement_events.append("finished")
+
+    monkeypatch.setattr(processor._cleanup, "cleanup_task", count_cleanup)
+    monkeypatch.setattr(registry, "mark_terminal_facts_ready", record_facts_ready)
+    monkeypatch.setattr(registry, "finalize_terminal_settlement", record_finished)
+
+    first = processor.execute_claimed(task, service)
+    artifact_paths = task.artifacts.cleanup_obligations()
+
+    assert first.status is AnalysisStatus.FAILED
+    assert first.stage is ProcessingStage.CLEANUP
+    assert first.finished_at is None
+    assert first.cleanup is None
+    assert first.errors[0].code == "internal_error"
+    assert first.errors[0].category == "internal"
+    assert barrier.calls == 1
+    assert cleanup_calls == 0
+    assert settlement_events == []
+    assert not task.accepted_source.is_released
+    assert artifact_paths and all(path.is_file() for path in artifact_paths)
+    assert registry.recoverable_terminal_tasks() == (task.context.analysis_id,)
+
+    second = processor.settle_terminal(task.context.analysis_id)
+
+    assert second.status is AnalysisStatus.FAILED
+    assert second.stage is ProcessingStage.CLEANUP
+    assert second.finished_at is None
+    assert second.cleanup is None
+    assert barrier.calls == 2
+    assert cleanup_calls == 0
+    assert settlement_events == []
+    assert not task.accepted_source.is_released
+    assert all(path.is_file() for path in artifact_paths)
+
+    barrier.safe = True
+    final = processor.settle_terminal(task.context.analysis_id)
+
+    assert final.status is AnalysisStatus.FAILED
+    assert final.stage is ProcessingStage.FINISHED
+    assert final.finished_at is not None
+    assert final.cleanup is not None
+    assert final.cleanup.finished_at == final.finished_at
+    assert barrier.calls == 3
+    assert cleanup_calls == 1
+    assert settlement_events == ["fact_ready", "finished"]
+    assert task.accepted_source.is_released
+    assert all(not path.exists() for path in artifact_paths)
+    assert registry.recoverable_terminal_tasks() == ()
+
+
+def test_cleanup_safety_confirmation_exception_defers_and_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "temp"
+    config = _config(root, enabled=["fake_image_analyzer"])
+    task, registry = _claimed_task(root, config)
+    barrier = _ControlledSafetyBarrier(safe=True, raise_once=True)
+    barrier.lock_probe = lambda: _assert_registry_unlocked(
+        registry,
+        task.context.analysis_id,
+    )
+    service = _service(
+        config,
+        registry,
+        _RecordingPreprocessing(create_artifact=True),
+        runner=_SequencedRunner(fatal_barrier=barrier),
+        monotonic=_ManualMonotonic(),
+    )
+    processor = Stage4TaskProcessor(
+        config=config,
+        clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
+        registry=registry,
+    )
+    cleanup_calls = 0
+    real_cleanup = processor._cleanup.cleanup_task
+
+    def count_cleanup(*args: object, **kwargs: object):
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        return real_cleanup(*args, **kwargs)
+
+    monkeypatch.setattr(processor._cleanup, "cleanup_task", count_cleanup)
+
+    deferred = processor.execute_claimed(task, service)
+    artifact_paths = task.artifacts.cleanup_obligations()
+
+    assert deferred.status is AnalysisStatus.FAILED
+    assert deferred.stage is ProcessingStage.CLEANUP
+    assert deferred.finished_at is None
+    assert deferred.cleanup is None
+    assert "PRIVATE" not in repr(deferred)
+    assert barrier.calls == 1
+    assert cleanup_calls == 0
+    assert not task.accepted_source.is_released
+    assert artifact_paths and all(path.is_file() for path in artifact_paths)
+    assert registry.recoverable_terminal_tasks() == (task.context.analysis_id,)
+
+    final = processor.settle_terminal(task.context.analysis_id)
+
+    assert final.status is AnalysisStatus.FAILED
+    assert final.stage is ProcessingStage.FINISHED
+    assert final.cleanup is not None
+    assert barrier.calls == 2
+    assert cleanup_calls == 1
+    assert task.accepted_source.is_released
+    assert all(not path.exists() for path in artifact_paths)
+    assert registry.recoverable_terminal_tasks() == ()
+
+
+def test_ffmpeg_termination_barrier_defers_stage4_cleanup_and_beats_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "temp"
+    config = _config(root, processing_timeout_seconds=5)
+    task, registry = _claimed_task(root, config)
+    process = _DeferredProcess()
+    monkeypatch.setattr(
+        bounded_process_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    service = _service(
+        config,
+        registry,
+        _FFmpegTerminationPreprocessing(),
+        monotonic=_ManualMonotonic(),
+    )
+    processor = Stage4TaskProcessor(
+        config=config,
+        clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
+        registry=registry,
+    )
+
+    first = processor.execute_claimed(task, service)
+
+    assert first.status is AnalysisStatus.FAILED
+    assert first.stage is ProcessingStage.CLEANUP
+    assert first.finished_at is None
+    assert first.cleanup is None
+    assert first.errors[0].code == "internal_error"
+    assert first.errors[0].category == "internal"
+    assert task.errors[0].safe_details == {"phase": "preprocessing"}
+    assert process.terminate_calls == 2
+    assert process.kill_calls == 2
+    assert not task.accepted_source.is_released
+    assert registry.recoverable_terminal_tasks() == (task.context.analysis_id,)
+
+    repeated = processor.settle_terminal(task.context.analysis_id)
+
+    assert repeated.stage is ProcessingStage.CLEANUP
+    assert repeated.cleanup is None
+    assert process.terminate_calls == 3
+    assert process.kill_calls == 3
+    assert process.wait_timeouts
+    assert all(timeout is not None and timeout <= 1.0 for timeout in process.wait_timeouts)
+    assert not task.accepted_source.is_released
+
+    process.safe = True
+    final = processor.settle_terminal(task.context.analysis_id)
+
+    assert final.status is AnalysisStatus.FAILED
+    assert final.stage is ProcessingStage.FINISHED
+    assert final.cleanup is not None
+    assert final.cleanup.original_file_deleted
+    assert final.cleanup.intermediate_files_deleted
     assert task.accepted_source.is_released
 
 

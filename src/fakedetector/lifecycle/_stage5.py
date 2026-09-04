@@ -100,14 +100,22 @@ class Stage5ExecutionService:
             remaining_timeout_seconds()
         except _Stage5DeadlineExceededError:
             return TaskExecutionOutcome.failed(_processing_timeout(phase))
-        except PreprocessingError:
+        except PreprocessingError as error:
+            if error._cleanup_safety_barrier is not None:
+                return TaskExecutionOutcome.failed(
+                    _stage5_failure("preprocessing"),
+                    _cleanup_safety_barrier=error._cleanup_safety_barrier,
+                )
             try:
                 remaining_timeout_seconds()
             except _Stage5DeadlineExceededError:
                 return TaskExecutionOutcome.failed(_processing_timeout(phase))
             return TaskExecutionOutcome.failed(_stage5_failure("preprocessing"))
-        except AnalyzerInfrastructureError:
-            return TaskExecutionOutcome.failed(_stage5_failure("analysis"))
+        except AnalyzerInfrastructureError as error:
+            return TaskExecutionOutcome.failed(
+                _stage5_failure("analysis"),
+                _cleanup_safety_barrier=error._cleanup_safety_barrier,
+            )
         return TaskExecutionOutcome.completed()
 
     def _new_deadline(self) -> float:

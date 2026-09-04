@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 5 — Предварительная обработка и каркас анализаторов
 Статус этапа: IN_PROGRESS
-Ближайшее действие: отдельный read-only финальный аудит Stage 5
+Ближайшее действие: исправления по итогам финального аудита Stage 5 — R2
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increments 1–5 реализовали internal models/capability boundary, shared bounded subprocess primitive с parity migration Stage 3, image/audio/video preprocessing, analyzer registry/orchestration со spawned-process timeout и интегрированный Stage 4 → Stage 5 lifecycle; полный quality barrier пройден: 1143 passed, 2 skipped, coverage 90%; Stage 5 Increments 1–5 = DONE, функциональная реализация завершена, финальный аудит = NOT_STARTED
+Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increments 1–5 реализовали internal models/capability boundary, shared bounded subprocess primitive с parity migration Stage 3, image/audio/video preprocessing, analyzer registry/orchestration со spawned-process timeout и интегрированный Stage 4 → Stage 5 lifecycle; исходный полный набор проверок: 1143 passed, 2 skipped, coverage 90%; Stage 5 Increments 1–5 = DONE, исправления по итогам финального аудита = IN_PROGRESS, R1 = DONE, остаются R2–R4 и повторный финальный аудит
 Документационная база: сформирована
 ```
 
@@ -741,8 +741,9 @@ timestamp.
 3. **Increment 3 — DONE:** image/audio/video preprocessing.
 4. **Increment 4 — DONE:** analyzer registry/orchestration + hard process timeout.
 5. **Increment 5 — DONE:** integrated Stage 4 → Stage 5 lifecycle.
-6. **Final Stage 5 audit — NOT_STARTED:** отдельный последующий increment/branch после
-   завершённой функциональной реализации.
+6. **Исправления по итогам финального аудита Stage 5 — IN_PROGRESS:** аудит в
+   режиме только для чтения завершён; R1 = DONE, остаются R2–R4 и повторный
+   финальный аудит.
 
 Increment 2 выделил private shared process boundary с hard-bounded stdout,
 discard-режимом, explicit cwd, `shell=False`, disabled stdin, timeout и
@@ -779,9 +780,19 @@ Increment 5 добавил внутренний `Stage5ExecutionService`, сов
 cleanup и release остаются исключительной ответственностью Stage 4. Полный quality barrier: 1143
 passed, 2 skipped, coverage 90%.
 
-Функциональная реализация Stage 5 завершена; этап сохраняет статус `IN_PROGRESS`
-до отдельного независимого финального аудита. Следующее действие — отдельный
-read-only финальный аудит Stage 5.
+Функциональная реализация Stage 5 завершена; выполняются исправления по
+результатам финального аудита, проведённого в режиме только для чтения. R1
+закрывает `S5-AUD-001` и `S5-AUD-002`; этап сохраняет статус `IN_PROGRESS`, пока
+не выполнены R2–R4 и повторный финальный аудит. Следующее действие — исправления
+R2.
+
+## Исправления по итогам финального аудита
+
+- [x] R1 — безопасность процессов и владения: неподтверждённое завершение
+  процесса блокирует физическую очистку и `FINISHED`; ошибки ввода-вывода
+  контролируемого входа отделены от ошибок анализатора;
+- [ ] R2–R4 — оставшиеся этапы исправлений;
+- [ ] повторный независимый финальный аудит.
 
 ## Обязательные задачи
 

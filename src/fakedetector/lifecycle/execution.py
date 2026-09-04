@@ -351,6 +351,13 @@ class TaskRegistry:
                 stage=ProcessingStage.CLEANUP,
             )
             task.errors.extend(error.model_copy(deep=True) for error in outcome.errors)
+            if outcome._cleanup_safety_barrier is not None:
+                task.terminal_settlement = TerminalSettlement(
+                    phase=TerminalSettlementPhase.CLAIMED,
+                    owner_token=None,
+                    _cleanup_safety_barrier=outcome._cleanup_safety_barrier,
+                    original_file_deleted=task.accepted_source.is_released,
+                )
 
     def fail_pending(self, analysis_id: str, error: ErrorDetail) -> AnalysisTask:
         """Claim terminalization, without execution, for one confirmed pending task."""
@@ -421,9 +428,43 @@ class TaskRegistry:
         """Move a fresh settlement claim into its single cleanup workflow."""
         with self._lock:
             settlement = self._owned_settlement(analysis_id, owner_token)
-            if settlement.phase is not TerminalSettlementPhase.CLAIMED:
+            if (
+                settlement.phase is not TerminalSettlementPhase.CLAIMED
+                or settlement._cleanup_safety_barrier is not None
+            ):
                 raise LifecycleStateError()
             settlement.phase = TerminalSettlementPhase.CLEANUP_IN_PROGRESS
+
+    def _try_confirm_terminal_cleanup_safe(
+        self,
+        analysis_id: str,
+        owner_token: object,
+    ) -> bool:
+        """Invoke an unresolved safety barrier without holding the registry lock."""
+        with self._lock:
+            settlement = self._owned_settlement(analysis_id, owner_token)
+            barrier = settlement._cleanup_safety_barrier
+            if barrier is None:
+                return True
+            if settlement.phase is not TerminalSettlementPhase.CLAIMED:
+                raise LifecycleStateError()
+
+        try:
+            confirmed_safe = barrier.try_confirm_safe()
+        except Exception:
+            return False
+        if confirmed_safe is not True:
+            return False
+
+        with self._lock:
+            settlement = self._owned_settlement(analysis_id, owner_token)
+            if (
+                settlement.phase is not TerminalSettlementPhase.CLAIMED
+                or settlement._cleanup_safety_barrier is not barrier
+            ):
+                raise LifecycleStateError()
+            settlement._cleanup_safety_barrier = None
+        return True
 
     def record_cleanup_progress(
         self,

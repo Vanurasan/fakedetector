@@ -8,9 +8,12 @@ from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from time import monotonic as _monotonic
 from time import sleep as _sleep
 from typing import IO, Literal
+
+from fakedetector.core._cleanup_safety import _CleanupSafetyBarrier
 
 _READ_CHUNK_BYTES = 64 * 1024
 _POLL_INTERVAL_SECONDS = 0.005
@@ -30,9 +33,17 @@ ProcessInfrastructurePhase = Literal[
 class ProcessInfrastructureError(Exception):
     """Report one safe process infrastructure failure without leaking details."""
 
-    def __init__(self, phase: ProcessInfrastructurePhase) -> None:
+    def __init__(
+        self,
+        phase: ProcessInfrastructurePhase,
+        *,
+        _cleanup_safety_barrier: _CleanupSafetyBarrier | None = None,
+    ) -> None:
+        if (phase == "termination") != (_cleanup_safety_barrier is not None):
+            raise ValueError("termination safety barrier does not match process phase")
         super().__init__("Subprocess infrastructure failed.")
         self.phase = phase
+        self._cleanup_safety_barrier = _cleanup_safety_barrier
 
 
 class ProcessTimeoutError(Exception):
@@ -55,6 +66,48 @@ class ProcessResult:
 
     return_code: int
     stdout: bytes | None
+
+
+class _ProcessTerminationBarrier:
+    """Retain one unresolved child and retry terminate/kill/reap boundedly."""
+
+    def __init__(self, process: subprocess.Popen[bytes]) -> None:
+        self._process: subprocess.Popen[bytes] | None = process
+        self._confirmed = False
+        self._lock = Lock()
+
+    def try_confirm_safe(self) -> bool:
+        """Retry the fixed escalation and forget the handle only after reap."""
+        with self._lock:
+            if self._confirmed:
+                return True
+            process = self._process
+            if process is None:
+                return False
+
+            with suppress(OSError):
+                process.terminate()
+            if self._wait(process, _TERMINATE_WAIT_SECONDS):
+                return self._mark_confirmed()
+
+            with suppress(OSError):
+                process.kill()
+            if self._wait(process, _KILL_WAIT_SECONDS):
+                return self._mark_confirmed()
+            return False
+
+    @staticmethod
+    def _wait(process: subprocess.Popen[bytes], timeout: float) -> bool:
+        try:
+            process.wait(timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return True
+
+    def _mark_confirmed(self) -> bool:
+        self._confirmed = True
+        self._process = None
+        return True
 
 
 def run_bounded_process(
@@ -291,17 +344,10 @@ def _wait_for_execution(
 
 
 def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
-    with suppress(OSError):
-        process.terminate()
-    try:
-        process.wait(timeout=_TERMINATE_WAIT_SECONDS)
+    barrier = _ProcessTerminationBarrier(process)
+    if barrier.try_confirm_safe():
         return
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-
-    with suppress(OSError):
-        process.kill()
-    try:
-        process.wait(timeout=_KILL_WAIT_SECONDS)
-    except (OSError, subprocess.TimeoutExpired):
-        raise ProcessInfrastructureError("termination") from None
+    raise ProcessInfrastructureError(
+        "termination",
+        _cleanup_safety_barrier=barrier,
+    ) from None

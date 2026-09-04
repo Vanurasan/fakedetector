@@ -205,8 +205,12 @@ class _FFmpegPreprocessingTool:
             )
         except ProcessTimeoutError:
             raise PreprocessingError("media_tool", f"{phase}_timeout") from None
-        except ProcessInfrastructureError:
-            raise PreprocessingError("infrastructure", f"{phase}_process") from None
+        except ProcessInfrastructureError as error:
+            raise PreprocessingError(
+                "infrastructure",
+                f"{phase}_process",
+                _cleanup_safety_barrier=error._cleanup_safety_barrier,
+            ) from None
         if result.return_code != 0:
             raise PreprocessingError("media_tool", phase)
 

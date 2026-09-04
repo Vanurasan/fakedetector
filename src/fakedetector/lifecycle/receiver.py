@@ -207,6 +207,13 @@ class Stage4TaskProcessor:
         """Own or recover terminal publication without repeating FACT_READY cleanup."""
         task, owner_token = self._registry.claim_terminal_settlement(analysis_id)
         try:
+            if not self._registry._try_confirm_terminal_cleanup_safe(
+                analysis_id,
+                owner_token,
+            ):
+                snapshot = self._registry.snapshot(analysis_id)
+                self._registry.release_terminal_settlement(analysis_id, owner_token)
+                return snapshot
             settlement = self._registry.terminal_settlement(analysis_id, owner_token)
             if settlement.phase is TerminalSettlementPhase.CLAIMED:
                 self._registry.start_terminal_cleanup(analysis_id, owner_token)

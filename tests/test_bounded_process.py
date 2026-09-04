@@ -298,12 +298,18 @@ class _WaitFailureProcess(_FakeProcess):
 
 
 class _NeverReapedProcess(_FakeProcess):
+    def __init__(self, *, stdout: object | None = None) -> None:
+        super().__init__(stdout=stdout)
+        self.reaped = False
+
     def wait(self, timeout: float | None = None) -> int:
         self.wait_calls += 1
+        if self.reaped:
+            return 0
         raise subprocess.TimeoutExpired("PRIVATE command", timeout)
 
     def poll(self) -> int | None:
-        return None
+        return 0 if self.reaped else None
 
 
 @pytest.mark.parametrize(
@@ -422,6 +428,7 @@ def test_unreapable_capture_process_has_termination_precedence(
         )
 
     assert error_info.value.phase == "termination"
+    assert error_info.value._cleanup_safety_barrier is not None
     assert process.terminated
     assert process.killed
     assert process.wait_calls == 2
@@ -470,6 +477,14 @@ def test_unconfirmed_termination_is_infrastructure_failure(
         )
 
     assert error_info.value.phase == "termination"
+    barrier = error_info.value._cleanup_safety_barrier
+    assert barrier is not None
     assert process.terminated
     assert process.killed
     assert process.wait_calls == 3
+    assert barrier.try_confirm_safe() is False
+    assert process.wait_calls == 5
+    process.reaped = True
+    assert barrier.try_confirm_safe() is True
+    assert barrier.try_confirm_safe() is True
+    assert process.wait_calls == 6
