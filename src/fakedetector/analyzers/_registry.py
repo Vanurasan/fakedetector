@@ -16,6 +16,7 @@ from fakedetector.analyzers._models import AnalyzerRegistration
 from fakedetector.analyzers._transport import _MAX_SETTINGS_BYTES
 from fakedetector.config.models import AppConfig
 from fakedetector.domain import MediaType
+from fakedetector.preprocessing._requirements import PreprocessingRequirements
 
 _SAFE_ANALYZER_ID = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _MAX_METADATA_TEXT_CHARS = 128
@@ -97,6 +98,21 @@ class AnalyzerRegistry:
         except KeyError:
             raise AnalyzerConfigurationError("media_type") from None
 
+    def preprocessing_requirements(
+        self,
+        media_type: MediaType,
+    ) -> PreprocessingRequirements:
+        """Aggregate only declarations from analyzers active for one media route."""
+        plan = self.active_plan(media_type)
+        return PreprocessingRequirements(
+            audio_spectrogram=any(
+                active.registration.preprocessing_requirements.audio_spectrogram for active in plan
+            ),
+            video_audio_track=any(
+                active.registration.preprocessing_requirements.video_audio_track for active in plan
+            ),
+        )
+
     @staticmethod
     def _validate_registration(registration: AnalyzerRegistration) -> None:
         if not isinstance(registration, AnalyzerRegistration):
@@ -118,6 +134,14 @@ class AnalyzerRegistry:
             registration.settings_model, BaseModel
         ):
             raise AnalyzerConfigurationError("settings_contract")
+        requirements = registration.preprocessing_requirements
+        if not isinstance(requirements, PreprocessingRequirements) or (
+            requirements.audio_spectrogram
+            and MediaType.AUDIO not in registration.supported_media_types
+            or requirements.video_audio_track
+            and MediaType.VIDEO not in registration.supported_media_types
+        ):
+            raise AnalyzerConfigurationError("preprocessing_requirements")
 
         definition = _resolve_worker_definition(registration.worker_key)
         if definition is None:
@@ -129,6 +153,7 @@ class AnalyzerRegistry:
             or registration.group != definition.group
             or registration.supported_media_types != definition.supported_media_types
             or registration.settings_model is not definition.settings_model
+            or registration.preprocessing_requirements != definition.preprocessing_requirements
         ):
             raise AnalyzerConfigurationError("registration_mismatch")
 

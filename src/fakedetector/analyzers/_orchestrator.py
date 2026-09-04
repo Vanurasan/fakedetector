@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,7 @@ from fakedetector.domain import (
     AnalyzerResult,
     AnalyzerStatus,
     ErrorDetail,
+    MediaType,
     ValidatedFileDescriptor,
 )
 from fakedetector.intake.temporary_input import IntakeSystemError
@@ -35,7 +37,11 @@ from fakedetector.lifecycle.artifacts import (
     ArtifactRegistrationError,
     WorkspaceArtifactRegistry,
 )
-from fakedetector.preprocessing._models import PreparedArtifact, PreparedMedia
+from fakedetector.preprocessing._models import (
+    PreparedArtifact,
+    PreparedMedia,
+)
+from fakedetector.preprocessing._requirements import PreprocessingRequirements
 
 
 class _WorkerRunner(Protocol):
@@ -65,6 +71,9 @@ class AnalyzerOrchestrator:
         prepared_media: PreparedMedia,
         validated_file: ValidatedFileDescriptor,
         artifact_registry: WorkspaceArtifactRegistry,
+        *,
+        remaining_timeout_seconds: Callable[[], float] | None = None,
+        result_callback: Callable[[AnalyzerResult], None] | None = None,
     ) -> tuple[AnalyzerResult, ...]:
         """Return only results from analyzers actually launched in config order."""
         self._validate_inputs(prepared_media, validated_file, artifact_registry)
@@ -79,14 +88,36 @@ class AnalyzerOrchestrator:
                 prepared_media,
                 validated_file,
                 artifact_registry,
+                remaining_timeout_seconds,
             )
             results.append(result)
+            if result_callback is not None:
+                result_callback(result)
             if (
                 result.status in {AnalyzerStatus.ERROR, AnalyzerStatus.TIMEOUT}
                 and not self._registry.continue_on_failure
             ):
                 break
         return tuple(results)
+
+    def preprocessing_requirements(self, media_type: MediaType) -> PreprocessingRequirements:
+        """Return demand-driven representations for the active analyzer plan."""
+        return self._registry.preprocessing_requirements(media_type)
+
+    def _effective_timeout(
+        self,
+        remaining_timeout_seconds: Callable[[], float] | None,
+    ) -> float:
+        configured_timeout = self._registry.timeout_seconds
+        if remaining_timeout_seconds is None:
+            return configured_timeout
+        remaining = remaining_timeout_seconds()
+        if not isinstance(remaining, (int, float)) or isinstance(remaining, bool):
+            raise AnalyzerInfrastructureError("execution_budget")
+        remaining_value = float(remaining)
+        if not math.isfinite(remaining_value) or remaining_value <= 0:
+            raise AnalyzerInfrastructureError("execution_budget")
+        return min(configured_timeout, remaining_value)
 
     @staticmethod
     def _validate_inputs(
@@ -117,6 +148,7 @@ class AnalyzerOrchestrator:
         prepared_media: PreparedMedia,
         validated_file: ValidatedFileDescriptor,
         artifact_registry: WorkspaceArtifactRegistry,
+        remaining_timeout_seconds: Callable[[], float] | None,
     ) -> AnalyzerResult:
         if len(prepared_media.artifacts) > _MAX_ARTIFACTS:
             raise AnalyzerInfrastructureError("worker_request")
@@ -131,6 +163,7 @@ class AnalyzerOrchestrator:
                         validated_file,
                         source_path,
                         artifact_paths,
+                        remaining_timeout_seconds,
                     ),
                 )
             )
@@ -146,7 +179,9 @@ class AnalyzerOrchestrator:
         validated_file: ValidatedFileDescriptor,
         source_path: Path,
         artifact_paths: tuple[Path, ...],
+        remaining_timeout_seconds: Callable[[], float] | None,
     ) -> AnalyzerResult:
+        timeout_seconds = self._effective_timeout(remaining_timeout_seconds)
         try:
             request = _WorkerRequest(
                 worker_key=active.registration.worker_key,
@@ -171,12 +206,12 @@ class AnalyzerOrchestrator:
                 ),
                 warnings=prepared_media.warnings,
                 settings_json=active.settings_json,
-                timeout_seconds=self._registry.timeout_seconds,
+                timeout_seconds=timeout_seconds,
             )
         except (OSError, TypeError, ValueError):
             raise AnalyzerInfrastructureError("worker_request") from None
 
-        run = self._runner.run(request, self._registry.timeout_seconds)
+        run = self._runner.run(request, timeout_seconds)
         if run.kind is _WorkerRunKind.TIMEOUT:
             return _failure_result(active, prepared_media, run.duration_ms, timeout=True)
         if run.kind is not _WorkerRunKind.RESPONSE or run.response is None:

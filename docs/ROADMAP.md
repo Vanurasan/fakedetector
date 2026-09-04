@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 5 — Предварительная обработка и каркас анализаторов
 Статус этапа: IN_PROGRESS
-Ближайшее действие: Stage 5 Increment 5 — integrated Stage 4 → Stage 5 lifecycle
+Ближайшее действие: отдельный read-only финальный аудит Stage 5
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increments 1–4 реализовали internal models/capability boundary, shared bounded subprocess primitive с parity migration Stage 3, image/audio/video preprocessing и analyzer registry/orchestration со spawned-process timeout без Stage 4 integration; полный quality barrier green: 1121 passed, 2 skipped, coverage 90%; Stage 5 Increments 1–4 = DONE, Increment 5 = NOT_STARTED
+Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increments 1–5 реализовали internal models/capability boundary, shared bounded subprocess primitive с parity migration Stage 3, image/audio/video preprocessing, analyzer registry/orchestration со spawned-process timeout и интегрированный Stage 4 → Stage 5 lifecycle; полный quality barrier пройден: 1143 passed, 2 skipped, coverage 90%; Stage 5 Increments 1–5 = DONE, функциональная реализация завершена, финальный аудит = NOT_STARTED
 Документационная база: сформирована
 ```
 
@@ -740,9 +740,9 @@ timestamp.
 2. **Increment 2 — DONE:** bounded subprocess primitive + Stage 3 parity migration.
 3. **Increment 3 — DONE:** image/audio/video preprocessing.
 4. **Increment 4 — DONE:** analyzer registry/orchestration + hard process timeout.
-5. **Increment 5 — NOT_STARTED:** integrated Stage 4 → Stage 5 lifecycle.
+5. **Increment 5 — DONE:** integrated Stage 4 → Stage 5 lifecycle.
 6. **Final Stage 5 audit — NOT_STARTED:** отдельный последующий increment/branch после
-   functional readiness.
+   завершённой функциональной реализации.
 
 Increment 2 выделил private shared process boundary с hard-bounded stdout,
 discard-режимом, explicit cwd, `shell=False`, disabled stdin, timeout и
@@ -767,7 +767,21 @@ serialization failure дают безопасный canonical `ERROR`, а canoni
 возникает только после подтверждённого terminate/kill/reap; unreapable worker
 остаётся fatal infrastructure failure. Framework подтверждён только internal fake
 analyzers без score, findings и default-config activation.
-Следующее действие — Stage 5 Increment 5: integrated Stage 4 → Stage 5 lifecycle.
+
+Increment 5 добавил внутренний `Stage5ExecutionService`, совместимый с прежним
+`TaskExecutor.execute(task)`, и связал production path Stage 3/4 с preprocessing,
+авторитетным `Stage5TaskData`, переходом `PREPROCESSING → ANALYSIS` и
+последовательным analyzer orchestration. Требования к demand-driven артефактам
+вычисляются только по активному analyzer plan; единый monotonic deadline от входа
+в executor ограничивает preprocessing и каждый analyzer. Отдельные
+`ERROR`/`TIMEOUT` сохраняются как `AnalyzerResult`, фатальная инфраструктурная
+ошибка и общий timeout завершают execution как `FAILED`, а terminal settlement,
+cleanup и release остаются исключительной ответственностью Stage 4. Полный quality barrier: 1143
+passed, 2 skipped, coverage 90%.
+
+Функциональная реализация Stage 5 завершена; этап сохраняет статус `IN_PROGRESS`
+до отдельного независимого финального аудита. Следующее действие — отдельный
+read-only финальный аудит Stage 5.
 
 ## Обязательные задачи
 

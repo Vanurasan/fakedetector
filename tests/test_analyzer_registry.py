@@ -13,6 +13,7 @@ from fakedetector.analyzers._errors import AnalyzerConfigurationError
 from fakedetector.analyzers._registry import AnalyzerRegistry
 from fakedetector.config.models import AppConfig
 from fakedetector.domain import MediaType
+from fakedetector.preprocessing._requirements import PreprocessingRequirements
 
 
 def _config(
@@ -212,3 +213,44 @@ def test_registry_rejects_duplicate_enabled_id() -> None:
         )
 
     assert error.value.phase == "duplicate_enabled"
+
+
+def test_registry_derives_requirements_only_from_enabled_analyzers() -> None:
+    registry = AnalyzerRegistry(
+        _config(
+            image=["fake_image_analyzer"],
+            audio=["fake_audio_analyzer"],
+            video=["fake_video_analyzer"],
+        ),
+        _framework_test_registrations(),
+    )
+
+    image = registry.preprocessing_requirements(MediaType.IMAGE)
+    audio = registry.preprocessing_requirements(MediaType.AUDIO)
+    video = registry.preprocessing_requirements(MediaType.VIDEO)
+
+    assert not image.audio_spectrogram
+    assert not image.video_audio_track
+    assert audio.audio_spectrogram
+    assert not audio.video_audio_track
+    assert not video.audio_spectrogram
+    assert video.video_audio_track
+
+
+def test_disabled_analyzer_does_not_contribute_preprocessing_requirements() -> None:
+    registry = AnalyzerRegistry(_config(), _framework_test_registrations())
+
+    assert registry.preprocessing_requirements(MediaType.AUDIO) == PreprocessingRequirements()
+    assert registry.preprocessing_requirements(MediaType.VIDEO) == PreprocessingRequirements()
+
+
+def test_registry_rejects_requirement_for_unsupported_media() -> None:
+    registration = replace(
+        _framework_test_registrations()[0],
+        preprocessing_requirements=PreprocessingRequirements(audio_spectrogram=True),
+    )
+
+    with pytest.raises(AnalyzerConfigurationError) as error:
+        AnalyzerRegistry(_config(), (registration,))
+
+    assert error.value.phase == "preprocessing_requirements"

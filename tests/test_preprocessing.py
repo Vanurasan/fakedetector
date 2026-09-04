@@ -20,7 +20,7 @@ from fakedetector.config.models import (
     PreprocessingConfig,
     VideoPreprocessingConfig,
 )
-from fakedetector.core._bounded_process import ProcessTimeoutError
+from fakedetector.core._bounded_process import ProcessResult, ProcessTimeoutError
 from fakedetector.domain import (
     AudioTechnicalParameters,
     ImageTechnicalParameters,
@@ -38,12 +38,12 @@ from fakedetector.lifecycle.artifacts import WorkspaceArtifactRef, WorkspaceArti
 from fakedetector.preprocessing._errors import PreprocessingError
 from fakedetector.preprocessing._media_tools import _FFmpegPreprocessingTool
 from fakedetector.preprocessing._models import PreparedArtifact, PreparedMedia
+from fakedetector.preprocessing._requirements import PreprocessingRequirements
 from fakedetector.preprocessing._service import (
     AudioPreprocessor,
     ImagePreprocessor,
     PreprocessingDispatcher,
     PreprocessingRequest,
-    PreprocessingRequirements,
     VideoPreprocessor,
     _video_timestamps,
 )
@@ -830,6 +830,41 @@ def test_media_process_timeout_is_mapped_without_paths(
     assert str(tmp_path) not in str(caught.value)
     assert len(case.registry.cleanup_obligations()) == 1
     case.cleanup()
+
+
+@pytest.mark.parametrize(
+    ("remaining_timeout", "expected_timeout"),
+    [(2.5, 2.5), (20.0, 15.0)],
+)
+def test_media_process_timeout_is_capped_by_remaining_overall_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    remaining_timeout: float,
+    expected_timeout: float,
+) -> None:
+    captured_timeouts: list[float] = []
+
+    def complete_process(*_args: object, **kwargs: object) -> ProcessResult:
+        captured_timeouts.append(cast(float, kwargs["timeout_seconds"]))
+        return ProcessResult(return_code=0, stdout=None)
+
+    monkeypatch.setattr(
+        "fakedetector.preprocessing._media_tools.run_bounded_process",
+        complete_process,
+    )
+    source = tmp_path / "source.wav"
+    target = tmp_path / "prepared" / "normalized.wav"
+    source.write_bytes(b"source")
+
+    _media_tool().normalized_audio(
+        source,
+        target,
+        sample_rate_hz=8_000,
+        channels=1,
+        timeout_seconds=remaining_timeout,
+    )
+
+    assert captured_timeouts == [expected_timeout]
 
 
 def test_prepared_media_contains_only_opaque_refs_and_bounded_values(

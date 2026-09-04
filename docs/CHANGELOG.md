@@ -340,6 +340,12 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-04
+
+### Added
+
+- **[Stage 5/Increment 5] Завершена функциональная интеграция производственного жизненного цикла Stage 4 → Stage 5.** Внутренний `Stage5ExecutionService` сохранил контракт `TaskExecutor.execute(task)`, добавил авторитетную публикацию `PreparedMedia` и упорядоченных `AnalyzerResult` в `Stage5TaskData`, нормативный переход `PREPROCESSING → ANALYSIS` и единый monotonic deadline с ограничением операций preprocessing и analyzer timeout по остаточному бюджету. Требования к создаваемым по запросу представлениям выводятся только из активного analyzer plan без проверки analyzer IDs; отдельные `ERROR`/`TIMEOUT` остаются результатами, а фатальная инфраструктурная ошибка и общий timeout используют `FAILED`. Ответственность за terminal settlement, cleanup и source release остаётся у Stage 4; файловая и процессная работа выполняется вне global registry lock. Полный barrier: 1143 passed, 2 skipped, coverage 90%; следующий шаг — отдельный read-only финальный аудит Stage 5.
+
 ### 2026-09-03
 
 ### Added

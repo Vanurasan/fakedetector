@@ -11,6 +11,7 @@ from typing import Protocol, TypeVar
 
 from fakedetector.domain import (
     AnalysisStatus,
+    AnalyzerResult,
     CleanupResult,
     ErrorDetail,
     MediaType,
@@ -21,12 +22,14 @@ from fakedetector.domain.models import validate_utc_datetime
 from fakedetector.lifecycle.models import (
     AnalysisTask,
     CleanupFacts,
+    Stage5TaskData,
     TaskExecutionOutcome,
     TaskSnapshot,
     TerminalSettlement,
     TerminalSettlementPhase,
     TerminalSettlementSnapshot,
 )
+from fakedetector.preprocessing._models import PreparedMedia
 
 _CleanupOutcome = TypeVar("_CleanupOutcome")
 
@@ -95,7 +98,7 @@ class TaskQueue(Protocol):
 
 
 class AnalysisStateMachine:
-    """Validate and apply the narrow Increment 1 status/stage transitions."""
+    """Validate and apply canonical managed lifecycle status/stage transitions."""
 
     _TRANSITIONS = {
         (AnalysisStatus.QUEUED, ProcessingStage.REGISTERED): {
@@ -109,6 +112,11 @@ class AnalysisStateMachine:
             (AnalysisStatus.FAILED, ProcessingStage.CLEANUP),
         },
         (AnalysisStatus.RUNNING, ProcessingStage.PREPROCESSING): {
+            (AnalysisStatus.RUNNING, ProcessingStage.ANALYSIS),
+            (AnalysisStatus.COMPLETED, ProcessingStage.CLEANUP),
+            (AnalysisStatus.FAILED, ProcessingStage.CLEANUP),
+        },
+        (AnalysisStatus.RUNNING, ProcessingStage.ANALYSIS): {
             (AnalysisStatus.COMPLETED, ProcessingStage.CLEANUP),
             (AnalysisStatus.FAILED, ProcessingStage.CLEANUP),
         },
@@ -220,8 +228,11 @@ class TaskRegistry:
         with self._lock:
             if stage is ProcessingStage.FINISHED:
                 raise LifecycleStateError()
+            task = self._get(analysis_id)
+            if stage is ProcessingStage.ANALYSIS and task.stage5_data is None:
+                raise LifecycleStateError()
             self._state_machine.transition(
-                self._get(analysis_id),
+                task,
                 status=status,
                 stage=stage,
                 started_at=started_at,
@@ -259,6 +270,77 @@ class TaskRegistry:
             )
             task.execution_claimed = True
             return task
+
+    def validate_stage5_execution(self, task: AnalysisTask) -> None:
+        """Reject a stale or already-mutated task before Stage 5 performs work."""
+        with self._lock:
+            authoritative = self._require_stage5_task(task, ProcessingStage.PREPROCESSING)
+            if authoritative.stage5_data is not None:
+                raise LifecycleStateError()
+
+    def publish_stage5_prepared(
+        self,
+        task: AnalysisTask,
+        prepared_media: PreparedMedia,
+    ) -> None:
+        """Publish one capability-checked prepared value while still preprocessing."""
+        with self._lock:
+            authoritative = self._require_stage5_task(task, ProcessingStage.PREPROCESSING)
+            if authoritative.stage5_data is not None:
+                raise LifecycleStateError()
+            if (
+                not isinstance(prepared_media, PreparedMedia)
+                or prepared_media.analysis_id != authoritative.context.analysis_id
+                or prepared_media.media_type is not authoritative.context.media_type
+                or not prepared_media.source_file_ref._references(authoritative.accepted_source)
+                or any(
+                    not authoritative.artifacts._matches_registered_artifact(
+                        artifact.artifact_ref,
+                        artifact.artifact_id,
+                    )
+                    for artifact in prepared_media.artifacts
+                )
+            ):
+                raise LifecycleStateError()
+            authoritative.stage5_data = Stage5TaskData(prepared_media=prepared_media)
+
+    def start_stage5_analysis(self, task: AnalysisTask) -> None:
+        """Enter analysis only after authoritative prepared data was published."""
+        with self._lock:
+            authoritative = self._require_stage5_task(task, ProcessingStage.PREPROCESSING)
+            if authoritative.stage5_data is None:
+                raise LifecycleStateError()
+            self._state_machine.transition(
+                authoritative,
+                status=AnalysisStatus.RUNNING,
+                stage=ProcessingStage.ANALYSIS,
+            )
+
+    def append_stage5_analyzer_result(
+        self,
+        task: AnalysisTask,
+        result: AnalyzerResult,
+    ) -> None:
+        """Append one completed orchestration result in authoritative plan order."""
+        with self._lock:
+            authoritative = self._require_stage5_task(task, ProcessingStage.ANALYSIS)
+            data = authoritative.stage5_data
+            if (
+                data is None
+                or not isinstance(result, AnalyzerResult)
+                or result.media_type is not authoritative.context.media_type
+                or any(
+                    existing.analyzer_id == result.analyzer_id for existing in data.analyzer_results
+                )
+            ):
+                raise LifecycleStateError()
+            authoritative.stage5_data = Stage5TaskData(
+                prepared_media=data.prepared_media,
+                analyzer_results=(
+                    *data.analyzer_results,
+                    result.model_copy(deep=True),
+                ),
+            )
 
     def record_outcome(self, analysis_id: str, outcome: TaskExecutionOutcome) -> None:
         with self._lock:
@@ -361,14 +443,15 @@ class TaskRegistry:
             if settlement.phase is not TerminalSettlementPhase.CLEANUP_IN_PROGRESS:
                 raise LifecycleStateError()
             if (
-                settlement.original_file_deleted and not original_file_deleted
-                or (
-                    artifact_cleanup_completed is False
-                    and settlement.artifact_cleanup_completed
-                )
-                or settlement.intermediate_files_deleted and not intermediate_files_deleted
-                or settlement.quarantine_used and not quarantine_used
-                or quarantine_decided is False and settlement.quarantine_decided
+                settlement.original_file_deleted
+                and not original_file_deleted
+                or (artifact_cleanup_completed is False and settlement.artifact_cleanup_completed)
+                or settlement.intermediate_files_deleted
+                and not intermediate_files_deleted
+                or settlement.quarantine_used
+                and not quarantine_used
+                or quarantine_decided is False
+                and settlement.quarantine_decided
             ):
                 raise LifecycleStateError()
             settlement.original_file_deleted = original_file_deleted
@@ -474,6 +557,25 @@ class TaskRegistry:
         ):
             raise LifecycleStateError()
         return settlement
+
+    def _require_stage5_task(
+        self,
+        task: AnalysisTask,
+        stage: ProcessingStage,
+    ) -> AnalysisTask:
+        if not isinstance(task, AnalysisTask):
+            raise LifecycleStateError()
+        authoritative = self._get(task.context.analysis_id)
+        if (
+            authoritative is not task
+            or not authoritative.execution_claimed
+            or authoritative.context.status is not AnalysisStatus.RUNNING
+            or authoritative.context.stage is not stage
+            or authoritative.cleanup_result is not None
+            or authoritative.terminal_settlement is not None
+        ):
+            raise LifecycleStateError()
+        return authoritative
 
     @staticmethod
     def _validate_queued_at(task: AnalysisTask, queued_at: datetime) -> None:

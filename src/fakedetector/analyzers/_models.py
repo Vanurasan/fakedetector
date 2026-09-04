@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from fakedetector.analyzers._errors import _AnalyzerInputReadError
 from fakedetector.domain import AnalyzerResult, MediaType, ValidatedFileDescriptor
+from fakedetector.preprocessing._requirements import PreprocessingRequirements
 
 _SAFE_REASON_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
@@ -144,6 +145,9 @@ class AnalyzerRegistration:
     supported_media_types: frozenset[MediaType]
     worker_key: str
     settings_model: type[BaseModel] = field(repr=False)
+    preprocessing_requirements: PreprocessingRequirements = field(
+        default_factory=PreprocessingRequirements
+    )
 
 
 def _freeze_value(value: object) -> object:

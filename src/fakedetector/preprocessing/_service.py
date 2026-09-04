@@ -6,7 +6,6 @@ import math
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from functools import partial
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -33,21 +32,17 @@ from fakedetector.lifecycle.artifacts import (
 )
 from fakedetector.preprocessing._errors import PreprocessingError
 from fakedetector.preprocessing._media_tools import _FFmpegPreprocessingTool
-from fakedetector.preprocessing._models import PreparedArtifact, PreparedMedia
+from fakedetector.preprocessing._models import (
+    PreparedArtifact,
+    PreparedMedia,
+)
+from fakedetector.preprocessing._requirements import PreprocessingRequirements
 
 _MULTI_FRAME_WARNING = (
     "Normalized image represents only the first displayed frame and does not cover "
     "the source's temporal behavior."
 )
 _MAX_VIDEO_SAMPLED_FRAMES = 120
-
-
-@dataclass(frozen=True, slots=True)
-class PreprocessingRequirements:
-    """Representations explicitly requested by the future analyzer orchestration layer."""
-
-    audio_spectrogram: bool = False
-    video_audio_track: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +76,8 @@ class Preprocessor(Protocol):
         self,
         request: PreprocessingRequest,
         requirements: PreprocessingRequirements,
+        *,
+        remaining_timeout_seconds: Callable[[], float] | None = None,
     ) -> PreparedMedia:
         """Create registered representations for one validated controlled source."""
         ...
@@ -98,6 +95,8 @@ class ImagePreprocessor:
         self,
         request: PreprocessingRequest,
         requirements: PreprocessingRequirements,
+        *,
+        remaining_timeout_seconds: Callable[[], float] | None = None,
     ) -> PreparedMedia:
         del requirements
         parameters = _parameters(request, ImageTechnicalParameters, self.media_type)
@@ -106,7 +105,9 @@ class ImagePreprocessor:
         artifacts: list[PreparedArtifact] = []
         try:
             if self._config.normalize_for_analysis:
+                _check_remaining(remaining_timeout_seconds)
                 normalized = _decode_normalized_image(request.source_file_ref)
+                _check_remaining(remaining_timeout_seconds)
                 normalized_facts = {
                     "format": "png",
                     "mode": normalized.mode,
@@ -124,6 +125,7 @@ class ImagePreprocessor:
                     artifact_ref,
                     lambda target: _save_png(normalized, target, "image_normalize"),
                 )
+                _check_remaining(remaining_timeout_seconds)
                 artifacts.append(
                     PreparedArtifact(
                         artifact_id="image_normalized",
@@ -167,6 +169,8 @@ class AudioPreprocessor:
         self,
         request: PreprocessingRequest,
         requirements: PreprocessingRequirements,
+        *,
+        remaining_timeout_seconds: Callable[[], float] | None = None,
     ) -> PreparedMedia:
         parameters = _parameters(request, AudioTechnicalParameters, self.media_type)
         normalized_ref = _register(
@@ -182,6 +186,7 @@ class AudioPreprocessor:
                 target,
                 sample_rate_hz=parameters.sample_rate_hz,
                 channels=parameters.channels,
+                timeout_seconds=_operation_timeout(remaining_timeout_seconds),
             ),
         )
         artifacts = [
@@ -198,6 +203,23 @@ class AudioPreprocessor:
             self._config.fragment_duration_seconds,
         )
         for fragment_index, (start, end) in enumerate(intervals):
+
+            def write_fragment(
+                source: Path,
+                target: Path,
+                start_seconds: float = start,
+                end_seconds: float = end,
+            ) -> None:
+                self._media_tool.audio_fragment(
+                    source,
+                    target,
+                    start_seconds=start_seconds,
+                    duration_seconds=end_seconds - start_seconds,
+                    sample_rate_hz=parameters.sample_rate_hz,
+                    channels=parameters.channels,
+                    timeout_seconds=_operation_timeout(remaining_timeout_seconds),
+                )
+
             artifact_id = f"audio_fragment_{fragment_index:04d}"
             fragment_ref = _register(
                 request.artifact_registry,
@@ -208,13 +230,7 @@ class AudioPreprocessor:
                 request.artifact_registry,
                 normalized_ref,
                 fragment_ref,
-                partial(
-                    self._media_tool.audio_fragment,
-                    start_seconds=start,
-                    duration_seconds=end - start,
-                    sample_rate_hz=parameters.sample_rate_hz,
-                    channels=parameters.channels,
-                ),
+                write_fragment,
             )
             artifacts.append(
                 PreparedArtifact(
@@ -238,7 +254,11 @@ class AudioPreprocessor:
                 request.artifact_registry,
                 normalized_ref,
                 spectrogram_ref,
-                self._media_tool.spectrogram,
+                lambda source, target: self._media_tool.spectrogram(
+                    source,
+                    target,
+                    timeout_seconds=_operation_timeout(remaining_timeout_seconds),
+                ),
             )
             artifacts.append(
                 PreparedArtifact(
@@ -283,6 +303,8 @@ class VideoPreprocessor:
         self,
         request: PreprocessingRequest,
         requirements: PreprocessingRequirements,
+        *,
+        remaining_timeout_seconds: Callable[[], float] | None = None,
     ) -> PreparedMedia:
         parameters = _parameters(request, VideoTechnicalParameters, self.media_type)
         timestamps, truncated = _video_timestamps(
@@ -291,6 +313,19 @@ class VideoPreprocessor:
         )
         artifacts: list[PreparedArtifact] = []
         for frame_index, timestamp in enumerate(timestamps):
+
+            def write_frame(
+                source: Path,
+                target: Path,
+                target_timestamp: float = timestamp,
+            ) -> None:
+                self._media_tool.sampled_frame(
+                    source,
+                    target,
+                    timestamp_seconds=target_timestamp,
+                    timeout_seconds=_operation_timeout(remaining_timeout_seconds),
+                )
+
             artifact_id = f"video_frame_{frame_index:04d}"
             frame_ref = _register(
                 request.artifact_registry,
@@ -300,10 +335,7 @@ class VideoPreprocessor:
             _with_source_and_artifact(
                 request,
                 frame_ref,
-                partial(
-                    self._media_tool.sampled_frame,
-                    timestamp_seconds=timestamp,
-                ),
+                write_frame,
             )
             artifacts.append(
                 PreparedArtifact(
@@ -330,7 +362,11 @@ class VideoPreprocessor:
             _with_source_and_artifact(
                 request,
                 audio_ref,
-                self._media_tool.extracted_audio,
+                lambda source, target: self._media_tool.extracted_audio(
+                    source,
+                    target,
+                    timeout_seconds=_operation_timeout(remaining_timeout_seconds),
+                ),
             )
             artifacts.append(
                 PreparedArtifact(
@@ -386,20 +422,23 @@ class PreprocessingDispatcher:
         process_timeout_seconds: float,
         ffmpeg_executable: str = "ffmpeg",
     ) -> None:
+        config_snapshot = config.model_copy(deep=True)
         media_tool = _FFmpegPreprocessingTool(
             executable=ffmpeg_executable,
             timeout_seconds=process_timeout_seconds,
         )
         self._preprocessors: dict[MediaType, Preprocessor] = {
-            MediaType.IMAGE: ImagePreprocessor(config.image),
-            MediaType.AUDIO: AudioPreprocessor(config.audio, media_tool=media_tool),
-            MediaType.VIDEO: VideoPreprocessor(config.video, media_tool=media_tool),
+            MediaType.IMAGE: ImagePreprocessor(config_snapshot.image),
+            MediaType.AUDIO: AudioPreprocessor(config_snapshot.audio, media_tool=media_tool),
+            MediaType.VIDEO: VideoPreprocessor(config_snapshot.video, media_tool=media_tool),
         }
 
     def prepare(
         self,
         request: PreprocessingRequest,
         requirements: PreprocessingRequirements | None = None,
+        *,
+        remaining_timeout_seconds: Callable[[], float] | None = None,
     ) -> PreparedMedia:
         """Dispatch without extension guessing, analyzer execution, or lifecycle mutation."""
         active_requirements = requirements or PreprocessingRequirements()
@@ -407,7 +446,14 @@ class PreprocessingDispatcher:
             preprocessor = self._preprocessors[request.validated_file.media_type]
         except KeyError:
             raise PreprocessingError("invariant", "media_type") from None
-        return preprocessor.prepare(request, active_requirements)
+        _check_remaining(remaining_timeout_seconds)
+        prepared_media = preprocessor.prepare(
+            request,
+            active_requirements,
+            remaining_timeout_seconds=remaining_timeout_seconds,
+        )
+        _check_remaining(remaining_timeout_seconds)
+        return prepared_media
 
 
 def _parameters[Parameter](
@@ -421,6 +467,26 @@ def _parameters[Parameter](
     if not isinstance(parameters, expected_type):
         raise PreprocessingError("invariant", "technical_parameters")
     return parameters
+
+
+def _operation_timeout(
+    remaining_timeout_seconds: Callable[[], float] | None,
+) -> float | None:
+    if remaining_timeout_seconds is None:
+        return None
+    remaining = remaining_timeout_seconds()
+    if (
+        not isinstance(remaining, (int, float))
+        or isinstance(remaining, bool)
+        or not math.isfinite(float(remaining))
+        or remaining <= 0
+    ):
+        raise PreprocessingError("invariant", "execution_budget")
+    return float(remaining)
+
+
+def _check_remaining(remaining_timeout_seconds: Callable[[], float] | None) -> None:
+    _operation_timeout(remaining_timeout_seconds)
 
 
 def _decode_normalized_image(source_ref: PreparedSourceRef) -> Image.Image:

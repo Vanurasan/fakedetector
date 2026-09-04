@@ -17,6 +17,7 @@ from fakedetector.analyzers._models import (
     ApplicabilityResult,
 )
 from fakedetector.domain import AnalyzerResult, AnalyzerStatus, MediaType
+from fakedetector.preprocessing._requirements import PreprocessingRequirements
 
 
 class _FakeAnalyzerSettings(BaseModel):
@@ -127,6 +128,7 @@ class _WorkerAnalyzerDefinition:
     supported_media_types: frozenset[MediaType]
     settings_model: type[BaseModel]
     factory: Callable[[], Analyzer]
+    preprocessing_requirements: PreprocessingRequirements
 
     def registration(self) -> AnalyzerRegistration:
         return AnalyzerRegistration(
@@ -137,12 +139,15 @@ class _WorkerAnalyzerDefinition:
             supported_media_types=self.supported_media_types,
             worker_key=self.worker_key,
             settings_model=self.settings_model,
+            preprocessing_requirements=self.preprocessing_requirements,
         )
 
 
 def _definition(
     worker_key: str,
     analyzer_type: type[_FakeAnalyzerBase],
+    *,
+    preprocessing_requirements: PreprocessingRequirements | None = None,
 ) -> _WorkerAnalyzerDefinition:
     def factory() -> Analyzer:
         return analyzer_type()
@@ -156,6 +161,7 @@ def _definition(
         supported_media_types=analyzer_type.supported_media_types,
         settings_model=_FakeAnalyzerSettings,
         factory=factory,
+        preprocessing_requirements=(preprocessing_requirements or PreprocessingRequirements()),
     )
 
 
@@ -164,8 +170,16 @@ _WORKER_DEFINITIONS = {
     for definition in (
         _definition("framework_test.image", _FakeImageAnalyzer),
         _definition("framework_test.image_second", _FakeImageSecondAnalyzer),
-        _definition("framework_test.audio", _FakeAudioAnalyzer),
-        _definition("framework_test.video", _FakeVideoAnalyzer),
+        _definition(
+            "framework_test.audio",
+            _FakeAudioAnalyzer,
+            preprocessing_requirements=PreprocessingRequirements(audio_spectrogram=True),
+        ),
+        _definition(
+            "framework_test.video",
+            _FakeVideoAnalyzer,
+            preprocessing_requirements=PreprocessingRequirements(video_audio_track=True),
+        ),
         _definition("framework_test.error", _FakeErrorAnalyzer),
         _definition("framework_test.hang", _FakeHangAnalyzer),
         _definition("framework_test.crash", _FakeCrashAnalyzer),
