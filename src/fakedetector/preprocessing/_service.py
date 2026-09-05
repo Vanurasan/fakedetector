@@ -115,59 +115,54 @@ class ImagePreprocessor:
         del requirements
         parameters = _parameters(request, ImageTechnicalParameters, self.media_type)
         normalized: Image.Image | None = None
-        normalized_facts: dict[str, object] | None = None
         artifacts: list[PreparedArtifact] = []
         try:
-            if self._config.normalize_for_analysis:
-                _ensure_artifact_count(1)
-                _check_remaining(remaining_timeout_seconds)
-                normalized = _decode_normalized_image(request.source_file_ref)
-                _check_remaining(remaining_timeout_seconds)
-                normalized_facts = {
-                    "format": "png",
-                    "mode": normalized.mode,
-                    "width": normalized.width,
-                    "height": normalized.height,
-                    "scope": "first_frame",
-                }
-                artifact_ref = _register(
-                    request.artifact_registry,
-                    "image_normalized",
-                    "preprocessing/image/normalized.png",
+            _ensure_artifact_count(1)
+            _check_remaining(remaining_timeout_seconds)
+            normalized = _decode_normalized_image(request.source_file_ref)
+            _check_remaining(remaining_timeout_seconds)
+            normalized_facts = {
+                "format": "png",
+                "mode": normalized.mode,
+                "width": normalized.width,
+                "height": normalized.height,
+                "scope": "first_frame",
+            }
+            artifact_ref = _register(
+                request.artifact_registry,
+                "image_normalized",
+                "preprocessing/image/normalized.png",
+            )
+            _with_artifact_path(
+                request.artifact_registry,
+                artifact_ref,
+                lambda target: _save_png(
+                    normalized,
+                    target,
+                    request.artifact_budget,
+                    "image_normalize",
+                ),
+            )
+            _check_remaining(remaining_timeout_seconds)
+            artifacts.append(
+                PreparedArtifact(
+                    artifact_id="image_normalized",
+                    artifact_type="normalized_image",
+                    artifact_ref=artifact_ref,
+                    format="png",
                 )
-                _with_artifact_path(
-                    request.artifact_registry,
-                    artifact_ref,
-                    lambda target: _save_png(
-                        normalized,
-                        target,
-                        request.artifact_budget,
-                        "image_normalize",
-                    ),
-                )
-                _check_remaining(remaining_timeout_seconds)
-                artifacts.append(
-                    PreparedArtifact(
-                        artifact_id="image_normalized",
-                        artifact_type="normalized_image",
-                        artifact_ref=artifact_ref,
-                        format="png",
-                    )
-                )
+            )
         finally:
             if normalized is not None:
                 normalized.close()
 
         metadata: dict[str, object] = {
             "source": _image_source_metadata(parameters, self._config.extract_metadata),
+            "normalized": normalized_facts,
+            "frame_scope": "first_frame",
         }
-        if normalized_facts is not None:
-            metadata["normalized"] = normalized_facts
-            metadata["frame_scope"] = "first_frame"
         frame_count = parameters.frame_count or 1
-        image_warnings = (
-            (_MULTI_FRAME_WARNING,) if normalized_facts is not None and frame_count > 1 else ()
-        )
+        image_warnings = (_MULTI_FRAME_WARNING,) if frame_count > 1 else ()
         return _prepared_media(request, self.media_type, artifacts, metadata, image_warnings)
 
 
@@ -555,9 +550,9 @@ def _decode_normalized_image(source_ref: PreparedSourceRef) -> Image.Image:
                 image.load()
                 oriented = ImageOps.exif_transpose(image)
                 try:
-                    if _requires_alpha(oriented):
-                        return oriented.convert("RGBA")
-                    return oriented.convert("RGB")
+                    normalized = oriented.convert("RGBA" if _requires_alpha(oriented) else "RGB")
+                    normalized.info.clear()
+                    return normalized
                 finally:
                     if oriented is not image:
                         oriented.close()

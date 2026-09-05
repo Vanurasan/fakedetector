@@ -12,7 +12,7 @@ from typing import BinaryIO, TypeVar, cast
 
 import pytest
 import yaml
-from PIL import Image
+from PIL import Image, PngImagePlugin
 
 import fakedetector.preprocessing as preprocessing
 from fakedetector._stage5_resources import _GeneratedArtifactBudget
@@ -141,6 +141,7 @@ def _image_descriptor(
     image_format: str,
     color_mode: str,
     frame_count: int = 1,
+    has_metadata: bool = False,
     original_name: str = "image.png",
 ) -> ValidatedFileDescriptor:
     return ValidatedFileDescriptor(
@@ -159,7 +160,7 @@ def _image_descriptor(
             format=image_format,
             color_mode=color_mode,
             frame_count=frame_count,
-            has_metadata=False,
+            has_metadata=has_metadata,
         ),
     )
 
@@ -293,6 +294,8 @@ def test_image_normalizes_png_without_resize_and_keeps_only_required_alpha(
         assert normalized.format == "PNG"
         assert normalized.size == (7, 5)
         assert normalized.mode == expected_mode
+        assert normalized.getpixel((0, 0)) == pixel[: len(expected_mode)]
+    assert case.request.artifact_budget.used_bytes == normalized_path.stat().st_size
     assert prepared.metadata["normalized"] == {
         "format": "png",
         "mode": expected_mode,
@@ -330,6 +333,87 @@ def test_image_applies_exif_orientation(tmp_path: Path) -> None:
     with Image.open(_artifact_path(case.registry, prepared.artifacts[0])) as normalized:
         assert normalized.size == (4, 6)
     assert cast(dict[str, object], prepared.metadata["normalized"])["width"] == 4
+    case.cleanup()
+
+
+@pytest.mark.parametrize("mode", ["RGB", "RGBA"])
+def test_normalized_png_strips_raw_metadata_and_preserves_oriented_pixels_and_facts(
+    tmp_path: Path, mode: str
+) -> None:
+    source_path = tmp_path / "metadata.png"
+    icc = b"source-raw-icc-profile"
+    xmp = "<x:xmpmeta>source-raw-xmp</x:xmpmeta>"
+    exif = Image.Exif()
+    exif[274] = 6
+    exif[270] = "source-raw-exif-description"
+    pnginfo = PngImagePlugin.PngInfo()
+    pnginfo.add_itxt("XML:com.adobe.xmp", xmp)
+    pixels = [(value, value + 1, value + 2) for value in range(10, 70, 10)]
+    if mode == "RGBA":
+        pixels = [(*pixel, 100) for pixel in pixels]
+    with Image.new(mode, (3, 2)) as image:
+        image.putdata(pixels)
+        image.save(source_path, format="PNG", exif=exif, icc_profile=icc, pnginfo=pnginfo)
+
+    with Image.open(source_path) as source:
+        source.load()
+        assert source.info["icc_profile"] == icc
+        assert source.info["XML:com.adobe.xmp"] == xmp
+        assert source.getexif()[270] == "source-raw-exif-description"
+        assert source.getexif()[274] == 6
+        descriptor = _image_descriptor(
+            width=source.width,
+            height=source.height,
+            image_format=source.format,
+            color_mode=source.mode,
+            frame_count=source.n_frames,
+            has_metadata=bool(source.info),
+        )
+    case = _case(tmp_path, source_path, descriptor)
+
+    prepared = ImagePreprocessor(ImagePreprocessingConfig()).prepare(
+        case.request, PreprocessingRequirements()
+    )
+
+    normalized_path = _artifact_path(case.registry, prepared.artifacts[0])
+    with Image.open(normalized_path) as normalized:
+        normalized.load()
+        assert normalized.format == "PNG"
+        assert normalized.mode == mode
+        assert normalized.size == (2, 3)
+        assert list(normalized.get_flattened_data()) == [pixels[i] for i in (3, 0, 4, 1, 5, 2)]
+        assert normalized.info == {}
+        assert not normalized.getexif()
+        assert normalized.n_frames == 1
+    data = normalized_path.read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    offset = 8
+    chunks = []
+    while offset < len(data):
+        length = int.from_bytes(data[offset : offset + 4], "big")
+        chunks.append(data[offset + 4 : offset + 8])
+        offset += length + 12
+    assert offset == len(data)
+    assert chunks[0] == b"IHDR"
+    assert chunks[-1] == b"IEND"
+    assert set(chunks) == {b"IHDR", b"IDAT", b"IEND"}
+    assert prepared.metadata["source"] == {
+        "width": 3,
+        "height": 2,
+        "frame_count": 1,
+        "format": "PNG",
+        "color_mode": mode,
+        "has_metadata": True,
+    }
+    assert prepared.metadata["normalized"] == {
+        "format": "png",
+        "mode": mode,
+        "width": 2,
+        "height": 3,
+        "scope": "first_frame",
+    }
+    assert prepared.warnings == ()
+    _assert_registered_before_first_access(prepared, case.registry)
     case.cleanup()
 
 
@@ -395,7 +479,10 @@ def test_corrupt_image_is_a_safe_controlled_failure(tmp_path: Path) -> None:
     case.cleanup()
 
 
-def test_image_normalization_can_be_disabled_by_existing_config(tmp_path: Path) -> None:
+@pytest.mark.parametrize("extract_metadata", [True, False])
+def test_image_normalization_is_created_with_optional_metadata_enabled_or_disabled(
+    tmp_path: Path, extract_metadata: bool
+) -> None:
     source_path = tmp_path / "source.png"
     with Image.new("RGB", (2, 2)) as image:
         image.save(source_path)
@@ -405,13 +492,17 @@ def test_image_normalization_can_be_disabled_by_existing_config(tmp_path: Path) 
         _image_descriptor(width=2, height=2, image_format="PNG", color_mode="RGB"),
     )
 
-    prepared = ImagePreprocessor(ImagePreprocessingConfig(normalize_for_analysis=False)).prepare(
-        case.request, PreprocessingRequirements()
-    )
+    prepared = ImagePreprocessor(
+        ImagePreprocessingConfig(normalize_for_analysis=True, extract_metadata=extract_metadata)
+    ).prepare(case.request, PreprocessingRequirements())
 
-    assert prepared.artifacts == ()
-    assert "normalized" not in prepared.metadata
-    assert "frame_scope" not in prepared.metadata
+    assert len(prepared.artifacts) == 1
+    assert prepared.artifacts[0].artifact_type == "normalized_image"
+    assert _artifact_path(case.registry, prepared.artifacts[0]).is_file()
+    assert "normalized" in prepared.metadata
+    assert prepared.metadata["frame_scope"] == "first_frame"
+    assert ("has_metadata" in prepared.metadata["source"]) is extract_metadata
+    _assert_registered_before_first_access(prepared, case.registry)
     case.cleanup()
 
 
@@ -437,6 +528,50 @@ def test_artifact_write_failure_keeps_registered_cleanup_obligation(tmp_path: Pa
     assert caught.value.kind == "artifact_write"
     assert len(case.registry.cleanup_obligations()) == 1
     case.cleanup()
+
+
+def test_mandatory_normalized_image_respects_remaining_byte_budget(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.png"
+    with Image.new("RGB", (2, 2)) as image:
+        image.save(source_path)
+    case = _case(
+        tmp_path,
+        source_path,
+        _image_descriptor(width=2, height=2, image_format="PNG", color_mode="RGB"),
+    )
+    budget = _artifact_budget(MediaType.IMAGE, max_size_mb=1)
+    prior_ref = case.registry.register("prior_output", "preprocessing/prior.bin")
+
+    def consume_budget(path: Path) -> None:
+        with budget.open_output(path) as output:
+            output.write(b"x" * (budget.max_bytes - 32))
+
+    case.registry.with_local_artifact_path(prior_ref, consume_budget)
+    request = PreprocessingRequest(
+        analysis_id=case.request.analysis_id,
+        validated_file=case.request.validated_file,
+        source_file_ref=case.request.source_file_ref,
+        artifact_registry=case.registry,
+        artifact_budget=budget,
+    )
+
+    with pytest.raises(PreprocessingError) as caught:
+        ImagePreprocessor(ImagePreprocessingConfig()).prepare(request, PreprocessingRequirements())
+
+    assert caught.value.kind == "resource_limit"
+    assert caught.value.phase == "image_normalize"
+    assert len(case.registry.cleanup_obligations()) == 2
+    partial, prior = case.registry.cleanup_obligations()
+    assert partial.name == "normalized.png"
+    assert 0 < partial.stat().st_size <= 32
+    assert budget.used_bytes == partial.stat().st_size + prior.stat().st_size <= budget.max_bytes
+    assert case.registry.events[-2:] == [
+        ("register", "image_normalized", None),
+        ("access", "image_normalized", False),
+    ]
+    case.cleanup()
+    assert not partial.exists()
+    assert not prior.exists()
 
 
 def test_audio_wav_normalization_fragments_and_final_partial_are_factual(

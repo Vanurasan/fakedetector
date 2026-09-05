@@ -630,8 +630,9 @@ cleanup`; отдельная Stage 5 cleanup subsystem не вводится.
 
 Для изображений:
 
-- lossless PNG working representation без resize, с применённой EXIF orientation
-  и RGB/RGBA normalization;
+- обязательное нормализованное представление в PNG со сжатием без потерь и без изменения размеров,
+  с применённой ориентацией EXIF и преобразованием в RGB/RGBA; PNG содержит
+  только пиксели и необходимые структурные данные, без исходных EXIF/XMP/ICC;
 - bounded safe metadata без raw EXIF/XMP/ICC blobs;
 - first-frame normalized representation для multi-frame image с сохранением
   factual frame count и явным предупреждением об отсутствии полного temporal

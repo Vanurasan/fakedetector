@@ -903,6 +903,17 @@ def test_router_has_all_canonical_bindings_and_uses_only_validated_media_type(
         ("frame", "C:\\outside.bin"),
         ("user/name", "frames/001.png"),
         ("frame", "CON"),
+        ("frame", "con.png"),
+        ("frame", "nested/AUX.txt"),
+        ("frame", "COM1.bin"),
+        ("frame", "lpt9.log"),
+        ("frame", "output./child.png"),
+        ("frame", "output /child.png"),
+        ("frame", "nested/output."),
+        ("frame", "nested/output "),
+        ("frame", "output:stream"),
+        ("frame", "nested/../outside.bin"),
+        ("frame", "output\u00e9.png"),
     ],
 )
 def test_artifact_registry_rejects_user_controlled_paths(
@@ -913,6 +924,68 @@ def test_artifact_registry_rejects_user_controlled_paths(
     registry = WorkspaceArtifactRegistry(tmp_path / "workspace")
     with pytest.raises(ArtifactRegistrationError):
         registry.register(artifact_id, relative_path)
+    assert registry.cleanup_obligations() == ()
+    assert not (tmp_path / "workspace").exists()
+
+
+@pytest.mark.parametrize(
+    ("original", "alias"),
+    [
+        ("output", "output."),
+        ("output", "output "),
+        ("output", "OUTPUT"),
+        ("Frames/Output.png", "frames/output.PNG"),
+        ("Frames/Output.png", "FRAMES/Output.png"),
+    ],
+)
+def test_artifact_registry_rejects_windows_alias_before_write(
+    tmp_path: Path, original: str, alias: str
+) -> None:
+    workspace = tmp_path / "workspace"
+    registry = WorkspaceArtifactRegistry(workspace)
+    original_ref = registry.register("original", original)
+
+    with pytest.raises(ArtifactRegistrationError):
+        alias_ref = registry.register("alias", alias)
+        registry.with_local_artifact_path(alias_ref, lambda path: path.write_bytes(b"alias"))
+
+    assert registry.cleanup_obligations() == (workspace / original,)
+    assert not workspace.exists()
+    assert (
+        registry.with_local_artifact_path(original_ref, lambda path: path) == workspace / original
+    )
+    # A rejected target must not consume the ID or create a cleanup obligation.
+    registry.register("alias", "distinct.png")
+    assert registry.cleanup_once().completed
+
+
+def test_artifact_registry_allows_distinct_siblings_and_nested_paths(tmp_path: Path) -> None:
+    registry = WorkspaceArtifactRegistry(tmp_path)
+    relative_paths = (
+        "output",
+        "output.png",
+        "outputs/one.png",
+        "outputs/two.png",
+        "outputs/deep/x.png",
+    )
+    refs = [
+        registry.register(f"artifact_{index}", path) for index, path in enumerate(relative_paths)
+    ]
+    assert registry.cleanup_obligations() == tuple(tmp_path / path for path in relative_paths)
+    assert list(tmp_path.iterdir()) == []
+
+    def write(path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(path.name.encode("ascii"))
+
+    for ref in refs:
+        registry.with_local_artifact_path(ref, write)
+    for ref, relative_path in zip(refs, relative_paths, strict=True):
+        assert registry.with_local_artifact_path(ref, lambda path: path.read_bytes()) == Path(
+            relative_path
+        ).name.encode("ascii")
+    assert registry.cleanup_once().completed
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_artifact_registry_tracks_and_cleans_application_obligations(tmp_path: Path) -> None:

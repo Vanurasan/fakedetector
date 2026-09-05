@@ -45,6 +45,7 @@ class WorkspaceArtifactRegistry:
         self._workspace_path = workspace_path
         self._registry_token = object()
         self._obligations: dict[str, Path] = {}
+        self._windows_targets: set[tuple[str, ...]] = set()
         self._completed: set[str] = set()
         self._pending_directories: set[Path] = set()
 
@@ -62,6 +63,7 @@ class WorkspaceArtifactRegistry:
             or bool(windows_path.drive)
             or any(
                 component in {".", ".."}
+                or component != component.rstrip(" .")
                 or _SAFE_COMPONENT.fullmatch(component) is None
                 or PureWindowsPath(component).is_reserved()
                 for component in components
@@ -70,13 +72,15 @@ class WorkspaceArtifactRegistry:
         if invalid:
             raise ArtifactRegistrationError()
         candidate = self._workspace_path.joinpath(*components)
+        windows_target = tuple(component.lower() for component in components)
         if (
             candidate == self._workspace_path
             or self._workspace_path not in candidate.parents
-            or candidate in self._obligations.values()
+            or windows_target in self._windows_targets
         ):
             raise ArtifactRegistrationError()
         self._obligations[artifact_id] = candidate
+        self._windows_targets.add(windows_target)
         return WorkspaceArtifactRef(self._registry_token, artifact_id)
 
     def with_local_artifact_path(
