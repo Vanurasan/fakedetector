@@ -30,14 +30,17 @@ from fakedetector.analyzers._models import (
     AnalyzerArtifactInput,
     AnalyzerRequest,
     ApplicabilityResult,
+    _AnalyzerFileFacts,
     _ReadOnlyAnalyzerInput,
 )
 from fakedetector.analyzers._transport import (
     _MAX_RESPONSE_BYTES,
+    _encode_stage5_result_response,
+    _Stage5AnalyzerResultSizeError,
     _WorkerRequest,
     _WorkerResponseKind,
 )
-from fakedetector.domain import AnalyzerResult, AnalyzerStatus, MediaType, ValidatedFileDescriptor
+from fakedetector.domain import AnalyzerResult, AnalyzerStatus, MediaType
 
 _TERMINATE_JOIN_SECONDS = 0.2
 _KILL_JOIN_SECONDS = 0.2
@@ -333,14 +336,14 @@ def _execute_worker(request: _WorkerRequest) -> bytes:
         return _encode_response(_WorkerResponseKind.WORKER_ERROR)
     try:
         settings = definition.settings_model.model_validate_json(request.settings_json)
-        validated_file = ValidatedFileDescriptor.model_validate_json(request.validated_file_json)
+        file_facts = _AnalyzerFileFacts.model_validate_json(request.file_facts_json)
         metadata = json.loads(request.metadata_json)
         if not isinstance(metadata, dict):
             return _encode_response(_WorkerResponseKind.WORKER_ERROR)
         analyzer_request = AnalyzerRequest(
             analysis_id=request.analysis_id,
             media_type=MediaType(request.media_type),
-            validated_file=validated_file,
+            file_facts=file_facts,
             source=_ReadOnlyAnalyzerInput(Path(request.source_path)),
             settings=settings,
             timeout_seconds=request.timeout_seconds,
@@ -384,10 +387,9 @@ def _execute_worker(request: _WorkerRequest) -> bytes:
         return _encode_response(_WorkerResponseKind.ANALYZER_ERROR)
 
     try:
-        return _encode_response(
-            _WorkerResponseKind.RESULT,
-            result=json.loads(result.model_dump_json()),
-        )
+        return _encode_response(_WorkerResponseKind.RESULT, result=result)
+    except _Stage5AnalyzerResultSizeError:
+        return _encode_response(_WorkerResponseKind.ANALYZER_ERROR)
     except (PydanticSerializationError, TypeError, ValueError):
         return _encode_response(_WorkerResponseKind.SERIALIZATION_ERROR)
 
@@ -454,22 +456,22 @@ def _not_applicable_result(
 def _encode_response(
     kind: _WorkerResponseKind,
     *,
-    result: object | None = None,
+    result: AnalyzerResult | None = None,
 ) -> bytes:
-    envelope: dict[str, object] = {"kind": kind.value}
+    if kind is _WorkerResponseKind.RESULT:
+        if result is None:
+            raise ValueError("result response requires an AnalyzerResult")
+        return _encode_stage5_result_response(result)
     if result is not None:
-        envelope["result"] = result
-    payload = json.dumps(
+        raise ValueError("non-result response cannot contain a result")
+    envelope: dict[str, object] = {"kind": kind.value}
+    return json.dumps(
         envelope,
         ensure_ascii=False,
         allow_nan=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    if len(payload) <= _MAX_RESPONSE_BYTES:
-        return payload
-    fallback = b'{"kind":"serialization_error"}'
-    return fallback
 
 
 def _duration_ms(started_at: float, finished_at: float) -> int:

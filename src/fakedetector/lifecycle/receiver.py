@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path, PureWindowsPath
 
+from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
 from fakedetector.core import AuthoritativeLifecycleClock
 from fakedetector.domain import AnalysisStatus, ErrorDetail, ProcessingStage
@@ -24,7 +25,6 @@ from fakedetector.lifecycle.models import (
     TaskExecutionOutcome,
     TaskSnapshot,
     TerminalSettlementPhase,
-    config_snapshot_fingerprint,
 )
 
 
@@ -47,12 +47,14 @@ class Stage4TaskReceiver:
         router: MediaRouter,
         queue: TaskQueue,
     ) -> None:
-        self._config = config
+        config_snapshot = _ConfigSnapshot.capture(config)
+        captured_config = config_snapshot.materialize()
         self._clock = clock
         self._registry = registry
         self._router = router
         self._queue = queue
-        self._config_snapshot_id = config_snapshot_fingerprint(config)
+        self._temporary_root_path = captured_config.temporary_storage.root_path
+        self._config_snapshot_id = config_snapshot.snapshot_id
 
     def accept(self, accepted: Stage3Accepted) -> None:
         """Perform the provisional receiver phase and return only after commit."""
@@ -61,7 +63,7 @@ class Stage4TaskReceiver:
         try:
             self._validate_accepted(accepted)
             workspace_path = _workspace_path(
-                self._config.temporary_storage.root_path,
+                self._temporary_root_path,
                 accepted.analysis_id,
             )
             context = AnalysisContext(
@@ -152,9 +154,13 @@ class Stage4TaskProcessor:
         clock: AuthoritativeLifecycleClock,
         registry: TaskRegistry,
     ) -> None:
+        captured_config = _ConfigSnapshot.capture(config).materialize()
         self._clock = clock
         self._registry = registry
-        self._cleanup = WorkspaceCleanup(config=config.temporary_storage, clock=clock)
+        self._cleanup = WorkspaceCleanup(
+            config=captured_config.temporary_storage,
+            clock=clock,
+        )
 
     def execute(self, analysis_id: str, executor: TaskExecutor) -> TaskSnapshot:
         """Claim and finish one confirmed task, propagating only ``BaseException``."""

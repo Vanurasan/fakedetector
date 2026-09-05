@@ -8,16 +8,19 @@ import wave
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePath
-from typing import TypeVar, cast
+from typing import BinaryIO, TypeVar, cast
 
 import pytest
+import yaml
 from PIL import Image
 
 import fakedetector.preprocessing as preprocessing
+from fakedetector._stage5_resources import _GeneratedArtifactBudget
+from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import (
+    AppConfig,
     AudioPreprocessingConfig,
     ImagePreprocessingConfig,
-    PreprocessingConfig,
     VideoPreprocessingConfig,
 )
 from fakedetector.core._bounded_process import ProcessResult, ProcessTimeoutError
@@ -79,6 +82,20 @@ class RecordingArtifactRegistry(WorkspaceArtifactRegistry):
         return super().with_local_artifact_path(artifact_ref, recorded)
 
 
+class _NoWriteMediaTool:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def normalized_audio(self, *_args: object, **_kwargs: object) -> None:
+        self.calls += 1
+
+    def audio_fragment(self, *_args: object, **_kwargs: object) -> None:
+        self.calls += 1
+
+    def spectrogram(self, *_args: object, **_kwargs: object) -> None:
+        self.calls += 1
+
+
 @dataclass(slots=True)
 class PreparedCase:
     request: PreprocessingRequest
@@ -110,6 +127,7 @@ def _case(
             validated_file=descriptor,
             source_file_ref=PreparedSourceRef(accepted_source),
             artifact_registry=registry,
+            artifact_budget=_artifact_budget(descriptor.media_type),
         ),
         accepted_source=accepted_source,
         registry=registry,
@@ -208,6 +226,18 @@ def _artifact_path(
     artifact: PreparedArtifact,
 ) -> Path:
     return registry.with_local_artifact_path(artifact.artifact_ref, lambda path: path)
+
+
+def _artifact_budget(
+    media_type: MediaType,
+    *,
+    max_size_mb: int | None = None,
+) -> _GeneratedArtifactBudget:
+    raw = yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+    if max_size_mb is not None:
+        raw["limits"]["max_file_size_mb"][media_type.value] = max_size_mb
+    config = AppConfig.model_validate(raw)
+    return _GeneratedArtifactBudget(_ConfigSnapshot.capture(config), media_type)
 
 
 def _assert_registered_before_first_access(
@@ -565,6 +595,160 @@ def test_audio_spectrogram_requires_both_config_and_explicit_requirement(
     case.cleanup()
 
 
+@pytest.mark.parametrize(
+    ("fragment_count", "spectrogram"),
+    [(255, False), (254, True)],
+    ids=["without-spectrogram", "with-spectrogram"],
+)
+def test_audio_artifact_count_exact_256_is_accepted_preflight(
+    tmp_path: Path,
+    fragment_count: int,
+    spectrogram: bool,
+) -> None:
+    source_path = tmp_path / "source.wav"
+    source_path.write_bytes(b"source")
+    case = _case(
+        tmp_path,
+        source_path,
+        _audio_descriptor(
+            duration_seconds=float(fragment_count * 10),
+            sample_rate_hz=8_000,
+            channels=1,
+        ),
+    )
+    case.request = PreprocessingRequest(
+        analysis_id=case.request.analysis_id,
+        validated_file=case.request.validated_file,
+        source_file_ref=case.request.source_file_ref,
+        artifact_registry=case.request.artifact_registry,
+        artifact_budget=_artifact_budget(MediaType.AUDIO, max_size_mb=100),
+    )
+    media_tool = _NoWriteMediaTool()
+
+    prepared = AudioPreprocessor(
+        AudioPreprocessingConfig(
+            fragment_duration_seconds=10,
+            build_spectrogram=spectrogram,
+        ),
+        media_tool=cast(_FFmpegPreprocessingTool, media_tool),
+    ).prepare(
+        case.request,
+        PreprocessingRequirements(audio_spectrogram=spectrogram),
+    )
+
+    assert len(prepared.artifacts) == 256
+    assert media_tool.calls == 256
+    case.cleanup()
+
+
+@pytest.mark.parametrize(
+    ("fragment_count", "spectrogram"),
+    [(256, False), (255, True)],
+    ids=["without-spectrogram", "with-spectrogram"],
+)
+def test_audio_artifact_count_257_is_rejected_before_registration_or_write(
+    tmp_path: Path,
+    fragment_count: int,
+    spectrogram: bool,
+) -> None:
+    source_path = tmp_path / "source.wav"
+    source_path.write_bytes(b"source")
+    case = _case(
+        tmp_path,
+        source_path,
+        _audio_descriptor(
+            duration_seconds=float(fragment_count * 10),
+            sample_rate_hz=8_000,
+            channels=1,
+        ),
+    )
+    media_tool = _NoWriteMediaTool()
+
+    with pytest.raises(PreprocessingError) as caught:
+        AudioPreprocessor(
+            AudioPreprocessingConfig(
+                fragment_duration_seconds=10,
+                build_spectrogram=spectrogram,
+            ),
+            media_tool=cast(_FFmpegPreprocessingTool, media_tool),
+        ).prepare(
+            case.request,
+            PreprocessingRequirements(audio_spectrogram=spectrogram),
+        )
+
+    assert caught.value.kind == "resource_limit"
+    assert caught.value.phase == "artifact_count"
+    assert media_tool.calls == 0
+    assert case.registry.cleanup_obligations() == ()
+    case.cleanup()
+
+
+def test_one_hour_audio_with_ten_second_fragments_is_rejected_prewrite(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "source.wav"
+    source_path.write_bytes(b"source")
+    case = _case(
+        tmp_path,
+        source_path,
+        _audio_descriptor(
+            duration_seconds=3_600.0,
+            sample_rate_hz=8_000,
+            channels=1,
+        ),
+    )
+    media_tool = _NoWriteMediaTool()
+
+    with pytest.raises(PreprocessingError, match="Media preprocessing failed") as caught:
+        AudioPreprocessor(
+            AudioPreprocessingConfig(fragment_duration_seconds=10),
+            media_tool=cast(_FFmpegPreprocessingTool, media_tool),
+        ).prepare(case.request, PreprocessingRequirements())
+
+    assert caught.value.kind == "resource_limit"
+    assert caught.value.phase == "artifact_count"
+    assert media_tool.calls == 0
+    assert case.registry.cleanup_obligations() == ()
+    case.cleanup()
+
+
+def test_audio_decoded_pcm_amplification_is_rejected_by_byte_preflight(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "compressed-input.m4a"
+    source_path.write_bytes(b"small-compressed-source")
+    case = _case(
+        tmp_path,
+        source_path,
+        _audio_descriptor(
+            duration_seconds=60.0,
+            sample_rate_hz=48_000,
+            channels=2,
+            codec="aac",
+        ),
+    )
+    case.request = PreprocessingRequest(
+        analysis_id=case.request.analysis_id,
+        validated_file=case.request.validated_file,
+        source_file_ref=case.request.source_file_ref,
+        artifact_registry=case.request.artifact_registry,
+        artifact_budget=_artifact_budget(MediaType.AUDIO, max_size_mb=1),
+    )
+    media_tool = _NoWriteMediaTool()
+
+    with pytest.raises(PreprocessingError) as caught:
+        AudioPreprocessor(
+            AudioPreprocessingConfig(fragment_duration_seconds=10),
+            media_tool=cast(_FFmpegPreprocessingTool, media_tool),
+        ).prepare(case.request, PreprocessingRequirements())
+
+    assert caught.value.kind == "resource_limit"
+    assert caught.value.phase == "audio_preflight"
+    assert media_tool.calls == 0
+    assert case.registry.cleanup_obligations() == ()
+    case.cleanup()
+
+
 def test_video_periodic_sampling_is_deterministic_bounded_png_without_resize(
     tmp_path: Path,
 ) -> None:
@@ -774,9 +958,21 @@ def test_dispatcher_uses_validated_media_type_and_keeps_package_internal(tmp_pat
         original_name="renamed.mp4",
     )
     case = _case(tmp_path, source_path, descriptor)
-    dispatcher = PreprocessingDispatcher(
-        PreprocessingConfig(),
-        process_timeout_seconds=10,
+    raw_config = yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+    config = AppConfig.model_validate(raw_config)
+    dispatcher = PreprocessingDispatcher(config)
+    captured_snapshot = dispatcher._config_snapshot
+    config.preprocessing.image.normalize_for_analysis = False
+    config.limits.max_file_size_mb.image = 1
+    case.request = PreprocessingRequest(
+        analysis_id=case.request.analysis_id,
+        validated_file=case.request.validated_file,
+        source_file_ref=case.request.source_file_ref,
+        artifact_registry=case.request.artifact_registry,
+        artifact_budget=_GeneratedArtifactBudget(
+            captured_snapshot,
+            MediaType.IMAGE,
+        ),
     )
 
     prepared = dispatcher.prepare(case.request)
@@ -791,6 +987,42 @@ def test_dispatcher_uses_validated_media_type_and_keeps_package_internal(tmp_pat
         "PreprocessingDispatcher",
     ):
         assert not hasattr(preprocessing, public_name)
+    case.cleanup()
+
+
+def test_dispatcher_rejects_budget_from_a_different_snapshot_before_io(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "source.png"
+    with Image.new("RGB", (3, 2), (1, 2, 3)) as image:
+        image.save(source_path, format="PNG")
+    case = _case(
+        tmp_path,
+        source_path,
+        _image_descriptor(width=3, height=2, image_format="PNG", color_mode="RGB"),
+    )
+    raw = yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+    config = AppConfig.model_validate(raw)
+    different = config.model_copy(deep=True)
+    different.server.port += 1
+    dispatcher = PreprocessingDispatcher(config)
+    case.request = PreprocessingRequest(
+        analysis_id=case.request.analysis_id,
+        validated_file=case.request.validated_file,
+        source_file_ref=case.request.source_file_ref,
+        artifact_registry=case.request.artifact_registry,
+        artifact_budget=_GeneratedArtifactBudget(
+            _ConfigSnapshot.capture(different),
+            MediaType.IMAGE,
+        ),
+    )
+
+    with pytest.raises(PreprocessingError) as caught:
+        dispatcher.prepare(case.request)
+
+    assert caught.value.kind == "invariant"
+    assert caught.value.phase == "artifact_budget_snapshot"
+    assert case.registry.cleanup_obligations() == ()
     case.cleanup()
 
 
@@ -846,6 +1078,13 @@ def test_media_process_timeout_is_capped_by_remaining_overall_budget(
 
     def complete_process(*_args: object, **kwargs: object) -> ProcessResult:
         captured_timeouts.append(cast(float, kwargs["timeout_seconds"]))
+        output = cast(BinaryIO, kwargs["stdout_sink"])
+        output.write(
+            b"RIFF\xff\xff\xff\xffWAVE"
+            b"fmt \x10\x00\x00\x00\x01\x00\x01\x00"
+            b"\x40\x1f\x00\x00\x80\x3e\x00\x00\x02\x00\x10\x00"
+            b"data\xff\xff\xff\xff"
+        )
         return ProcessResult(return_code=0, stdout=None)
 
     monkeypatch.setattr(
@@ -861,6 +1100,7 @@ def test_media_process_timeout_is_capped_by_remaining_overall_budget(
         target,
         sample_rate_hz=8_000,
         channels=1,
+        artifact_budget=_artifact_budget(MediaType.AUDIO),
         timeout_seconds=remaining_timeout,
     )
 

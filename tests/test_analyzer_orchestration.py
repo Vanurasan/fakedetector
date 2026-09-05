@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import pickle
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -17,6 +16,7 @@ import fakedetector
 import fakedetector.analyzers as analyzers_package
 import fakedetector.analyzers._worker as analyzer_worker_module
 import fakedetector.domain as domain
+from fakedetector._stage5_resources import _MAX_STAGE5_ARTIFACTS
 from fakedetector.analyzers._catalog import (
     _framework_test_registrations,
     _resolve_worker_definition,
@@ -27,12 +27,15 @@ from fakedetector.analyzers._models import (
     AnalyzerArtifactInput,
     AnalyzerRequest,
     ApplicabilityResult,
+    _AnalyzerFileFacts,
     _ReadOnlyAnalyzerInput,
 )
 from fakedetector.analyzers._orchestrator import AnalyzerOrchestrator, _WorkerRunner
 from fakedetector.analyzers._registry import AnalyzerRegistry
 from fakedetector.analyzers._transport import (
-    _MAX_ARTIFACTS,
+    _MAX_FILE_FACTS_BYTES,
+    _MAX_STAGE5_ANALYZER_RESULT_BYTES,
+    _serialize_stage5_analyzer_result,
     _WorkerRequest,
     _WorkerResponseKind,
 )
@@ -294,8 +297,41 @@ class _ContractResultRunner:
             duration_ms=3,
             response=_encode_response(
                 _WorkerResponseKind.RESULT,
-                result=json.loads(result.model_dump_json()),
+                result=result,
             ),
+        )
+
+
+class _PostNormalizationOversizeRunner:
+    def run(self, request: _WorkerRequest, timeout_seconds: float) -> _WorkerRun:
+        assert timeout_seconds == request.timeout_seconds
+        definition = _resolve_worker_definition(request.worker_key)
+        assert definition is not None
+        base = AnalyzerResult(
+            analyzer_id=definition.analyzer_id,
+            analyzer_version=definition.analyzer_version,
+            media_type=MediaType(request.media_type),
+            group=definition.group,
+            status=AnalyzerStatus.COMPLETED,
+            applicable=True,
+            started_at=None,
+            finished_at=None,
+            duration_ms=0,
+            score=0.42,
+            score_name="contract_signal",
+            summary="",
+            raw_metrics={},
+            candidate_findings=[],
+            warnings=[],
+            errors=[],
+        )
+        padding = _MAX_STAGE5_ANALYZER_RESULT_BYTES - len(_serialize_stage5_analyzer_result(base))
+        result = base.model_copy(update={"summary": "x" * padding})
+        assert len(_serialize_stage5_analyzer_result(result)) == (_MAX_STAGE5_ANALYZER_RESULT_BYTES)
+        return _WorkerRun(
+            _WorkerRunKind.RESPONSE,
+            duration_ms=123_456,
+            response=_encode_response(_WorkerResponseKind.RESULT, result=result),
         )
 
 
@@ -309,6 +345,37 @@ def test_orchestrator_accepts_contractual_score_and_findings(tmp_path: Path) -> 
     assert results[0].score == 0.42
     assert results[0].score_name == "contract_signal"
     assert results[0].candidate_findings == [{"type": "contract_probe", "confidence": 0.42}]
+
+
+def test_post_duration_result_overflow_becomes_controlled_analyzer_failure(
+    tmp_path: Path,
+) -> None:
+    with _prepared_case(tmp_path) as case:
+        results = _orchestrator(
+            _config(MediaType.IMAGE, ["fake_image_analyzer"]),
+            runner=_PostNormalizationOversizeRunner(),
+        ).execute(case.prepared, case.descriptor, case.registry)
+
+    assert len(results) == 1
+    assert results[0].status is AnalyzerStatus.ERROR
+    assert results[0].errors[0].code == "analyzer_error"
+    assert results[0].summary == "Analyzer execution failed safely."
+
+
+def test_registry_plan_is_detached_from_later_source_config_mutation() -> None:
+    config = _config(MediaType.IMAGE, ["fake_image_analyzer"])
+    registry = AnalyzerRegistry(config, _framework_test_registrations())
+
+    config.analyzers.image.enabled.clear()
+    config.analyzers.defaults.timeout_seconds = 99
+    config.analyzers.defaults.continue_on_error = False
+    config.error_handling.continue_if_analyzer_fails = False
+
+    assert [
+        active.registration.analyzer_id for active in registry.active_plan(MediaType.IMAGE)
+    ] == ["fake_image_analyzer"]
+    assert registry.timeout_seconds == 1.0
+    assert registry.continue_on_failure is True
 
 
 @pytest.mark.parametrize("continue_on_failure", [True, False])
@@ -639,14 +706,13 @@ def test_controlled_source_read_failure_is_fatal_and_stops_orchestration(
     assert "OSError" not in str(error.value)
 
 
-def test_artifact_transport_limit_precedes_path_callbacks_and_worker_start(
+def test_prepared_media_rejects_artifact_limit_plus_one_before_worker_start(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runner = _ForbiddenRunner()
     with _prepared_case(tmp_path) as case:
         artifacts = list(case.prepared.artifacts)
-        for index in range(_MAX_ARTIFACTS):
+        for index in range(_MAX_STAGE5_ARTIFACTS):
             artifact_id = f"overflow_{index}"
             artifacts.append(
                 PreparedArtifact(
@@ -659,23 +725,9 @@ def test_artifact_transport_limit_precedes_path_callbacks_and_worker_start(
                     format="bin",
                 )
             )
-        oversized = replace(case.prepared, artifacts=tuple(artifacts))
+        with pytest.raises(ValueError, match="too many artifacts"):
+            replace(case.prepared, artifacts=tuple(artifacts))
 
-        def fail_if_called(*_args: object, **_kwargs: object) -> None:
-            raise AssertionError("artifact path callback started before transport bound")
-
-        monkeypatch.setattr(
-            WorkspaceArtifactRegistry,
-            "with_local_artifact_path",
-            fail_if_called,
-        )
-        with pytest.raises(AnalyzerInfrastructureError) as error:
-            _orchestrator(
-                _config(MediaType.IMAGE, ["fake_image_analyzer"]),
-                runner=runner,
-            ).execute(oversized, case.descriptor, case.registry)
-
-    assert error.value.phase == "worker_request"
     assert runner.calls == 0
 
 
@@ -728,6 +780,57 @@ def test_worker_request_is_picklable_capability_free_and_built_inside_callbacks(
     assert results[0].status is AnalyzerStatus.COMPLETED
 
 
+def test_display_only_original_name_is_excluded_from_worker_file_facts(
+    tmp_path: Path,
+) -> None:
+    runner = _CapturingRunner()
+    display_name = "Ж" * 17_500 + ".png"
+    with _prepared_case(tmp_path) as case:
+        case.descriptor = ValidatedFileDescriptor.model_validate(
+            {
+                **case.descriptor.model_dump(mode="python"),
+                "original_name": display_name,
+            }
+        )
+        results = _orchestrator(
+            _config(MediaType.IMAGE, ["fake_image_analyzer"]),
+            runner=runner,
+        ).execute(case.prepared, case.descriptor, case.registry)
+
+    request = runner.requests[0]
+    file_facts = _AnalyzerFileFacts.model_validate_json(request.file_facts_json)
+    assert results[0].status is AnalyzerStatus.COMPLETED
+    assert "original_name" not in request.file_facts_json
+    assert display_name not in request.file_facts_json
+    assert file_facts.extension == "png"
+    assert file_facts.detected_mime_type == "image/png"
+    assert file_facts.size_bytes == 17
+    assert file_facts.sha256 == "0" * 64
+    assert file_facts.signature_match is True
+    assert file_facts.safe_read is True
+    assert isinstance(file_facts.technical_parameters, ImageTechnicalParameters)
+
+
+def test_worker_request_keeps_file_facts_and_artifact_count_defence_in_depth(
+    tmp_path: Path,
+) -> None:
+    runner = _CapturingRunner()
+    with _prepared_case(tmp_path) as case:
+        _orchestrator(
+            _config(MediaType.IMAGE, ["fake_image_analyzer"]),
+            runner=runner,
+        ).execute(case.prepared, case.descriptor, case.registry)
+
+    request = runner.requests[0]
+    with pytest.raises(ValueError, match="JSON is too large"):
+        replace(request, file_facts_json="x" * (_MAX_FILE_FACTS_BYTES + 1))
+    with pytest.raises(ValueError, match="too many artifacts"):
+        replace(
+            request,
+            artifacts=request.artifacts * (_MAX_STAGE5_ARTIFACTS + 1),
+        )
+
+
 def test_one_runner_invocation_is_used_per_executed_analyzer_in_config_order(
     tmp_path: Path,
 ) -> None:
@@ -764,7 +867,7 @@ def test_worker_local_analyzer_request_has_only_read_capabilities(tmp_path: Path
     request = AnalyzerRequest(
         analysis_id="a" * 32,
         media_type=MediaType.IMAGE,
-        validated_file=_descriptor(MediaType.IMAGE),
+        file_facts=_AnalyzerFileFacts.from_validated_file(_descriptor(MediaType.IMAGE)),
         source=source,
         settings=settings,
         timeout_seconds=1.0,

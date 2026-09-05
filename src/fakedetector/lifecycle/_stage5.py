@@ -6,8 +6,10 @@ import math
 import time
 from collections.abc import Callable
 
+from fakedetector._stage5_resources import _GeneratedArtifactBudget
 from fakedetector.analyzers._errors import AnalyzerInfrastructureError
 from fakedetector.analyzers._orchestrator import AnalyzerOrchestrator
+from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
 from fakedetector.domain import AnalyzerResult, ErrorDetail
 from fakedetector.intake.temporary_input import PreparedSourceRef
@@ -15,7 +17,6 @@ from fakedetector.lifecycle.execution import TaskRegistry
 from fakedetector.lifecycle.models import (
     AnalysisTask,
     TaskExecutionOutcome,
-    config_snapshot_fingerprint,
 )
 from fakedetector.preprocessing._errors import PreprocessingError
 from fakedetector.preprocessing._service import (
@@ -43,8 +44,13 @@ class Stage5ExecutionService:
         orchestrator: AnalyzerOrchestrator,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._config_snapshot_id = config_snapshot_fingerprint(config)
-        self._processing_timeout_seconds = float(config.limits.processing_timeout_seconds)
+        self._config_snapshot = _ConfigSnapshot.capture(config)
+        captured_config = self._config_snapshot.materialize()
+        if not preprocessing._uses_config_snapshot(
+            self._config_snapshot
+        ) or not orchestrator._uses_config_snapshot(self._config_snapshot):
+            raise ValueError("Stage 5 components use different config snapshots")
+        self._processing_timeout_seconds = float(captured_config.limits.processing_timeout_seconds)
         self._registry = registry
         self._preprocessing = preprocessing
         self._orchestrator = orchestrator
@@ -57,7 +63,7 @@ class Stage5ExecutionService:
         phase = "preprocessing"
         try:
             self._registry.validate_stage5_execution(task)
-            if task.context.config_snapshot_id != self._config_snapshot_id:
+            if task.context.config_snapshot_id != self._config_snapshot.snapshot_id:
                 return TaskExecutionOutcome.failed(_stage5_failure("configuration_snapshot"))
 
             remaining_timeout_seconds()
@@ -69,6 +75,10 @@ class Stage5ExecutionService:
                 validated_file=task.validated_file.model_copy(deep=True),
                 source_file_ref=PreparedSourceRef(task.accepted_source),
                 artifact_registry=task.artifacts,
+                artifact_budget=_GeneratedArtifactBudget(
+                    self._config_snapshot,
+                    task.validated_file.media_type,
+                ),
             )
             prepared_media = self._preprocessing.prepare(
                 request,
@@ -110,6 +120,8 @@ class Stage5ExecutionService:
                 remaining_timeout_seconds()
             except _Stage5DeadlineExceededError:
                 return TaskExecutionOutcome.failed(_processing_timeout(phase))
+            if error.kind == "resource_limit":
+                return TaskExecutionOutcome.failed(_stage5_resource_limit(error.phase))
             return TaskExecutionOutcome.failed(_stage5_failure("preprocessing"))
         except AnalyzerInfrastructureError as error:
             return TaskExecutionOutcome.failed(
@@ -159,4 +171,14 @@ def _processing_timeout(phase: str) -> ErrorDetail:
         message="Превышено допустимое время обработки файла.",
         retryable=True,
         safe_details={"phase": phase},
+    )
+
+
+def _stage5_resource_limit(limit: str) -> ErrorDetail:
+    return ErrorDetail(
+        code="stage5_resource_limit",
+        category="resource_limit",
+        message="Превышен допустимый предел ресурсов предварительной обработки.",
+        retryable=False,
+        safe_details={"phase": "preprocessing", "limit": limit},
     )

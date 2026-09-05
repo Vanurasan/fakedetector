@@ -24,6 +24,7 @@ _KILL_WAIT_SECONDS = 1.0
 ProcessInfrastructurePhase = Literal[
     "start",
     "stdout_read",
+    "stdout_write",
     "stdout_close",
     "wait",
     "termination",
@@ -116,13 +117,16 @@ def run_bounded_process(
     cwd: Path,
     timeout_seconds: float,
     stdout_limit_bytes: int | None = None,
+    stdout_sink: IO[bytes] | None = None,
 ) -> ProcessResult:
-    """Run trusted argv with discarded output or a hard-bounded stdout capture."""
+    """Run trusted argv with discarded, captured, or streamed bounded stdout."""
     argv = _validated_argv(arguments)
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be greater than zero")
     if stdout_limit_bytes is not None and stdout_limit_bytes < 0:
         raise ValueError("stdout_limit_bytes must not be negative")
+    if stdout_sink is not None and stdout_limit_bytes is None:
+        raise ValueError("stdout sink requires an explicit byte limit")
 
     process = _start_process(
         argv,
@@ -135,6 +139,7 @@ def run_bounded_process(
         process,
         timeout_seconds=timeout_seconds,
         stdout_limit_bytes=stdout_limit_bytes,
+        stdout_sink=stdout_sink,
     )
 
 
@@ -182,6 +187,7 @@ def _wait_with_bounded_capture(
     *,
     timeout_seconds: float,
     stdout_limit_bytes: int,
+    stdout_sink: IO[bytes] | None,
 ) -> ProcessResult:
     stdout_pipe = process.stdout
     assert stdout_pipe is not None
@@ -189,14 +195,17 @@ def _wait_with_bounded_capture(
         ProcessInfrastructureError | ProcessTimeoutError | ProcessOutputLimitError | None
     ) = None
     return_code: int | None = None
-    output = bytearray()
+    output = _BoundedStdoutTarget(
+        limit_bytes=stdout_limit_bytes,
+        sink=stdout_sink,
+        captured=bytearray() if stdout_sink is None else None,
+    )
     try:
         _make_stdout_nonblocking(stdout_pipe)
         return_code = _capture_until_complete(
             process,
             stdout_pipe,
             output=output,
-            stdout_limit_bytes=stdout_limit_bytes,
             timeout_seconds=timeout_seconds,
         )
     except (
@@ -217,17 +226,47 @@ def _wait_with_bounded_capture(
         and execution_error.phase == "termination"
     ):
         raise execution_error
-    if (
-        isinstance(execution_error, ProcessInfrastructureError)
-        and execution_error.phase == "stdout_read"
-    ):
+    if isinstance(execution_error, ProcessInfrastructureError) and execution_error.phase in {
+        "stdout_read",
+        "stdout_write",
+    }:
         raise execution_error
     if close_failed:
         raise ProcessInfrastructureError("stdout_close") from None
     if execution_error is not None:
         raise execution_error
     assert return_code is not None
-    return ProcessResult(return_code=return_code, stdout=bytes(output))
+    return ProcessResult(return_code=return_code, stdout=output.result())
+
+
+@dataclass(slots=True)
+class _BoundedStdoutTarget:
+    """Count stdout once while either retaining it or forwarding it to a sink."""
+
+    limit_bytes: int
+    sink: IO[bytes] | None
+    captured: bytearray | None
+    size_bytes: int = 0
+
+    def accept(self, chunk: bytes) -> None:
+        if self.size_bytes + len(chunk) > self.limit_bytes:
+            raise ProcessOutputLimitError
+        if self.sink is not None:
+            try:
+                written = self.sink.write(chunk)
+            except Exception:
+                raise ProcessInfrastructureError("stdout_write") from None
+            if written != len(chunk):
+                raise ProcessInfrastructureError("stdout_write")
+        else:
+            assert self.captured is not None
+            self.captured.extend(chunk)
+        self.size_bytes += len(chunk)
+
+    def result(self) -> bytes | None:
+        if self.captured is None:
+            return None
+        return bytes(self.captured)
 
 
 def _make_stdout_nonblocking(stdout_pipe: IO[bytes]) -> None:
@@ -241,8 +280,7 @@ def _capture_until_complete(
     process: subprocess.Popen[bytes],
     stdout_pipe: IO[bytes],
     *,
-    output: bytearray,
-    stdout_limit_bytes: int,
+    output: _BoundedStdoutTarget,
     timeout_seconds: float,
 ) -> int:
     execution_deadline = _monotonic() + timeout_seconds
@@ -254,7 +292,6 @@ def _capture_until_complete(
             stdout_eof = _read_available_stdout(
                 stdout_pipe,
                 output=output,
-                stdout_limit_bytes=stdout_limit_bytes,
             )
 
         return_code = _poll_process(process)
@@ -276,12 +313,11 @@ def _capture_until_complete(
 def _read_available_stdout(
     stdout_pipe: IO[bytes],
     *,
-    output: bytearray,
-    stdout_limit_bytes: int,
+    output: _BoundedStdoutTarget,
 ) -> bool:
     read_size = min(
         _READ_CHUNK_BYTES,
-        stdout_limit_bytes + 1 - len(output),
+        output.limit_bytes + 1 - output.size_bytes,
     )
     try:
         chunk = _read_stdout_chunk(stdout_pipe, read_size)
@@ -293,9 +329,7 @@ def _read_available_stdout(
         return False
     if not chunk:
         return True
-    output.extend(chunk)
-    if len(output) > stdout_limit_bytes:
-        raise ProcessOutputLimitError() from None
+    output.accept(chunk)
     return False
 
 

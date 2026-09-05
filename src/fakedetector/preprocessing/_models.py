@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePath
 from types import MappingProxyType
 
+from fakedetector._stage5_resources import _MAX_STAGE5_ARTIFACTS
 from fakedetector.domain import MediaType
 from fakedetector.intake.temporary_input import PreparedSourceRef
 from fakedetector.lifecycle.artifacts import WorkspaceArtifactRef
@@ -75,6 +76,8 @@ class PreparedMedia:
         artifacts = tuple(self.artifacts)
         if any(not isinstance(artifact, PreparedArtifact) for artifact in artifacts):
             raise TypeError("artifacts must contain only PreparedArtifact values")
+        if len(artifacts) > _MAX_STAGE5_ARTIFACTS:
+            raise ValueError("prepared media contains too many artifacts")
         artifact_ids = [artifact.artifact_id for artifact in artifacts]
         if len(artifact_ids) != len(set(artifact_ids)):
             raise ValueError("prepared artifacts contain conflicting IDs")

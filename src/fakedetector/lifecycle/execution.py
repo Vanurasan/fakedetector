@@ -9,6 +9,10 @@ from datetime import datetime
 from threading import RLock
 from typing import Protocol, TypeVar
 
+from pydantic import ValidationError
+from pydantic_core import PydanticSerializationError
+
+from fakedetector.analyzers._transport import _serialize_stage5_analyzer_result
 from fakedetector.domain import (
     AnalysisStatus,
     AnalyzerResult,
@@ -322,15 +326,21 @@ class TaskRegistry:
         result: AnalyzerResult,
     ) -> None:
         """Append one completed orchestration result in authoritative plan order."""
+        try:
+            validated_result = AnalyzerResult.model_validate_json(
+                _serialize_stage5_analyzer_result(result)
+            )
+        except (PydanticSerializationError, ValidationError, TypeError, ValueError):
+            raise LifecycleStateError() from None
         with self._lock:
             authoritative = self._require_stage5_task(task, ProcessingStage.ANALYSIS)
             data = authoritative.stage5_data
             if (
                 data is None
-                or not isinstance(result, AnalyzerResult)
-                or result.media_type is not authoritative.context.media_type
+                or validated_result.media_type is not authoritative.context.media_type
                 or any(
-                    existing.analyzer_id == result.analyzer_id for existing in data.analyzer_results
+                    existing.analyzer_id == validated_result.analyzer_id
+                    for existing in data.analyzer_results
                 )
             ):
                 raise LifecycleStateError()
@@ -338,7 +348,7 @@ class TaskRegistry:
                 prepared_media=data.prepared_media,
                 analyzer_results=(
                     *data.analyzer_results,
-                    result.model_copy(deep=True),
+                    validated_result,
                 ),
             )
 

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
 
+from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
 from fakedetector.core._cleanup_safety import _CleanupSafetyBarrier
 from fakedetector.domain import (
@@ -31,14 +30,7 @@ from fakedetector.preprocessing._models import PreparedMedia
 
 def config_snapshot_fingerprint(config: AppConfig) -> str:
     """Return the full SHA-256 digest of stable canonical validated config JSON."""
-    canonical_json = json.dumps(
-        config.model_dump(mode="json"),
-        ensure_ascii=False,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+    return _ConfigSnapshot.capture(config).snapshot_id
 
 
 @dataclass(frozen=True, slots=True)

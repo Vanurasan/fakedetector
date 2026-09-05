@@ -9,10 +9,21 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from fakedetector.analyzers._catalog import _resolve_worker_definition
 from fakedetector.analyzers._errors import AnalyzerInfrastructureError
-from fakedetector.analyzers._models import AnalyzerRequest, _ReadOnlyAnalyzerInput
+from fakedetector.analyzers._models import (
+    AnalyzerRequest,
+    _AnalyzerFileFacts,
+    _ReadOnlyAnalyzerInput,
+)
+from fakedetector.analyzers._orchestrator import _with_duration
 from fakedetector.analyzers._transport import (
+    _MAX_RESPONSE_BYTES,
+    _MAX_STAGE5_ANALYZER_RESULT_BYTES,
+    _serialize_stage5_analyzer_result,
+    _Stage5AnalyzerResultSizeError,
     _WorkerRequest,
     _WorkerResponseKind,
 )
@@ -175,6 +186,52 @@ def _descriptor() -> ValidatedFileDescriptor:
     )
 
 
+def _result_with_summary(
+    summary: str,
+    *,
+    duration_ms: int = 0,
+    raw_metrics: dict[str, object] | None = None,
+    candidate_findings: list[object] | None = None,
+) -> AnalyzerResult:
+    return AnalyzerResult(
+        analyzer_id="fake_image_analyzer",
+        analyzer_version="1.0.0",
+        media_type=MediaType.IMAGE,
+        group="framework_test",
+        status=AnalyzerStatus.COMPLETED,
+        applicable=True,
+        started_at=None,
+        finished_at=None,
+        duration_ms=duration_ms,
+        score=0.42,
+        score_name="contract_signal",
+        summary=summary,
+        raw_metrics=raw_metrics or {},
+        candidate_findings=candidate_findings or [],
+        warnings=[],
+        errors=[],
+    )
+
+
+def _result_at_stage5_size(
+    size_bytes: int,
+    *,
+    summary_suffix: str = "",
+    duration_ms: int = 0,
+    raw_metrics: dict[str, object] | None = None,
+    candidate_findings: list[object] | None = None,
+) -> AnalyzerResult:
+    base = _result_with_summary(
+        summary_suffix,
+        duration_ms=duration_ms,
+        raw_metrics=raw_metrics,
+        candidate_findings=candidate_findings,
+    )
+    remaining = size_bytes - len(_serialize_stage5_analyzer_result(base))
+    assert remaining >= 0
+    return base.model_copy(update={"summary": "x" * remaining + summary_suffix})
+
+
 def _request(
     tmp_path: Path,
     worker_key: str = "framework_test.hang",
@@ -190,7 +247,7 @@ def _request(
         worker_key=worker_key,
         analysis_id="a" * 32,
         media_type=MediaType.IMAGE.value,
-        validated_file_json=_descriptor().model_dump_json(),
+        file_facts_json=_AnalyzerFileFacts.from_validated_file(_descriptor()).model_dump_json(),
         source_path=str(source.resolve()),
         artifacts=(),
         metadata_json="{}",
@@ -377,7 +434,7 @@ def test_generic_worker_validation_accepts_contractual_score_and_findings(
     request = AnalyzerRequest(
         analysis_id=transport_request.analysis_id,
         media_type=MediaType.IMAGE,
-        validated_file=_descriptor(),
+        file_facts=_AnalyzerFileFacts.from_validated_file(_descriptor()),
         source=_ReadOnlyAnalyzerInput(Path(transport_request.source_path)),
         settings=definition.settings_model.model_validate_json(transport_request.settings_json),
         timeout_seconds=transport_request.timeout_seconds,
@@ -425,13 +482,57 @@ def test_worker_main_converts_unexpected_internal_failure_to_bounded_response() 
     assert [_decoded(response) for response in connection.sent] == [{"kind": "worker_error"}]
 
 
-def test_oversized_worker_result_uses_bounded_serialization_failure_envelope() -> None:
-    response = _encode_response(
-        _WorkerResponseKind.RESULT,
-        result={"oversized": "x" * 70_000},
+def test_stage5_result_exact_payload_and_final_envelope_bound() -> None:
+    result = _result_at_stage5_size(_MAX_STAGE5_ANALYZER_RESULT_BYTES)
+
+    result_payload = _serialize_stage5_analyzer_result(result)
+    response = _encode_response(_WorkerResponseKind.RESULT, result=result)
+
+    assert len(result_payload) == _MAX_STAGE5_ANALYZER_RESULT_BYTES == 65_509
+    assert len(response) == _MAX_RESPONSE_BYTES == 65_536
+    assert _decoded(response)["result"] == json.loads(result_payload)
+
+
+def test_stage5_result_payload_limit_plus_one_is_rejected() -> None:
+    exact = _result_at_stage5_size(_MAX_STAGE5_ANALYZER_RESULT_BYTES)
+    oversized = exact.model_copy(update={"summary": exact.summary + "x"})
+
+    with pytest.raises(_Stage5AnalyzerResultSizeError):
+        _serialize_stage5_analyzer_result(oversized)
+
+
+def test_stage5_result_bound_counts_multibyte_utf8_and_nested_fields() -> None:
+    result = _result_at_stage5_size(
+        _MAX_STAGE5_ANALYZER_RESULT_BYTES,
+        summary_suffix="Ж",
+        raw_metrics={"nested": {"values": [1, 2, {"signal": 0.42}]}},
+        candidate_findings=[{"type": "contract_probe", "confidence": 0.42}],
     )
 
-    assert response == b'{"kind":"serialization_error"}'
+    payload = _serialize_stage5_analyzer_result(result)
+
+    assert len(payload) == _MAX_STAGE5_ANALYZER_RESULT_BYTES
+    assert b"\\u0416" not in payload
+    assert json.loads(payload)["candidate_findings"] == result.candidate_findings
+
+
+def test_stage5_result_bound_is_checked_after_framework_duration_normalization() -> None:
+    target = _result_at_stage5_size(
+        _MAX_STAGE5_ANALYZER_RESULT_BYTES,
+        duration_ms=123_456,
+    )
+    worker_result = target.model_copy(update={"duration_ms": 0})
+
+    normalized = _with_duration(worker_result, 123_456)
+
+    assert len(_serialize_stage5_analyzer_result(normalized)) == (_MAX_STAGE5_ANALYZER_RESULT_BYTES)
+
+
+def test_response_encoder_rejects_oversized_canonical_result_without_fallback() -> None:
+    result = _result_with_summary("x" * 70_000)
+
+    with pytest.raises(_Stage5AnalyzerResultSizeError):
+        _encode_response(_WorkerResponseKind.RESULT, result=result)
 
 
 def test_runner_uses_explicit_spawn_context() -> None:

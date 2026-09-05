@@ -11,11 +11,14 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
+from fakedetector._stage5_resources import _MAX_STAGE5_ARTIFACTS
 from fakedetector.analyzers._errors import AnalyzerInfrastructureError
+from fakedetector.analyzers._models import _AnalyzerFileFacts
 from fakedetector.analyzers._registry import AnalyzerRegistry, _ActiveAnalyzer
 from fakedetector.analyzers._transport import (
-    _MAX_ARTIFACTS,
     _MAX_RESPONSE_BYTES,
+    _serialize_stage5_analyzer_result,
+    _Stage5AnalyzerResultSizeError,
     _WorkerArtifact,
     _WorkerRequest,
     _WorkerResponseKind,
@@ -25,6 +28,7 @@ from fakedetector.analyzers._worker import (
     _WorkerRun,
     _WorkerRunKind,
 )
+from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.domain import (
     AnalyzerResult,
     AnalyzerStatus,
@@ -65,6 +69,9 @@ class AnalyzerOrchestrator:
     ) -> None:
         self._registry = registry
         self._runner = runner or _SpawnedWorkerRunner()
+
+    def _uses_config_snapshot(self, snapshot: _ConfigSnapshot) -> bool:
+        return self._registry._uses_config_snapshot(snapshot)
 
     def execute(
         self,
@@ -150,7 +157,7 @@ class AnalyzerOrchestrator:
         artifact_registry: WorkspaceArtifactRegistry,
         remaining_timeout_seconds: Callable[[], float] | None,
     ) -> AnalyzerResult:
-        if len(prepared_media.artifacts) > _MAX_ARTIFACTS:
+        if len(prepared_media.artifacts) > _MAX_STAGE5_ARTIFACTS:
             raise AnalyzerInfrastructureError("worker_request")
         try:
             return prepared_media.source_file_ref.with_local_source_path(
@@ -187,7 +194,9 @@ class AnalyzerOrchestrator:
                 worker_key=active.registration.worker_key,
                 analysis_id=prepared_media.analysis_id,
                 media_type=prepared_media.media_type.value,
-                validated_file_json=validated_file.model_dump_json(),
+                file_facts_json=_AnalyzerFileFacts.from_validated_file(
+                    validated_file
+                ).model_dump_json(),
                 source_path=str(source_path.resolve()),
                 artifacts=tuple(
                     _transport_artifact(artifact, path)
@@ -228,7 +237,12 @@ class AnalyzerOrchestrator:
         if decoded.result is None:
             raise AnalyzerInfrastructureError("worker_result")
         _validate_result_identity(decoded.result, active, prepared_media)
-        return _with_duration(decoded.result, run.duration_ms)
+        normalized_result = _with_duration(decoded.result, run.duration_ms)
+        try:
+            _serialize_stage5_analyzer_result(normalized_result)
+        except _Stage5AnalyzerResultSizeError:
+            return _failure_result(active, prepared_media, run.duration_ms, timeout=False)
+        return normalized_result
 
 
 def _with_artifact_paths[ResultT](

@@ -16,6 +16,7 @@ import yaml
 
 import fakedetector.core._bounded_process as bounded_process_module
 import fakedetector.lifecycle as lifecycle
+from fakedetector._stage5_resources import _GeneratedArtifactBudget
 from fakedetector.analyzers._catalog import _framework_test_registrations
 from fakedetector.analyzers._errors import AnalyzerInfrastructureError
 from fakedetector.analyzers._orchestrator import AnalyzerOrchestrator, _WorkerRunner
@@ -26,6 +27,7 @@ from fakedetector.analyzers._worker import (
     _WorkerRun,
     _WorkerRunKind,
 )
+from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
 from fakedetector.core import AuthoritativeLifecycleClock
 from fakedetector.domain import (
@@ -137,19 +139,33 @@ class _RecordingRegistry(TaskRegistry):
         self.stage5_events.append(f"result:{result.analyzer_id}")
 
 
-class _RecordingPreprocessing:
+class _SnapshotBoundTestComponent:
+    def __init__(self) -> None:
+        self._test_config_snapshot: _ConfigSnapshot | None = None
+
+    def _bind_config(self, config: AppConfig) -> None:
+        self._test_config_snapshot = _ConfigSnapshot.capture(config)
+
+    def _uses_config_snapshot(self, snapshot: _ConfigSnapshot) -> bool:
+        return self._test_config_snapshot == snapshot
+
+
+class _RecordingPreprocessing(_SnapshotBoundTestComponent):
     def __init__(
         self,
         *,
         clock: _ManualMonotonic | None = None,
         consume_seconds: float = 0.0,
         fail: bool = False,
+        resource_limit: bool = False,
         create_artifact: bool = False,
         lock_probe: Callable[[], None] | None = None,
     ) -> None:
+        super().__init__()
         self._clock = clock
         self._consume_seconds = consume_seconds
         self._fail = fail
+        self._resource_limit = resource_limit
         self._create_artifact = create_artifact
         self._lock_probe = lock_probe
         self.calls = 0
@@ -187,6 +203,8 @@ class _RecordingPreprocessing:
             )
         if self._clock is not None:
             self._clock.advance(self._consume_seconds)
+        if self._resource_limit:
+            raise PreprocessingError("resource_limit", "test_budget")
         if self._fail:
             raise PreprocessingError("decode", "test_preprocessing")
         return PreparedMedia(
@@ -259,6 +277,7 @@ class _SequencedRunner:
 class _DeferredProcess:
     def __init__(self) -> None:
         self.safe = False
+        self.stdout = _DeferredStdout()
         self.terminate_calls = 0
         self.kill_calls = 0
         self.wait_timeouts: list[float | None] = []
@@ -275,9 +294,21 @@ class _DeferredProcess:
     def kill(self) -> None:
         self.kill_calls += 1
 
+    def poll(self) -> int | None:
+        return 0 if self.safe else None
 
-class _FFmpegTerminationPreprocessing:
+
+class _DeferredStdout:
+    def read(self, _size: int) -> None:
+        return None
+
+    def close(self) -> None:
+        pass
+
+
+class _FFmpegTerminationPreprocessing(_SnapshotBoundTestComponent):
     def __init__(self) -> None:
+        super().__init__()
         self._tool = _FFmpegPreprocessingTool(executable="ffmpeg", timeout_seconds=1.0)
 
     def prepare(
@@ -301,6 +332,7 @@ class _FFmpegTerminationPreprocessing:
                     source,
                     target,
                     timestamp_seconds=0.0,
+                    artifact_budget=request.artifact_budget,
                     timeout_seconds=remaining_timeout_seconds(),
                 ),
             )
@@ -318,8 +350,9 @@ class _ForbiddenRunner:
         raise AssertionError("analyzer worker must not start")
 
 
-class _LockProbeOrchestrator:
+class _LockProbeOrchestrator(_SnapshotBoundTestComponent):
     def __init__(self, lock_probe: Callable[[], None]) -> None:
+        super().__init__()
         self._lock_probe = lock_probe
 
     def preprocessing_requirements(self, media_type: MediaType) -> PreprocessingRequirements:
@@ -444,6 +477,8 @@ def _service(
     runner: _WorkerRunner | None = None,
     monotonic: Callable[[], float],
 ) -> Stage5ExecutionService:
+    if isinstance(preprocessing, _SnapshotBoundTestComponent):
+        preprocessing._bind_config(config)
     analyzer_registry = AnalyzerRegistry(config, _framework_test_registrations())
     orchestrator = (
         AnalyzerOrchestrator(analyzer_registry)
@@ -582,10 +617,7 @@ def test_integrated_stage3_stage4_stage5_production_path(
     executor = Stage5ExecutionService(
         config=config,
         registry=registry,
-        preprocessing=PreprocessingDispatcher(
-            config.preprocessing,
-            process_timeout_seconds=config.limits.processing_timeout_seconds,
-        ),
+        preprocessing=PreprocessingDispatcher(config),
         orchestrator=AnalyzerOrchestrator(
             AnalyzerRegistry(config, _framework_test_registrations())
         ),
@@ -658,6 +690,10 @@ def test_state_machine_and_registry_enforce_stage5_publication_order(
         validated_file=task.validated_file,
         source_file_ref=PreparedSourceRef(task.accepted_source),
         artifact_registry=task.artifacts,
+        artifact_budget=_GeneratedArtifactBudget(
+            _ConfigSnapshot.capture(config),
+            task.validated_file.media_type,
+        ),
     )
     prepared = preprocessing.prepare(
         request,
@@ -696,6 +732,13 @@ def test_state_machine_and_registry_enforce_stage5_publication_order(
     with pytest.raises(LifecycleStateError):
         registry.publish_stage5_prepared(task, prepared)
     registry.start_stage5_analysis(task)
+    with pytest.raises(LifecycleStateError):
+        registry.append_stage5_analyzer_result(
+            task,
+            result.model_copy(update={"summary": "x" * 70_000}),
+        )
+    assert task.stage5_data is not None
+    assert task.stage5_data.analyzer_results == ()
     with pytest.raises(LifecycleStateError):
         registry.append_stage5_analyzer_result(
             task,
@@ -844,6 +887,60 @@ def test_preprocessing_failure_uses_stage4_terminal_cleanup(
     assert all(not path.exists() for path in task.artifacts.cleanup_obligations())
 
 
+def test_preprocessing_resource_limit_is_safe_non_retryable_and_prevents_worker(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "temp"
+    config = _config(root, enabled=["fake_image_analyzer"])
+    task, registry = _claimed_task(root, config)
+    runner = _ForbiddenRunner()
+
+    outcome = _service(
+        config,
+        registry,
+        _RecordingPreprocessing(resource_limit=True),
+        runner=runner,
+        monotonic=_ManualMonotonic(),
+    ).execute(task)
+
+    assert outcome.status is AnalysisStatus.FAILED
+    assert outcome.errors[0].code == "stage5_resource_limit"
+    assert outcome.errors[0].category == "resource_limit"
+    assert outcome.errors[0].retryable is False
+    assert outcome.errors[0].safe_details == {
+        "phase": "preprocessing",
+        "limit": "test_budget",
+    }
+    assert runner.calls == 0
+    assert task.stage5_data is None
+    _cleanup_task(task)
+
+
+def test_exhausted_deadline_has_precedence_over_resource_limit(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "temp"
+    config = _config(root, processing_timeout_seconds=5)
+    task, registry = _claimed_task(root, config)
+    monotonic = _ManualMonotonic()
+
+    outcome = _service(
+        config,
+        registry,
+        _RecordingPreprocessing(
+            clock=monotonic,
+            consume_seconds=5,
+            resource_limit=True,
+        ),
+        monotonic=monotonic,
+    ).execute(task)
+
+    assert outcome.status is AnalysisStatus.FAILED
+    assert outcome.errors[0].code == "processing_timeout"
+    assert outcome.errors[0].category == "processing"
+    _cleanup_task(task)
+
+
 def test_stage5_rejects_a_different_config_snapshot_before_preprocessing(
     tmp_path: Path,
 ) -> None:
@@ -869,6 +966,61 @@ def test_stage5_rejects_a_different_config_snapshot_before_preprocessing(
     assert task.context.stage is ProcessingStage.PREPROCESSING
     assert task.stage5_data is None
     _cleanup_task(task)
+
+
+def test_equal_distinct_configs_share_one_stage5_snapshot_identity(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path / "temp")
+    dispatcher_config = AppConfig.model_validate(config.model_dump(mode="python"))
+    registry_config = AppConfig.model_validate(config.model_dump(mode="python"))
+
+    service = Stage5ExecutionService(
+        config=config,
+        registry=TaskRegistry(),
+        preprocessing=PreprocessingDispatcher(dispatcher_config),
+        orchestrator=AnalyzerOrchestrator(
+            AnalyzerRegistry(registry_config, _framework_test_registrations())
+        ),
+    )
+
+    assert service._config_snapshot.snapshot_id == config_snapshot_fingerprint(config)
+
+
+def test_stage5_constructor_rejects_mixed_dispatcher_snapshot(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path / "temp")
+    different = config.model_copy(deep=True)
+    different.preprocessing.audio.fragment_duration_seconds += 1
+
+    with pytest.raises(ValueError, match="different config snapshots"):
+        Stage5ExecutionService(
+            config=config,
+            registry=TaskRegistry(),
+            preprocessing=PreprocessingDispatcher(different),
+            orchestrator=AnalyzerOrchestrator(
+                AnalyzerRegistry(config, _framework_test_registrations())
+            ),
+        )
+
+
+def test_stage5_constructor_rejects_mixed_analyzer_snapshot(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path / "temp")
+    different = config.model_copy(deep=True)
+    different.analyzers.defaults.timeout_seconds += 1
+
+    with pytest.raises(ValueError, match="different config snapshots"):
+        Stage5ExecutionService(
+            config=config,
+            registry=TaskRegistry(),
+            preprocessing=PreprocessingDispatcher(config),
+            orchestrator=AnalyzerOrchestrator(
+                AnalyzerRegistry(different, _framework_test_registrations())
+            ),
+        )
 
 
 def test_fatal_analyzer_infrastructure_failure_cleans_after_safety_confirmation(
@@ -1065,6 +1217,11 @@ def test_ffmpeg_termination_barrier_defers_stage4_cleanup_and_beats_timeout(
         bounded_process_module.subprocess,
         "Popen",
         lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(
+        bounded_process_module,
+        "_make_stdout_nonblocking",
+        lambda _stdout: None,
     )
     service = _service(
         config,
@@ -1263,11 +1420,14 @@ def test_stage5_runs_filesystem_and_analyzer_work_without_registry_lock(
         create_artifact=True,
         lock_probe=lock_probe,
     )
+    preprocessing._bind_config(config)
+    orchestrator = _LockProbeOrchestrator(lock_probe)
+    orchestrator._bind_config(config)
     service = Stage5ExecutionService(
         config=config,
         registry=registry,
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
-        orchestrator=cast(AnalyzerOrchestrator, _LockProbeOrchestrator(lock_probe)),
+        orchestrator=cast(AnalyzerOrchestrator, orchestrator),
         monotonic=_ManualMonotonic(),
     )
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import threading
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,51 @@ def test_successful_process_captures_bounded_stdout(tmp_path: Path) -> None:
 
     assert result.return_code == 0
     assert result.stdout == b"captured"
+
+
+def test_successful_process_streams_to_sink_without_retaining_stdout(
+    tmp_path: Path,
+) -> None:
+    sink = BytesIO()
+
+    result = run_bounded_process(
+        python_child("import sys; sys.stdout.buffer.write(b'x' * 4096)"),
+        cwd=tmp_path,
+        timeout_seconds=2.0,
+        stdout_limit_bytes=4096,
+        stdout_sink=sink,
+    )
+
+    assert result.return_code == 0
+    assert result.stdout is None
+    assert sink.getvalue() == b"x" * 4096
+
+
+def test_stdout_sink_requires_an_explicit_limit(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="explicit byte limit"):
+        run_bounded_process(
+            python_child("pass"),
+            cwd=tmp_path,
+            timeout_seconds=2.0,
+            stdout_sink=BytesIO(),
+        )
+
+
+def test_stdout_sink_limit_plus_one_stops_without_exceeding_bound(
+    tmp_path: Path,
+) -> None:
+    sink = BytesIO()
+
+    with pytest.raises(ProcessOutputLimitError):
+        run_bounded_process(
+            python_child("import sys; sys.stdout.buffer.write(b'x' * 4097)"),
+            cwd=tmp_path,
+            timeout_seconds=2.0,
+            stdout_limit_bytes=4096,
+            stdout_sink=sink,
+        )
+
+    assert len(sink.getvalue()) <= 4096
 
 
 @pytest.mark.parametrize(
@@ -268,6 +314,11 @@ class _OversizedStdout:
         pass
 
 
+class _FailingSink:
+    def write(self, _data: bytes) -> int:
+        raise RuntimeError("PRIVATE sink detail")
+
+
 class _FakeProcess:
     def __init__(self, *, stdout: object | None = None) -> None:
         self.stdout = stdout
@@ -425,6 +476,69 @@ def test_unreapable_capture_process_has_termination_precedence(
             cwd=tmp_path,
             timeout_seconds=0.01,
             stdout_limit_bytes=1,
+        )
+
+    assert error_info.value.phase == "termination"
+    assert error_info.value._cleanup_safety_barrier is not None
+    assert process.terminated
+    assert process.killed
+    assert process.wait_calls == 2
+
+
+def test_sink_write_failure_stops_and_reaps_before_safe_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _FakeProcess(stdout=_OversizedStdout())
+    monkeypatch.setattr(
+        bounded_process_module.subprocess,
+        "Popen",
+        lambda *args, **kwargs: process,
+    )
+    monkeypatch.setattr(
+        bounded_process_module,
+        "_make_stdout_nonblocking",
+        lambda _stdout: None,
+    )
+
+    with pytest.raises(ProcessInfrastructureError) as error_info:
+        run_bounded_process(
+            python_child("pass"),
+            cwd=tmp_path,
+            timeout_seconds=1.0,
+            stdout_limit_bytes=2,
+            stdout_sink=_FailingSink(),
+        )
+
+    assert error_info.value.phase == "stdout_write"
+    assert "PRIVATE" not in str(error_info.value)
+    assert process.terminated
+    assert process.wait_calls == 1
+
+
+def test_unreapable_sink_output_limit_has_termination_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _NeverReapedProcess(stdout=_OversizedStdout())
+    monkeypatch.setattr(
+        bounded_process_module.subprocess,
+        "Popen",
+        lambda *args, **kwargs: process,
+    )
+    monkeypatch.setattr(
+        bounded_process_module,
+        "_make_stdout_nonblocking",
+        lambda _stdout: None,
+    )
+
+    with pytest.raises(ProcessInfrastructureError) as error_info:
+        run_bounded_process(
+            python_child("pass"),
+            cwd=tmp_path,
+            timeout_seconds=1.0,
+            stdout_limit_bytes=1,
+            stdout_sink=BytesIO(),
         )
 
     assert error_info.value.phase == "termination"

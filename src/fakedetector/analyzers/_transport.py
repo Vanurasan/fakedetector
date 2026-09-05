@@ -2,20 +2,30 @@
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from enum import StrEnum
 
-from fakedetector.domain import MediaType
+from fakedetector._stage5_resources import _MAX_STAGE5_ARTIFACTS
+from fakedetector.domain import AnalyzerResult, MediaType
 
 _MAX_RESPONSE_BYTES = 65_536
 _MAX_SETTINGS_BYTES = 8_192
 _MAX_METADATA_BYTES = 32_768
-_MAX_DESCRIPTOR_BYTES = 16_384
+_MAX_FILE_FACTS_BYTES = 16_384
 _MAX_PATH_CHARS = 4_096
-_MAX_ARTIFACTS = 256
 _MAX_WARNINGS = 64
 _MAX_WARNING_CHARS = 512
+_RESULT_ENVELOPE_PREFIX = b'{"kind":"result","result":'
+_RESULT_ENVELOPE_SUFFIX = b"}"
+_MAX_STAGE5_ANALYZER_RESULT_BYTES = _MAX_RESPONSE_BYTES - len(
+    _RESULT_ENVELOPE_PREFIX + _RESULT_ENVELOPE_SUFFIX
+)
+
+
+class _Stage5AnalyzerResultSizeError(ValueError):
+    """Signal a canonical analyzer result outside the Stage 5 execution envelope."""
 
 
 class _WorkerResponseKind(StrEnum):
@@ -49,7 +59,7 @@ class _WorkerRequest:
     worker_key: str
     analysis_id: str
     media_type: str
-    validated_file_json: str
+    file_facts_json: str
     source_path: str
     artifacts: tuple[_WorkerArtifact, ...]
     metadata_json: str
@@ -66,7 +76,7 @@ class _WorkerRequest:
             raise ValueError("worker request media type is invalid")
         if not self.source_path or len(self.source_path) > _MAX_PATH_CHARS:
             raise ValueError("worker source path is invalid")
-        if len(artifacts) > _MAX_ARTIFACTS:
+        if len(artifacts) > _MAX_STAGE5_ARTIFACTS:
             raise ValueError("worker request has too many artifacts")
         if len(warnings) > _MAX_WARNINGS or any(
             not isinstance(warning, str) or len(warning) > _MAX_WARNING_CHARS
@@ -74,7 +84,7 @@ class _WorkerRequest:
         ):
             raise ValueError("worker request warnings are invalid")
         for value, limit in (
-            (self.validated_file_json, _MAX_DESCRIPTOR_BYTES),
+            (self.file_facts_json, _MAX_FILE_FACTS_BYTES),
             (self.metadata_json, _MAX_METADATA_BYTES),
             (self.settings_json, _MAX_SETTINGS_BYTES),
         ):
@@ -84,3 +94,29 @@ class _WorkerRequest:
             raise ValueError("worker timeout must be finite and positive")
         object.__setattr__(self, "artifacts", artifacts)
         object.__setattr__(self, "warnings", warnings)
+
+
+def _serialize_stage5_analyzer_result(result: AnalyzerResult) -> bytes:
+    """Serialize once with the exact compact JSON form used by worker transport."""
+    if not isinstance(result, AnalyzerResult):
+        raise TypeError("Stage 5 result must be an AnalyzerResult")
+    payload = json.dumps(
+        result.model_dump(mode="json", warnings="error"),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(payload) > _MAX_STAGE5_ANALYZER_RESULT_BYTES:
+        raise _Stage5AnalyzerResultSizeError
+    return payload
+
+
+def _encode_stage5_result_response(result: AnalyzerResult) -> bytes:
+    payload = (
+        _RESULT_ENVELOPE_PREFIX
+        + _serialize_stage5_analyzer_result(result)
+        + _RESULT_ENVELOPE_SUFFIX
+    )
+    assert len(payload) <= _MAX_RESPONSE_BYTES
+    return payload

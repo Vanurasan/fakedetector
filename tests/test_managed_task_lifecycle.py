@@ -396,6 +396,14 @@ def test_config_snapshot_fingerprint_is_stable_full_digest_and_sensitive(tmp_pat
     assert "MEDIA_ANALYZER_API_TOKEN" not in fingerprint
 
 
+def test_config_snapshot_capture_revalidates_mutated_app_config(tmp_path: Path) -> None:
+    config = make_config(tmp_path / "temp")
+    config.limits.__dict__["processing_timeout_seconds"] = 0
+
+    with pytest.raises(ValueError):
+        config_snapshot_fingerprint(config)
+
+
 def test_context_and_task_snapshot_are_truthful_safe_and_read_only(
     accepted_task: tuple[AnalysisTask, TaskRegistry, RecordingExecutor],
     tmp_path: Path,

@@ -10,12 +10,19 @@ from dataclasses import dataclass, field
 from io import UnsupportedOperation
 from pathlib import Path, PurePath
 from types import MappingProxyType
-from typing import BinaryIO, ClassVar, Protocol, cast
+from typing import BinaryIO, ClassVar, Protocol, Self, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from fakedetector.analyzers._errors import _AnalyzerInputReadError
-from fakedetector.domain import AnalyzerResult, MediaType, ValidatedFileDescriptor
+from fakedetector.domain import (
+    AnalyzerResult,
+    AudioTechnicalParameters,
+    ImageTechnicalParameters,
+    MediaType,
+    ValidatedFileDescriptor,
+    VideoTechnicalParameters,
+)
 from fakedetector.preprocessing._requirements import PreprocessingRequirements
 
 _SAFE_REASON_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -202,13 +209,52 @@ class AnalyzerArtifactInput:
             raise TypeError("artifact content must be a read-only input")
 
 
+class _AnalyzerFileFacts(BaseModel):
+    """Capability-free machine facts required by worker-local analyzer execution."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    extension: str
+    declared_mime_type: str | None
+    detected_mime_type: str
+    media_type: MediaType
+    size_bytes: int
+    sha256: str
+    signature_match: bool
+    safe_read: bool
+    technical_parameters: (
+        ImageTechnicalParameters | AudioTechnicalParameters | VideoTechnicalParameters
+    )
+
+    @classmethod
+    def from_validated_file(cls, descriptor: ValidatedFileDescriptor) -> _AnalyzerFileFacts:
+        """Project only execution-relevant facts, excluding display identity."""
+        if not isinstance(descriptor, ValidatedFileDescriptor):
+            raise TypeError("file facts require a validated descriptor")
+        return cls.model_validate(descriptor.model_dump(exclude={"original_name"}))
+
+    @model_validator(mode="after")
+    def validate_technical_parameters_match_media_type(self) -> Self:
+        parameters_match = (
+            self.media_type is MediaType.IMAGE
+            and isinstance(self.technical_parameters, ImageTechnicalParameters)
+            or self.media_type is MediaType.AUDIO
+            and isinstance(self.technical_parameters, AudioTechnicalParameters)
+            or self.media_type is MediaType.VIDEO
+            and isinstance(self.technical_parameters, VideoTechnicalParameters)
+        )
+        if not parameters_match:
+            raise ValueError("technical_parameters must match media_type")
+        return self
+
+
 @dataclass(frozen=True, slots=True)
 class AnalyzerRequest:
     """Capability-free request assembled inside one spawned analyzer worker."""
 
     analysis_id: str
     media_type: MediaType
-    validated_file: ValidatedFileDescriptor
+    file_facts: _AnalyzerFileFacts
     source: _ReadOnlyAnalyzerInput = field(repr=False)
     settings: BaseModel = field(repr=False)
     timeout_seconds: float
@@ -223,10 +269,10 @@ class AnalyzerRequest:
             raise TypeError("source must be a read-only input")
         if not isinstance(self.settings, BaseModel):
             raise TypeError("settings must be a typed Pydantic model")
-        if not isinstance(self.validated_file, ValidatedFileDescriptor):
-            raise TypeError("validated_file must be a ValidatedFileDescriptor")
-        if self.validated_file.media_type is not self.media_type:
-            raise ValueError("validated descriptor media type does not match request")
+        if not isinstance(self.file_facts, _AnalyzerFileFacts):
+            raise TypeError("file_facts must be analyzer file facts")
+        if self.file_facts.media_type is not self.media_type:
+            raise ValueError("file facts media type does not match request")
         if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be finite and positive")
         artifacts = tuple(self.artifacts)

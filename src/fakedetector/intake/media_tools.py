@@ -225,6 +225,7 @@ def _probe_infrastructure_phase(phase: ProcessInfrastructurePhase) -> str:
     return {
         "start": "process_start",
         "stdout_read": "ffprobe_stdout_read",
+        "stdout_write": "process_wait",
         "stdout_close": "ffprobe_stdout_close",
         "wait": "process_wait",
         "termination": "process_wait",

@@ -14,6 +14,7 @@ from fakedetector.analyzers._catalog import _resolve_worker_definition
 from fakedetector.analyzers._errors import AnalyzerConfigurationError
 from fakedetector.analyzers._models import AnalyzerRegistration
 from fakedetector.analyzers._transport import _MAX_SETTINGS_BYTES
+from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
 from fakedetector.domain import MediaType
 from fakedetector.preprocessing._requirements import PreprocessingRequirements
@@ -36,9 +37,11 @@ class AnalyzerRegistry:
         config: AppConfig,
         registrations: Sequence[AnalyzerRegistration],
     ) -> None:
+        self._config_snapshot = _ConfigSnapshot.capture(config)
+        captured_config = self._config_snapshot.materialize()
         if (
-            config.analyzers.defaults.continue_on_error
-            is not config.error_handling.continue_if_analyzer_fails
+            captured_config.analyzers.defaults.continue_on_error
+            is not captured_config.error_handling.continue_if_analyzer_fails
         ):
             raise AnalyzerConfigurationError("continue_policy")
 
@@ -50,22 +53,22 @@ class AnalyzerRegistry:
                 raise AnalyzerConfigurationError("duplicate_registration")
             by_id[registration.analyzer_id] = registration
 
-        unknown_settings = set(config.analyzers.settings) - set(by_id)
+        unknown_settings = set(captured_config.analyzers.settings) - set(by_id)
         if unknown_settings:
             raise AnalyzerConfigurationError("unknown_settings")
         settings_by_id = {
             analyzer_id: self._validated_settings_json(
                 registration,
-                config.analyzers.settings.get(analyzer_id, {}),
+                captured_config.analyzers.settings.get(analyzer_id, {}),
             )
             for analyzer_id, registration in by_id.items()
         }
 
         plans: dict[MediaType, tuple[_ActiveAnalyzer, ...]] = {}
         for media_type, enabled in (
-            (MediaType.IMAGE, config.analyzers.image.enabled),
-            (MediaType.AUDIO, config.analyzers.audio.enabled),
-            (MediaType.VIDEO, config.analyzers.video.enabled),
+            (MediaType.IMAGE, captured_config.analyzers.image.enabled),
+            (MediaType.AUDIO, captured_config.analyzers.audio.enabled),
+            (MediaType.VIDEO, captured_config.analyzers.video.enabled),
         ):
             if len(enabled) != len(set(enabled)):
                 raise AnalyzerConfigurationError("duplicate_enabled")
@@ -80,8 +83,11 @@ class AnalyzerRegistry:
             plans[media_type] = tuple(active)
 
         self._plans = plans
-        self._timeout_seconds = float(config.analyzers.defaults.timeout_seconds)
-        self._continue_on_failure = config.error_handling.continue_if_analyzer_fails
+        self._timeout_seconds = float(captured_config.analyzers.defaults.timeout_seconds)
+        self._continue_on_failure = captured_config.error_handling.continue_if_analyzer_fails
+
+    def _uses_config_snapshot(self, snapshot: _ConfigSnapshot) -> bool:
+        return self._config_snapshot == snapshot
 
     @property
     def timeout_seconds(self) -> float:

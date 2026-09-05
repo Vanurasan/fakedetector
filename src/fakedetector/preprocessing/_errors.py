@@ -11,6 +11,7 @@ PreprocessingFailureKind = Literal[
     "decode",
     "media_tool",
     "artifact_write",
+    "resource_limit",
     "invariant",
     "infrastructure",
 ]

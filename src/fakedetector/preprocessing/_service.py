@@ -11,10 +11,17 @@ from typing import Protocol, cast
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from fakedetector._stage5_resources import (
+    _MAX_STAGE5_ARTIFACTS,
+    _GeneratedArtifactBudget,
+    _GeneratedArtifactLimitError,
+    _GeneratedArtifactWriteError,
+)
+from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import (
+    AppConfig,
     AudioPreprocessingConfig,
     ImagePreprocessingConfig,
-    PreprocessingConfig,
     VideoPreprocessingConfig,
 )
 from fakedetector.domain import (
@@ -43,6 +50,8 @@ _MULTI_FRAME_WARNING = (
     "the source's temporal behavior."
 )
 _MAX_VIDEO_SAMPLED_FRAMES = 120
+_WAV_CONTAINER_OVERHEAD_BYTES = 4_096
+_SPECTROGRAM_MAX_BYTES = 640 * 320 * 4 + 320 + 64 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +62,7 @@ class PreprocessingRequest:
     validated_file: ValidatedFileDescriptor
     source_file_ref: PreparedSourceRef = field(repr=False)
     artifact_registry: WorkspaceArtifactRegistry = field(repr=False)
+    artifact_budget: _GeneratedArtifactBudget = field(repr=False)
 
     def __post_init__(self) -> None:
         if not self.analysis_id:
@@ -63,8 +73,12 @@ class PreprocessingRequest:
             raise TypeError("source_file_ref must be a PreparedSourceRef")
         if not isinstance(self.artifact_registry, WorkspaceArtifactRegistry):
             raise TypeError("artifact_registry must be a WorkspaceArtifactRegistry")
+        if not isinstance(self.artifact_budget, _GeneratedArtifactBudget):
+            raise TypeError("artifact_budget must be a generated-artifact budget")
         if self.source_file_ref.analysis_id != self.analysis_id:
             raise ValueError("preprocessing source identity does not match request")
+        if self.artifact_budget.media_type is not self.validated_file.media_type:
+            raise ValueError("artifact budget media type does not match request")
 
 
 class Preprocessor(Protocol):
@@ -105,6 +119,7 @@ class ImagePreprocessor:
         artifacts: list[PreparedArtifact] = []
         try:
             if self._config.normalize_for_analysis:
+                _ensure_artifact_count(1)
                 _check_remaining(remaining_timeout_seconds)
                 normalized = _decode_normalized_image(request.source_file_ref)
                 _check_remaining(remaining_timeout_seconds)
@@ -123,7 +138,12 @@ class ImagePreprocessor:
                 _with_artifact_path(
                     request.artifact_registry,
                     artifact_ref,
-                    lambda target: _save_png(normalized, target, "image_normalize"),
+                    lambda target: _save_png(
+                        normalized,
+                        target,
+                        request.artifact_budget,
+                        "image_normalize",
+                    ),
                 )
                 _check_remaining(remaining_timeout_seconds)
                 artifacts.append(
@@ -173,6 +193,27 @@ class AudioPreprocessor:
         remaining_timeout_seconds: Callable[[], float] | None = None,
     ) -> PreparedMedia:
         parameters = _parameters(request, AudioTechnicalParameters, self.media_type)
+        spectrogram_created = self._config.build_spectrogram and requirements.audio_spectrogram
+        fragment_count = _audio_fragment_count(
+            parameters.duration_seconds,
+            self._config.fragment_duration_seconds,
+        )
+        _ensure_artifact_count(1 + fragment_count + int(spectrogram_created))
+        _check_remaining(remaining_timeout_seconds)
+        try:
+            request.artifact_budget.ensure_feasible(
+                _audio_generated_bytes_estimate(
+                    duration_seconds=parameters.duration_seconds,
+                    sample_rate_hz=parameters.sample_rate_hz,
+                    channels=parameters.channels,
+                    fragment_seconds=self._config.fragment_duration_seconds,
+                    fragment_count=fragment_count,
+                    spectrogram=spectrogram_created,
+                )
+            )
+        except _GeneratedArtifactLimitError:
+            raise PreprocessingError("resource_limit", "audio_preflight") from None
+
         normalized_ref = _register(
             request.artifact_registry,
             "audio_normalized",
@@ -186,6 +227,7 @@ class AudioPreprocessor:
                 target,
                 sample_rate_hz=parameters.sample_rate_hz,
                 channels=parameters.channels,
+                artifact_budget=request.artifact_budget,
                 timeout_seconds=_operation_timeout(remaining_timeout_seconds),
             ),
         )
@@ -198,11 +240,12 @@ class AudioPreprocessor:
             )
         ]
 
-        intervals = _fragment_intervals(
-            parameters.duration_seconds,
-            self._config.fragment_duration_seconds,
-        )
-        for fragment_index, (start, end) in enumerate(intervals):
+        for fragment_index in range(fragment_count):
+            start = fragment_index * float(self._config.fragment_duration_seconds)
+            end = min(
+                parameters.duration_seconds,
+                (fragment_index + 1) * float(self._config.fragment_duration_seconds),
+            )
 
             def write_fragment(
                 source: Path,
@@ -217,6 +260,7 @@ class AudioPreprocessor:
                     duration_seconds=end_seconds - start_seconds,
                     sample_rate_hz=parameters.sample_rate_hz,
                     channels=parameters.channels,
+                    artifact_budget=request.artifact_budget,
                     timeout_seconds=_operation_timeout(remaining_timeout_seconds),
                 )
 
@@ -243,7 +287,6 @@ class AudioPreprocessor:
                 )
             )
 
-        spectrogram_created = self._config.build_spectrogram and requirements.audio_spectrogram
         if spectrogram_created:
             spectrogram_ref = _register(
                 request.artifact_registry,
@@ -257,6 +300,7 @@ class AudioPreprocessor:
                 lambda source, target: self._media_tool.spectrogram(
                     source,
                     target,
+                    artifact_budget=request.artifact_budget,
                     timeout_seconds=_operation_timeout(remaining_timeout_seconds),
                 ),
             )
@@ -276,7 +320,7 @@ class AudioPreprocessor:
             "normalized_format": "wav",
             "sample_format": "pcm_s16le",
             "fragment_duration_seconds": self._config.fragment_duration_seconds,
-            "fragment_count": len(intervals),
+            "fragment_count": fragment_count,
             "spectrogram_created": spectrogram_created,
         }
         if self._config.extract_metadata:
@@ -311,6 +355,13 @@ class VideoPreprocessor:
             parameters.duration_seconds,
             self._config.keyframe_interval_seconds,
         )
+        audio_created = (
+            parameters.has_audio
+            and self._config.extract_audio_track
+            and requirements.video_audio_track
+        )
+        _ensure_artifact_count(len(timestamps) + int(audio_created))
+        _check_remaining(remaining_timeout_seconds)
         artifacts: list[PreparedArtifact] = []
         for frame_index, timestamp in enumerate(timestamps):
 
@@ -323,6 +374,7 @@ class VideoPreprocessor:
                     source,
                     target,
                     timestamp_seconds=target_timestamp,
+                    artifact_budget=request.artifact_budget,
                     timeout_seconds=_operation_timeout(remaining_timeout_seconds),
                 )
 
@@ -348,11 +400,6 @@ class VideoPreprocessor:
                 )
             )
 
-        audio_created = (
-            parameters.has_audio
-            and self._config.extract_audio_track
-            and requirements.video_audio_track
-        )
         if audio_created:
             audio_ref = _register(
                 request.artifact_registry,
@@ -365,6 +412,7 @@ class VideoPreprocessor:
                 lambda source, target: self._media_tool.extracted_audio(
                     source,
                     target,
+                    artifact_budget=request.artifact_budget,
                     timeout_seconds=_operation_timeout(remaining_timeout_seconds),
                 ),
             )
@@ -417,21 +465,25 @@ class PreprocessingDispatcher:
 
     def __init__(
         self,
-        config: PreprocessingConfig,
+        config: AppConfig,
         *,
-        process_timeout_seconds: float,
         ffmpeg_executable: str = "ffmpeg",
     ) -> None:
-        config_snapshot = config.model_copy(deep=True)
+        self._config_snapshot = _ConfigSnapshot.capture(config)
+        captured_config = self._config_snapshot.materialize()
+        preprocessing_config = captured_config.preprocessing
         media_tool = _FFmpegPreprocessingTool(
             executable=ffmpeg_executable,
-            timeout_seconds=process_timeout_seconds,
+            timeout_seconds=float(captured_config.limits.processing_timeout_seconds),
         )
         self._preprocessors: dict[MediaType, Preprocessor] = {
-            MediaType.IMAGE: ImagePreprocessor(config_snapshot.image),
-            MediaType.AUDIO: AudioPreprocessor(config_snapshot.audio, media_tool=media_tool),
-            MediaType.VIDEO: VideoPreprocessor(config_snapshot.video, media_tool=media_tool),
+            MediaType.IMAGE: ImagePreprocessor(preprocessing_config.image),
+            MediaType.AUDIO: AudioPreprocessor(preprocessing_config.audio, media_tool=media_tool),
+            MediaType.VIDEO: VideoPreprocessor(preprocessing_config.video, media_tool=media_tool),
         }
+
+    def _uses_config_snapshot(self, snapshot: _ConfigSnapshot) -> bool:
+        return self._config_snapshot == snapshot
 
     def prepare(
         self,
@@ -442,6 +494,11 @@ class PreprocessingDispatcher:
     ) -> PreparedMedia:
         """Dispatch without extension guessing, analyzer execution, or lifecycle mutation."""
         active_requirements = requirements or PreprocessingRequirements()
+        if not request.artifact_budget.matches(
+            self._config_snapshot,
+            request.validated_file.media_type,
+        ):
+            raise PreprocessingError("invariant", "artifact_budget_snapshot")
         try:
             preprocessor = self._preprocessors[request.validated_file.media_type]
         except KeyError:
@@ -533,13 +590,18 @@ def _requires_alpha(image: Image.Image) -> bool:
         rgba.close()
 
 
-def _save_png(image: Image.Image, target: Path, phase: str) -> None:
+def _save_png(
+    image: Image.Image,
+    target: Path,
+    artifact_budget: _GeneratedArtifactBudget,
+    phase: str,
+) -> None:
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists():
-            raise OSError
-        image.save(target, format="PNG")
-    except OSError:
+        with artifact_budget.open_output(target) as output:
+            image.save(output, format="PNG")
+    except _GeneratedArtifactLimitError:
+        raise PreprocessingError("resource_limit", phase) from None
+    except (OSError, _GeneratedArtifactWriteError):
         raise PreprocessingError("artifact_write", phase) from None
 
 
@@ -563,18 +625,40 @@ def _image_source_metadata(
     return metadata
 
 
-def _fragment_intervals(
+def _audio_fragment_count(
     duration_seconds: float,
     fragment_seconds: int,
-) -> tuple[tuple[float, float], ...]:
-    count = max(1, math.ceil(duration_seconds / fragment_seconds))
-    return tuple(
-        (
-            fragment_index * float(fragment_seconds),
-            min(duration_seconds, (fragment_index + 1) * float(fragment_seconds)),
-        )
-        for fragment_index in range(count)
+) -> int:
+    return max(1, math.ceil(duration_seconds / fragment_seconds))
+
+
+def _audio_generated_bytes_estimate(
+    *,
+    duration_seconds: float,
+    sample_rate_hz: int,
+    channels: int,
+    fragment_seconds: int,
+    fragment_count: int,
+    spectrogram: bool,
+) -> int:
+    bytes_per_frame = channels * 2
+    normalized_frames = math.ceil(duration_seconds * sample_rate_hz)
+    complete_fragments = max(0, fragment_count - 1)
+    final_duration = max(0.0, duration_seconds - complete_fragments * fragment_seconds)
+    fragment_frames = complete_fragments * fragment_seconds * sample_rate_hz + math.ceil(
+        final_duration * sample_rate_hz
     )
+    wav_count = 1 + fragment_count
+    return (
+        (normalized_frames + fragment_frames) * bytes_per_frame
+        + wav_count * _WAV_CONTAINER_OVERHEAD_BYTES
+        + (_SPECTROGRAM_MAX_BYTES if spectrogram else 0)
+    )
+
+
+def _ensure_artifact_count(count: int) -> None:
+    if count > _MAX_STAGE5_ARTIFACTS:
+        raise PreprocessingError("resource_limit", "artifact_count")
 
 
 def _video_timestamps(
