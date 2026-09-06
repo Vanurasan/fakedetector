@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable
 from copy import copy
+from dataclasses import FrozenInstanceError, fields
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -16,13 +17,22 @@ import yaml
 
 import fakedetector.core._bounded_process as bounded_process_module
 import fakedetector.lifecycle as lifecycle
+import fakedetector.lifecycle.execution as execution_module
 from fakedetector._stage5_resources import _GeneratedArtifactBudget
 from fakedetector.analyzers._catalog import _framework_test_registrations
 from fakedetector.analyzers._errors import AnalyzerInfrastructureError
 from fakedetector.analyzers._orchestrator import AnalyzerOrchestrator, _WorkerRunner
 from fakedetector.analyzers._registry import AnalyzerRegistry
-from fakedetector.analyzers._transport import _WorkerRequest
+from fakedetector.analyzers._transport import (
+    _MAX_RESPONSE_BYTES,
+    _MAX_STAGE5_ANALYZER_RESULT_BYTES,
+    _serialize_stage5_analyzer_result,
+    _Stage5AnalyzerResultSizeError,
+    _WorkerRequest,
+    _WorkerResponseKind,
+)
 from fakedetector.analyzers._worker import (
+    _encode_response,
     _execute_worker,
     _WorkerRun,
     _WorkerRunKind,
@@ -67,6 +77,7 @@ from fakedetector.lifecycle import (
     config_snapshot_fingerprint,
 )
 from fakedetector.lifecycle._stage5 import Stage5ExecutionService
+from fakedetector.lifecycle.models import Stage5TaskData, _StoredAnalyzerResult
 from fakedetector.preprocessing._errors import PreprocessingError
 from fakedetector.preprocessing._media_tools import _FFmpegPreprocessingTool
 from fakedetector.preprocessing._models import (
@@ -731,6 +742,8 @@ def test_state_machine_and_registry_enforce_stage5_publication_order(
     registry.publish_stage5_prepared(task, prepared)
     with pytest.raises(LifecycleStateError):
         registry.publish_stage5_prepared(task, prepared)
+    with pytest.raises(LifecycleStateError):
+        registry.append_stage5_analyzer_result(task, result)
     registry.start_stage5_analysis(task)
     with pytest.raises(LifecycleStateError):
         registry.append_stage5_analyzer_result(
@@ -747,10 +760,12 @@ def test_state_machine_and_registry_enforce_stage5_publication_order(
     registry.append_stage5_analyzer_result(task, result)
     with pytest.raises(LifecycleStateError):
         registry.append_stage5_analyzer_result(task, result)
+    with pytest.raises(LifecycleStateError):
+        registry.append_stage5_analyzer_result(copy(task), result)
 
     assert task.stage5_data is not None
     assert task.stage5_data.prepared_media is prepared
-    assert task.stage5_data.analyzer_results == (result,)
+    assert registry._read_stage5_analyzer_results(task) == (result,)
 
     registry.record_outcome(task.context.analysis_id, TaskExecutionOutcome.completed())
     with pytest.raises(LifecycleStateError):
@@ -763,6 +778,205 @@ def test_state_machine_and_registry_enforce_stage5_publication_order(
     assert final.stage is ProcessingStage.FINISHED
     with pytest.raises(LifecycleStateError):
         registry.publish_stage5_prepared(task, prepared)
+    with pytest.raises(LifecycleStateError):
+        registry.append_stage5_analyzer_result(task, result)
+    assert registry._read_stage5_analyzer_results(task) == (result,)
+
+
+def _start_result_publication(task: AnalysisTask, registry: TaskRegistry) -> None:
+    registry.publish_stage5_prepared(
+        task,
+        PreparedMedia(
+            analysis_id=task.context.analysis_id,
+            media_type=task.context.media_type,
+            source_file_ref=PreparedSourceRef(task.accepted_source),
+        ),
+    )
+    registry.start_stage5_analysis(task)
+
+
+def _mutate_nested_result(result: AnalyzerResult) -> None:
+    result.summary = "Changed summary"
+    metrics = cast(dict[str, object], result.raw_metrics["nested"])
+    cast(list[object], metrics["values"]).append({"changed": True})
+    metrics["added"] = ["changed"]
+    finding = cast(dict[str, object], result.candidate_findings[0])
+    cast(list[object], finding["values"]).append({"changed": True})
+    result.candidate_findings.append({"added": ["changed"]})
+    result.warnings.append("Changed warning")
+    result.errors[0].message = "Changed error"
+    details = cast(list[object], result.errors[0].safe_details["values"])
+    details.append({"changed": True})
+    result.errors.append(result.errors[0].model_copy(deep=True))
+
+
+@pytest.mark.parametrize("mutate_original", [True, False], ids=["original", "reader"])
+@pytest.mark.parametrize("fatal_outcome", [False, True], ids=["completed", "failed"])
+def test_authoritative_results_remain_immutable_through_terminal_settlement(
+    tmp_path: Path,
+    mutate_original: bool,
+    fatal_outcome: bool,
+) -> None:
+    root = tmp_path / "temp"
+    config = _config(root)
+    task, registry = _claimed_task(root, config)
+    assert registry._read_stage5_analyzer_results(task) == ()
+    _start_result_publication(task, registry)
+    original = _failure_result("fake_error_analyzer", AnalyzerStatus.ERROR)
+    original.raw_metrics = {"nested": {"values": [1, {"signal": [0.42]}]}}
+    original.candidate_findings = [{"values": [{"signal": [0.42]}]}]
+    original.warnings = ["Initial warning"]
+    original.errors[0].safe_details = {"values": [{"signal": [0.42]}]}
+    expected = original.model_dump(mode="json")
+    payload = _serialize_stage5_analyzer_result(original)
+    registry.append_stage5_analyzer_result(task, original)
+    assert task.stage5_data is not None
+    stored_data = task.stage5_data
+    stored = stored_data.analyzer_results[0]
+    assert isinstance(stored, _StoredAnalyzerResult)
+    assert isinstance(stored.canonical_json, bytes)
+    assert stored.canonical_json == payload
+    assert not any(
+        isinstance(getattr(stored, model_field.name), AnalyzerResult)
+        for model_field in fields(stored)
+    )
+    with pytest.raises(FrozenInstanceError):
+        stored.canonical_json = b"changed"
+    with pytest.raises(TypeError, match="stored analyzer results"):
+        Stage5TaskData(
+            prepared_media=stored_data.prepared_media,
+            analyzer_results=cast(tuple[_StoredAnalyzerResult, ...], (original,)),
+        )
+
+    for phase in (ProcessingStage.ANALYSIS, ProcessingStage.CLEANUP, ProcessingStage.FINISHED):
+        if phase is ProcessingStage.CLEANUP:
+            outcome = (
+                TaskExecutionOutcome.failed(
+                    ErrorDetail(
+                        code="internal_error",
+                        category="internal",
+                        message="Later infrastructure failure.",
+                        retryable=True,
+                    )
+                )
+                if fatal_outcome
+                else TaskExecutionOutcome.completed()
+            )
+            registry.record_outcome(task.context.analysis_id, outcome)
+        elif phase is ProcessingStage.FINISHED:
+            Stage4TaskProcessor(
+                config=config,
+                clock=AuthoritativeLifecycleClock(
+                    _IncrementingClock(_CREATED_AT + timedelta(minutes=1))
+                ),
+                registry=registry,
+            ).settle_terminal(task.context.analysis_id)
+        assert task.context.stage is phase
+        first_read = registry._read_stage5_analyzer_results(task)[0]
+        second_read = registry._read_stage5_analyzer_results(task)[0]
+        assert first_read is not second_read
+        assert first_read.model_dump(mode="json") == expected
+        _mutate_nested_result(original if mutate_original else first_read)
+        assert second_read.model_dump(mode="json") == expected
+        assert registry._read_stage5_analyzer_results(task)[0].model_dump(mode="json") == expected
+        assert task.stage5_data is stored_data
+        assert stored.canonical_json == payload
+        snapshot = registry.snapshot(task.context.analysis_id)
+        assert not {"stage5_data", "analyzer_results", "canonical_json"} & {
+            model_field.name for model_field in fields(snapshot)
+        }
+        assert "Initial warning" not in repr(snapshot)
+        with pytest.raises(LifecycleStateError):
+            registry._read_stage5_analyzer_results(copy(task))
+
+    assert task.context.status is (
+        AnalysisStatus.FAILED if fatal_outcome else AnalysisStatus.COMPLETED
+    )
+
+
+@pytest.mark.parametrize("suffix", ["x", "Ж", "🙂"])
+def test_storage_reuses_exact_r2_result_bytes_at_utf8_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    suffix: str,
+) -> None:
+    root = tmp_path / "temp"
+    task, registry = _claimed_task(root, _config(root))
+    _start_result_publication(task, registry)
+    result = _failure_result("fake_image_analyzer", AnalyzerStatus.COMPLETED)
+    result.errors.clear()
+    result.score = 0.42
+    result.score_name = "contract_signal"
+    result.raw_metrics = {"nested": ["Ж", {"signal": 0.42}]}
+    result.candidate_findings = [{"values": ["🙂", 0.42]}]
+    result.summary = suffix
+    padding = _MAX_STAGE5_ANALYZER_RESULT_BYTES - len(_serialize_stage5_analyzer_result(result))
+    result.summary += "x" * padding
+    payload = _serialize_stage5_analyzer_result(result)
+    response = _encode_response(_WorkerResponseKind.RESULT, result=result)
+    assert len(payload) == _MAX_STAGE5_ANALYZER_RESULT_BYTES
+    assert len(response) == _MAX_RESPONSE_BYTES
+    assert response == b'{"kind":"result","result":' + payload + b"}"
+    calls: list[bytes] = []
+
+    def encode_unlocked(value: AnalyzerResult) -> bytes:
+        _assert_registry_unlocked(registry, task.context.analysis_id)
+        encoded = _serialize_stage5_analyzer_result(value)
+        calls.append(encoded)
+        return encoded
+
+    monkeypatch.setattr(execution_module, "_serialize_stage5_analyzer_result", encode_unlocked)
+    registry.append_stage5_analyzer_result(task, result)
+    assert calls == [payload]
+    assert task.stage5_data is not None
+    stored_data = task.stage5_data
+    assert stored_data.analyzer_results[0].canonical_json == payload
+    materialize = AnalyzerResult.model_validate_json
+
+    def materialize_unlocked(_cls: type[AnalyzerResult], value: bytes) -> AnalyzerResult:
+        _assert_registry_unlocked(registry, task.context.analysis_id)
+        return materialize(value)
+
+    monkeypatch.setattr(AnalyzerResult, "model_validate_json", classmethod(materialize_unlocked))
+    assert registry._read_stage5_analyzer_results(task) == (result,)
+    assert (
+        _serialize_stage5_analyzer_result(registry._read_stage5_analyzer_results(task)[0])
+        == payload
+    )
+
+    oversized = result.model_copy(update={"analyzer_id": "fake_error_analyzer"})
+    # Keep the same identity byte length, then exceed the result bound by one byte.
+    oversized.summary += "x" * (len(result.analyzer_id) - len(oversized.analyzer_id) + 1)
+    with pytest.raises(_Stage5AnalyzerResultSizeError):
+        _encode_response(_WorkerResponseKind.RESULT, result=oversized)
+    with pytest.raises(LifecycleStateError):
+        registry.append_stage5_analyzer_result(task, oversized)
+    assert task.stage5_data is stored_data
+    assert registry._read_stage5_analyzer_results(task) == (result,)
+    _cleanup_task(task)
+
+
+@pytest.mark.parametrize("invalid", ["status", "nested", "type"])
+def test_publication_revalidates_mutated_canonical_results_without_state_change(
+    tmp_path: Path,
+    invalid: str,
+) -> None:
+    root = tmp_path / "temp"
+    task, registry = _claimed_task(root, _config(root))
+    _start_result_publication(task, registry)
+    result = _failure_result("fake_error_analyzer", AnalyzerStatus.ERROR)
+    if invalid == "status":
+        result.errors.clear()
+    elif invalid == "nested":
+        result.raw_metrics["nested"] = [float("nan")]
+    else:
+        result = cast(AnalyzerResult, object())
+    before = task.stage5_data
+    with pytest.raises(LifecycleStateError):
+        registry.append_stage5_analyzer_result(task, result)
+    assert task.stage5_data is before
+    assert registry._read_stage5_analyzer_results(task) == ()
+    _cleanup_task(task)
 
 
 def test_registry_rejects_stale_and_foreign_stage5_capabilities(tmp_path: Path) -> None:
@@ -837,23 +1051,37 @@ def test_individual_analyzer_failures_remain_results_and_execution_completes(
         enabled=[first_analyzer, "fake_image_analyzer"],
         continue_on_failure=continue_on_failure,
     )
-    task, registry = _claimed_task(root, config)
+    registry = _RecordingRegistry()
+    task, _registry = _claimed_task(root, config, registry=registry)
     runner = _SequencedRunner(first_kind, _WorkerRunKind.RESPONSE)
+    preprocessing = _RecordingPreprocessing(create_artifact=True)
     outcome = _service(
         config,
         registry,
-        _RecordingPreprocessing(create_artifact=True),
+        preprocessing,
         runner=runner,
         monotonic=_ManualMonotonic(),
     ).execute(task)
 
     assert outcome == TaskExecutionOutcome.completed()
     assert task.stage5_data is not None
-    expected_statuses = [expected_status]
-    if continue_on_failure:
-        expected_statuses.append(AnalyzerStatus.COMPLETED)
-    assert [result.status for result in task.stage5_data.analyzer_results] == expected_statuses
-    assert len(runner.requests) == len(expected_statuses)
+    results = registry._read_stage5_analyzer_results(task)
+    assert [result.status for result in results] == [
+        expected_status,
+        AnalyzerStatus.COMPLETED if continue_on_failure else AnalyzerStatus.SKIPPED,
+    ]
+    assert [result.analyzer_id for result in results] == [first_analyzer, "fake_image_analyzer"]
+    assert registry.stage5_events == [
+        "prepared",
+        "analysis",
+        f"result:{first_analyzer}",
+        "result:fake_image_analyzer",
+    ]
+    assert len(runner.requests) == (2 if continue_on_failure else 1)
+    assert preprocessing.calls == len(preprocessing.requirements) == 1
+    assert [stored.canonical_json for stored in task.stage5_data.analyzer_results] == [
+        _serialize_stage5_analyzer_result(result) for result in results
+    ]
     _cleanup_task(task)
 
 

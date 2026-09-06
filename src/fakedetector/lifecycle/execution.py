@@ -32,6 +32,7 @@ from fakedetector.lifecycle.models import (
     TerminalSettlement,
     TerminalSettlementPhase,
     TerminalSettlementSnapshot,
+    _StoredAnalyzerResult,
 )
 from fakedetector.preprocessing._models import PreparedMedia
 
@@ -326,9 +327,16 @@ class TaskRegistry:
         result: AnalyzerResult,
     ) -> None:
         """Append one completed orchestration result in authoritative plan order."""
+        if not isinstance(result, AnalyzerResult):
+            raise LifecycleStateError()
         try:
-            validated_result = AnalyzerResult.model_validate_json(
-                _serialize_stage5_analyzer_result(result)
+            validated_result = AnalyzerResult.model_validate(
+                result.model_dump(mode="python", warnings="error")
+            )
+            stored_result = _StoredAnalyzerResult(
+                analyzer_id=validated_result.analyzer_id,
+                media_type=validated_result.media_type,
+                canonical_json=_serialize_stage5_analyzer_result(validated_result),
             )
         except (PydanticSerializationError, ValidationError, TypeError, ValueError):
             raise LifecycleStateError() from None
@@ -337,9 +345,9 @@ class TaskRegistry:
             data = authoritative.stage5_data
             if (
                 data is None
-                or validated_result.media_type is not authoritative.context.media_type
+                or stored_result.media_type is not authoritative.context.media_type
                 or any(
-                    existing.analyzer_id == validated_result.analyzer_id
+                    existing.analyzer_id == stored_result.analyzer_id
                     for existing in data.analyzer_results
                 )
             ):
@@ -348,9 +356,21 @@ class TaskRegistry:
                 prepared_media=data.prepared_media,
                 analyzer_results=(
                     *data.analyzer_results,
-                    validated_result,
+                    stored_result,
                 ),
             )
+
+    def _read_stage5_analyzer_results(self, task: AnalysisTask) -> tuple[AnalyzerResult, ...]:
+        """Materialize detached canonical facts from one authoritative task, also terminal."""
+        with self._lock:
+            authoritative = self._get(task.context.analysis_id)
+            if authoritative is not task:
+                raise LifecycleStateError()
+            data = authoritative.stage5_data
+            results = () if data is None else data.analyzer_results
+        return tuple(
+            AnalyzerResult.model_validate_json(result.canonical_json) for result in results
+        )
 
     def record_outcome(self, analysis_id: str, outcome: TaskExecutionOutcome) -> None:
         with self._lock:

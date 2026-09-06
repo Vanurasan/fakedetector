@@ -372,12 +372,25 @@ Internal application model `AnalysisTask` может агрегировать:
 - cleanup outcome;
 - безопасные lifecycle errors и primary outcome.
 
-На Stage 5 aggregate также может содержать registry-controlled internal
-`Stage5TaskData` с `PreparedMedia` и упорядоченным `AnalyzerResult[]`. Эти factual
-данные хранятся только in-process для последующих Stages 6–8: отдельный
-repository, persistence, промежуточный `AnalysisResult` и
-`ResultRepository.save()` не создаются, а `TaskSnapshot` не обязан публиковать
-Stage 5 internals.
+На Stage 5 задача также может содержать управляемый реестром внутренний
+`Stage5TaskData` с `PreparedMedia` и упорядоченным `tuple[_StoredAnalyzerResult, ...]`.
+Каждая неизменяемая запись содержит `analyzer_id`, `media_type` и
+`canonical_json: bytes`, без вложенных изменяемых `AnalyzerResult`. До захвата
+блокировки реестра `append_stage5_analyzer_result()` повторно проверяет каноническую
+модель и получает байты через единый `_serialize_stage5_analyzer_result` с пределом
+из §8.5. Под блокировкой проверяются идентичность авторитетной задачи, тип медиа,
+отсутствие повторного ID и состояние `RUNNING / ANALYSIS` после публикации
+`PreparedMedia`; только затем запись добавляется в кортеж.
+
+Внутренний `TaskRegistry._read_stage5_analyzer_results(task)` проверяет идентичность
+задачи и фиксирует кортеж под блокировкой, затем вне блокировки создаёт свежие
+канонические `AnalyzerResult` из сохранённых байтов. Изменения исходной модели или
+результата чтения, включая вложенные словари и списки, не меняют сохранённые факты;
+повторное чтение воспроизводит их также в `CLEANUP` и `FINISHED`. Запись в этих
+состояниях запрещена. Байты не публикуются через API чтения или `TaskSnapshot`.
+Эти данные хранятся только внутри процесса для последующих Stages 6–8: отдельный
+репозиторий, persistence, промежуточный `AnalysisResult` и
+`ResultRepository.save()` не создаются.
 
 До visible terminal publication aggregate может содержать минимальный
 internal-only `TerminalSettlement`. Он не входит в `TaskSnapshot`, external JSON,
@@ -1221,6 +1234,17 @@ Registered, но disabled analyzer не входит в active plan: applicabili
 `not_applicable`. Результаты детерминированно упорядочены по ID из per-media
 `enabled` config, и внутри task analyzers выполняются sequentially, не более
 одного generic worker одновременно.
+
+При `error_handling.continue_if_analyzer_fails=false` первый `ERROR` или `TIMEOUT`
+сохраняется, а для каждого оставшегося элемента активного плана создаётся `SKIPPED`.
+Каждый такой результат проходит тот же callback публикации в порядке конфигурации;
+требования предобработки не пересчитываются, применимость и выполнение анализатора
+не вызываются. Ранее полученный `NOT_APPLICABLE` сохраняется. `SKIPPED` использует
+идентификатор, версию и группу регистрации, фактический тип медиа, `applicable=true`
+без утверждения о выполненной проверке применимости; `started_at`, `finished_at`,
+`duration_ms`, `score` и `score_name` равны `null`, метрики, признаки, предупреждения
+и ошибки пусты. Статическое безопасное `summary` сообщает о пропуске политикой после
+предыдущего сбоя. Результат проверяется тем же сериализатором и пределом §8.5.
 
 До task execution registry/config validation обнаруживает unknown или duplicate
 enabled analyzer ID, media mismatch и invalid analyzer settings. Raw

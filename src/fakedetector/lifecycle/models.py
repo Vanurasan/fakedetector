@@ -12,7 +12,6 @@ from fakedetector.config.models import AppConfig
 from fakedetector.core._cleanup_safety import _CleanupSafetyBarrier
 from fakedetector.domain import (
     AnalysisStatus,
-    AnalyzerResult,
     CleanupResult,
     CleanupStatus,
     ErrorDetail,
@@ -210,14 +209,30 @@ class TerminalSettlementSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class _StoredAnalyzerResult:
+    """Immutable canonical result bytes and identity for registry publication checks."""
+
+    analyzer_id: str
+    media_type: MediaType
+    canonical_json: bytes = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.canonical_json, bytes):
+            raise TypeError("stored analyzer result requires immutable bytes")
+
+
+@dataclass(frozen=True, slots=True)
 class Stage5TaskData:
     """Internal prepared state and ordered analyzer results retained by one task."""
 
     prepared_media: PreparedMedia
-    analyzer_results: tuple[AnalyzerResult, ...] = ()
+    analyzer_results: tuple[_StoredAnalyzerResult, ...] = ()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "analyzer_results", tuple(self.analyzer_results))
+        results = tuple(self.analyzer_results)
+        if any(not isinstance(result, _StoredAnalyzerResult) for result in results):
+            raise TypeError("Stage 5 task data requires stored analyzer results")
+        object.__setattr__(self, "analyzer_results", results)
 
 
 @dataclass(slots=True)

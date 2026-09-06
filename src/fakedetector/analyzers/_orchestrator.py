@@ -82,29 +82,32 @@ class AnalyzerOrchestrator:
         remaining_timeout_seconds: Callable[[], float] | None = None,
         result_callback: Callable[[AnalyzerResult], None] | None = None,
     ) -> tuple[AnalyzerResult, ...]:
-        """Return only results from analyzers actually launched in config order."""
+        """Publish enabled analyzer results, including policy skips, in config order."""
         self._validate_inputs(prepared_media, validated_file, artifact_registry)
         plan = self._registry.active_plan(prepared_media.media_type)
         if not plan:
             return ()
 
         results: list[AnalyzerResult] = []
+        stopped_by_policy = False
         for active in plan:
-            result = self._execute_active(
-                active,
-                prepared_media,
-                validated_file,
-                artifact_registry,
-                remaining_timeout_seconds,
-            )
+            if stopped_by_policy:
+                result = _skipped_result(active, prepared_media)
+            else:
+                result = self._execute_active(
+                    active,
+                    prepared_media,
+                    validated_file,
+                    artifact_registry,
+                    remaining_timeout_seconds,
+                )
+                stopped_by_policy = (
+                    result.status in {AnalyzerStatus.ERROR, AnalyzerStatus.TIMEOUT}
+                    and not self._registry.continue_on_failure
+                )
             results.append(result)
             if result_callback is not None:
                 result_callback(result)
-            if (
-                result.status in {AnalyzerStatus.ERROR, AnalyzerStatus.TIMEOUT}
-                and not self._registry.continue_on_failure
-            ):
-                break
         return tuple(results)
 
     def preprocessing_requirements(self, media_type: MediaType) -> PreprocessingRequirements:
@@ -329,6 +332,30 @@ def _with_duration(result: AnalyzerResult, duration_ms: int) -> AnalyzerResult:
         return AnalyzerResult.model_validate(data)
     except ValidationError:
         raise AnalyzerInfrastructureError("result_duration") from None
+
+
+def _skipped_result(active: _ActiveAnalyzer, prepared_media: PreparedMedia) -> AnalyzerResult:
+    registration = active.registration
+    result = AnalyzerResult(
+        analyzer_id=registration.analyzer_id,
+        analyzer_version=registration.analyzer_version,
+        media_type=prepared_media.media_type,
+        group=registration.group,
+        status=AnalyzerStatus.SKIPPED,
+        applicable=True,
+        started_at=None,
+        finished_at=None,
+        duration_ms=None,
+        score=None,
+        score_name=None,
+        summary="Analyzer skipped by runtime policy after an earlier analyzer failure.",
+        raw_metrics={},
+        candidate_findings=[],
+        warnings=[],
+        errors=[],
+    )
+    _serialize_stage5_analyzer_result(result)
+    return result
 
 
 def _failure_result(

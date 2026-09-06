@@ -14,6 +14,7 @@ import yaml
 
 import fakedetector
 import fakedetector.analyzers as analyzers_package
+import fakedetector.analyzers._orchestrator as orchestrator_module
 import fakedetector.analyzers._worker as analyzer_worker_module
 import fakedetector.domain as domain
 from fakedetector._stage5_resources import _MAX_STAGE5_ARTIFACTS
@@ -395,8 +396,9 @@ def test_analyzer_error_obeys_continue_policy(
 
     assert results[0].status is AnalyzerStatus.ERROR
     assert results[0].errors[0].code == "analyzer_error"
-    assert [result.analyzer_id for result in results] == (
-        enabled if continue_on_failure else enabled[:1]
+    assert [result.analyzer_id for result in results] == enabled
+    assert results[1].status is (
+        AnalyzerStatus.COMPLETED if continue_on_failure else AnalyzerStatus.SKIPPED
     )
 
 
@@ -417,8 +419,9 @@ def test_analyzer_timeout_obeys_continue_policy(
 
     assert results[0].status is AnalyzerStatus.TIMEOUT
     assert results[0].errors[0].code == "analyzer_timeout"
-    assert [result.analyzer_id for result in results] == (
-        enabled if continue_on_failure else enabled[:1]
+    assert [result.analyzer_id for result in results] == enabled
+    assert results[1].status is (
+        AnalyzerStatus.COMPLETED if continue_on_failure else AnalyzerStatus.SKIPPED
     )
 
 
@@ -512,6 +515,100 @@ class _ExecutingRunner:
             _WorkerRunKind.RESPONSE,
             duration_ms=1,
             response=_execute_worker(request),
+        )
+
+
+class _PolicyRunner(_ExecutingRunner):
+    def run(self, request: _WorkerRequest, timeout_seconds: float) -> _WorkerRun:
+        if request.worker_key == "framework_test.hang":
+            self.requests.append(request)
+            return _WorkerRun(_WorkerRunKind.TIMEOUT, duration_ms=1)
+        return super().run(request, timeout_seconds)
+
+
+@pytest.mark.parametrize("failure", [AnalyzerStatus.ERROR, AnalyzerStatus.TIMEOUT])
+@pytest.mark.parametrize(
+    "prior_status", [None, AnalyzerStatus.COMPLETED, AnalyzerStatus.NOT_APPLICABLE]
+)
+def test_runtime_policy_publishes_all_remaining_enabled_without_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: AnalyzerStatus,
+    prior_status: AnalyzerStatus | None,
+) -> None:
+    prior = [] if prior_status is None else ["fake_image_second_analyzer"]
+    failing = "fake_error_analyzer" if failure is AnalyzerStatus.ERROR else "fake_hang_analyzer"
+    tail = ["fake_serialization_analyzer", "fake_image_analyzer"]
+    enabled = [*prior, failing, *tail]
+    runner = _PolicyRunner()
+    orchestrator = _orchestrator(
+        _config(
+            MediaType.IMAGE,
+            enabled,
+            continue_on_failure=False,
+            settings={
+                "fake_image_second_analyzer": {
+                    "applicable": prior_status is not AnalyzerStatus.NOT_APPLICABLE
+                },
+                "fake_image_analyzer": {"applicable": False},
+            },
+        ),
+        runner=runner,
+    )
+    published: list[AnalyzerResult] = []
+    serialized_skips: list[str] = []
+
+    def encode(result: AnalyzerResult) -> bytes:
+        if result.status is AnalyzerStatus.SKIPPED:
+            serialized_skips.append(result.analyzer_id)
+        return _serialize_stage5_analyzer_result(result)
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("runtime-policy skip performed analyzer or preprocessing work")
+
+    def publish(result: AnalyzerResult) -> None:
+        published.append(result)
+        if result.status is failure:
+            monkeypatch.setattr(orchestrator, "_execute_active", forbidden)
+
+    monkeypatch.setattr(AnalyzerRegistry, "preprocessing_requirements", forbidden)
+    monkeypatch.setattr(orchestrator_module, "_serialize_stage5_analyzer_result", encode)
+    with _prepared_case(tmp_path) as case:
+        results = orchestrator.execute(
+            case.prepared, case.descriptor, case.registry, result_callback=publish
+        )
+
+    assert [result.analyzer_id for result in results] == enabled
+    assert serialized_skips == tail
+    assert tuple(published) == results
+    assert all(actual is expected for actual, expected in zip(published, results, strict=True))
+    assert [result.status for result in results] == [
+        *([] if prior_status is None else [prior_status]),
+        failure,
+        AnalyzerStatus.SKIPPED,
+        AnalyzerStatus.SKIPPED,
+    ]
+    assert len(runner.requests) == len(prior) + 1
+    assert [request.worker_key for request in runner.requests] == [
+        *([] if not prior else ["framework_test.image_second"]),
+        "framework_test.error" if failure is AnalyzerStatus.ERROR else "framework_test.hang",
+    ]
+    registrations = {item.analyzer_id: item for item in _framework_test_registrations()}
+    for result in results[-len(tail) :]:
+        registration = registrations[result.analyzer_id]
+        assert result.analyzer_version == registration.analyzer_version
+        assert result.group == registration.group
+        assert result.media_type is MediaType.IMAGE
+        assert result.applicable is True
+        assert result.started_at is result.finished_at is result.duration_ms is None
+        assert result.score is result.score_name is None
+        assert result.raw_metrics == {}
+        assert result.candidate_findings == result.errors == result.warnings == []
+        assert result.summary == (
+            "Analyzer skipped by runtime policy after an earlier analyzer failure."
+        )
+        assert (
+            AnalyzerResult.model_validate_json(_serialize_stage5_analyzer_result(result)) == result
         )
 
 

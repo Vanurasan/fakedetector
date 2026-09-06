@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 5 — Предварительная обработка и каркас анализаторов
 Статус этапа: IN_PROGRESS
-Ближайшее действие: исправления по итогам финального аудита Stage 5 — R4
+Ближайшее действие: повторный независимый финальный аудит Stage 5
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increments 1–5 реализовали internal models/capability boundary, shared bounded subprocess primitive с parity migration Stage 3, image/audio/video preprocessing, analyzer registry/orchestration со spawned-process timeout и интегрированный Stage 4 → Stage 5 lifecycle; исходный полный набор проверок: 1143 passed, 2 skipped, coverage 90%; Stage 5 Increments 1–5 = DONE, исправления по итогам финального аудита = IN_PROGRESS, R1–R3 = DONE, остаются R4 и повторный финальный аудит
+Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increments 1–5 реализовали internal models/capability boundary, shared bounded subprocess primitive с parity migration Stage 3, image/audio/video preprocessing, analyzer registry/orchestration со spawned-process timeout и интегрированный Stage 4 → Stage 5 lifecycle; исходный полный набор проверок: 1143 passed, 2 skipped, coverage 90%; Stage 5 Increments 1–5 = DONE, исправления по итогам финального аудита = IN_PROGRESS, R1–R4 = DONE, остаётся повторный финальный аудит
 Документационная база: сформирована
 ```
 
@@ -742,7 +742,7 @@ timestamp.
 4. **Increment 4 — DONE:** analyzer registry/orchestration + hard process timeout.
 5. **Increment 5 — DONE:** integrated Stage 4 → Stage 5 lifecycle.
 6. **Исправления по итогам финального аудита Stage 5 — IN_PROGRESS:** аудит в
-   режиме только для чтения завершён; R1–R3 = DONE, остаются R4 и повторный
+   режиме только для чтения завершён; R1–R4 = DONE, остаётся повторный
    финальный аудит.
 
 Increment 2 выделил private shared process boundary с hard-bounded stdout,
@@ -784,10 +784,12 @@ passed, 2 skipped, coverage 90%.
 результатам финального аудита, проведённого в режиме только для чтения. R1
 закрывает `S5-AUD-001` и `S5-AUD-002`; R2 закрывает `S5-AUD-003`,
 `S5-AUD-004`, `S5-AUD-005`, `S5-AUD-006` и `S5-AUD-011`; R3 закрывает
-`S5-AUD-007`, `S5-AUD-008` и `S5-AUD-010`. Этап сохраняет статус
-`IN_PROGRESS`, пока не выполнены R4 и повторный финальный аудит. Следующее
-действие — исправления R4. Полная проверка R3: 1218 passed, 2 skipped, coverage
-90% (89,63% без округления); целевая проверка: 268 passed, 1 skipped.
+`S5-AUD-007`, `S5-AUD-008` и `S5-AUD-010`; R4 закрывает `S5-AUD-009` и
+`S5-AUD-012`. Этап сохраняет статус `IN_PROGRESS` до повторного независимого
+финального аудита; это следующее действие. Полная проверка R4: 1236 passed,
+2 skipped, coverage 90% (89,69% при точности до сотых); целевая проверка:
+217 passed. Ruff, проверка форматирования затронутых Python-файлов, mypy,
+`poe check`, pre-commit, CLI smoke и `git diff --check` прошли.
 
 ## Исправления по итогам финального аудита
 
@@ -798,7 +800,9 @@ passed, 2 skipped, coverage 90%.
   идентификатор снимка конфигурации;
 - [x] R3 — резервирование артефактов с учётом псевдонимов путей Windows, очистка исходных
   EXIF/XMP/ICC из нормализованного PNG и обязательность нормализации в конфигурации;
-- [ ] R4 — оставшиеся исправления;
+- [x] R4 — публикация оставшихся включённых анализаторов как `SKIPPED` по политике
+  остановки и неизменяемое авторитетное хранение результатов с отделённым чтением
+  через реестр; единый сериализатор и предел R2 сохранены;
 - [ ] повторный независимый финальный аудит.
 
 ## Обязательные задачи

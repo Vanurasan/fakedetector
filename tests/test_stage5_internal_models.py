@@ -28,7 +28,7 @@ from fakedetector.intake import AcceptedSource, LocalTemporaryInputOwner
 from fakedetector.intake.temporary_input import PreparedSourceRef
 from fakedetector.lifecycle import AnalysisContext, AnalysisTask, TaskSnapshot
 from fakedetector.lifecycle.artifacts import WorkspaceArtifactRegistry
-from fakedetector.lifecycle.models import Stage5TaskData
+from fakedetector.lifecycle.models import Stage5TaskData, _StoredAnalyzerResult
 from fakedetector.preprocessing._models import PreparedArtifact, PreparedMedia
 
 _CREATED_AT = datetime(2026, 9, 2, 8, 0, tzinfo=UTC)
@@ -134,12 +134,39 @@ def cleanup_prepared(
 
 def test_stage5_internal_types_do_not_expand_public_exports() -> None:
     for module, internal_names in (
-        (fakedetector, ("PreparedSourceRef", "WorkspaceArtifactRef", "Stage5TaskData")),
+        (
+            fakedetector,
+            (
+                "PreparedSourceRef",
+                "WorkspaceArtifactRef",
+                "Stage5TaskData",
+                "_StoredAnalyzerResult",
+                "_read_stage5_analyzer_results",
+            ),
+        ),
         (intake, ("PreparedSourceRef",)),
-        (lifecycle, ("WorkspaceArtifactRef", "Stage5TaskData")),
+        (
+            lifecycle,
+            (
+                "WorkspaceArtifactRef",
+                "Stage5TaskData",
+                "_StoredAnalyzerResult",
+                "_read_stage5_analyzer_results",
+            ),
+        ),
         (preprocessing, ("PreparedArtifact", "PreparedMedia")),
     ):
         assert not any(hasattr(module, name) for name in internal_names)
+
+
+@pytest.mark.parametrize("mutable_json", [bytearray(b"{}"), memoryview(b"{}")])
+def test_stored_analyzer_result_rejects_non_bytes_storage(mutable_json: object) -> None:
+    with pytest.raises(TypeError, match="immutable bytes"):
+        _StoredAnalyzerResult(
+            analyzer_id="fake_image_analyzer",
+            media_type=MediaType.IMAGE,
+            canonical_json=cast(bytes, mutable_json),
+        )
 
 
 def test_prepared_models_are_immutable_defensive_and_path_free(tmp_path: Path) -> None:

@@ -678,6 +678,10 @@ plan и не получает вызов applicability; enabled analyzer мож�
 enabled analyzer проходят analyzer-owned typed validation до начала task
 execution.
 
+При `error_handling.continue_if_analyzer_fails=false` после первого `ERROR` или
+`TIMEOUT` оставшиеся включённые анализаторы публикуются как `SKIPPED` в том же
+порядке, без проверки применимости и запуска новых рабочих процессов.
+
 Generic analyzer invocation изолируется отдельным spawned child process без
 матрицы execution modes. Parent преобразует internal models в private picklable
 `WorkerRequest`; trusted worker локально создаёт read-only analyzer inputs.
@@ -895,7 +899,10 @@ Stage 5 заканчивается primary outcome и не меняет terminal
 `COMPLETED | FAILED / CLEANUP → same primary status / FINISHED`, cleanup и
 FINISHED publication. Concrete preprocessors и analyzers lifecycle самостоятельно
 не изменяют. До Stages 6–8 подготовленные данные и `AnalyzerResult[]` хранятся
-только внутри in-process task aggregate; Stage 5 не создаёт `Finding`, полноту,
+только внутри in-process task aggregate. Авторитетное хранилище результатов
+анализаторов неизменяемо; внутреннее чтение через реестр возвращает отделённые
+канонические значения. Формат хранения и граница чтения определены в
+`CONTRACTS.md` §3.3. Stage 5 не создаёт `Finding`, полноту,
 риск, `AnalysisResult`, persistence, HTTP/WebUI analysis, SQLite, broker, durable
 recovery или реальные forensic analyzers.
 
