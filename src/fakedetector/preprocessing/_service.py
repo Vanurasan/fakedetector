@@ -546,7 +546,10 @@ def _decode_normalized_image(source_ref: PreparedSourceRef) -> Image.Image:
         with source_ref.open_for_read() as source, warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(source) as image:
-                image.seek(0)
+                first_frame = (
+                    1 if image.format == "PNG" and getattr(image, "default_image", False) else 0
+                )
+                image.seek(first_frame)
                 image.load()
                 oriented = ImageOps.exif_transpose(image)
                 try:
@@ -571,7 +574,7 @@ def _decode_normalized_image(source_ref: PreparedSourceRef) -> Image.Image:
 
 
 def _requires_alpha(image: Image.Image) -> bool:
-    if "A" not in image.getbands() and not (image.mode == "P" and "transparency" in image.info):
+    if "A" not in image.getbands() and "transparency" not in image.info:
         return False
     rgba = image.convert("RGBA")
     try:

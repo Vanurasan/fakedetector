@@ -1083,8 +1083,13 @@ ownership semantics.
 
 - Image: lossless PNG без resize, RGB/RGBA normalization и применённая EXIF
   orientation; исходный `ValidatedFileDescriptor` не переписывается, metadata
-  bounded и safe, raw EXIF/XMP/ICC blobs не сохраняются. Для multi-frame input
-  normalized representation содержит первый отображаемый frame, существующий
+  bounded и safe, raw EXIF/XMP/ICC blobs не сохраняются. PNG transparency,
+  влияющая на пиксели через `tRNS`, материализуется в RGBA до очистки metadata;
+  raw `tRNS` в normalized representation не переносится. Для multi-frame input
+  normalized representation содержит первый animation frame. Если APNG имеет
+  отдельный default image, не входящий в animation sequence, выбирается следующий
+  первый реальный animation frame; для APNG без отдельного default image и других
+  animated formats сохраняется обычная семантика первого кадра. Существующий
   factual `frame_count` сохраняется, metadata явно фиксирует scope `first_frame`,
   а warnings сообщают, что representation не покрывает temporal behavior. Такое
   представление не называется полным temporal analysis.
@@ -1105,11 +1110,12 @@ ownership semantics.
   новое config field.
 
 Нормализованный PNG изображения не наследует исходные метаданные Pillow:
-после выбора кадра, применения ориентации EXIF и преобразования в RGB/RGBA
-унаследованная `.info` очищается. В сохранённом PNG остаются только пиксели и
-необходимые структурные данные. Отдельные фактические параметры исходника и
-представления, включая размеры, цветовой режим, `frame_count` и `has_metadata`,
-сохраняют прежнюю семантику и не являются исходными EXIF/XMP/ICC-блоками.
+после выбора кадра применяется ориентация EXIF, влияющая на пиксели transparency
+материализуется в alpha при преобразовании в RGB/RGBA, после чего унаследованная
+`.info` очищается. В сохранённом PNG остаются только пиксели и необходимые
+структурные данные. Отдельные фактические параметры исходника и представления,
+включая размеры, цветовой режим, `frame_count` и `has_metadata`, сохраняют
+прежнюю семантику и не являются исходными EXIF/XMP/ICC-блоками.
 
 ---
 

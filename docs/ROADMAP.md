@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 5 — Предварительная обработка и каркас анализаторов
 Статус этапа: IN_PROGRESS
-Ближайшее действие: R6 — оставшиеся замечания аудита изображений; затем повторный финальный аудит Stage 5
+Ближайшее действие: focused closure rerun финального аудита Stage 5
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increments 1–5 реализовали internal models/capability boundary, shared bounded subprocess primitive с parity migration Stage 3, image/audio/video preprocessing, analyzer registry/orchestration со spawned-process timeout и интегрированный Stage 4 → Stage 5 lifecycle; исходный полный набор проверок: 1143 passed, 2 skipped, coverage 90%; Stage 5 Increments 1–5 = DONE, исправления по итогам финального аудита = IN_PROGRESS, R1–R5 = DONE; замечания аудита изображений и повторный финальный аудит остаются невыполненными
+Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increments 1–5 реализовали internal models/capability boundary, shared bounded subprocess primitive с parity migration Stage 3, image/audio/video preprocessing, analyzer registry/orchestration со spawned-process timeout и интегрированный Stage 4 → Stage 5 lifecycle; исходный полный набор проверок: 1143 passed, 2 skipped, coverage 90%; Stage 5 Increments 1–5 = DONE, исправления по итогам финального аудита = IN_PROGRESS, R1–R6 = DONE; focused closure rerun финального аудита остаётся невыполненным
 Документационная база: сформирована
 ```
 
@@ -742,8 +742,8 @@ timestamp.
 4. **Increment 4 — DONE:** analyzer registry/orchestration + hard process timeout.
 5. **Increment 5 — DONE:** integrated Stage 4 → Stage 5 lifecycle.
 6. **Исправления по итогам финального аудита Stage 5 — IN_PROGRESS:** аудит в
-   режиме только для чтения завершён; R1–R5 = DONE; исправления замечаний аудита
-   изображений и повторный финальный аудит ожидают выполнения.
+   режиме только для чтения завершён; R1–R6 = DONE; focused closure rerun
+   финального аудита ожидает выполнения.
 
 Increment 2 выделил private shared process boundary с hard-bounded stdout,
 discard-режимом, explicit cwd, `shell=False`, disabled stdin, timeout и
@@ -787,7 +787,7 @@ passed, 2 skipped, coverage 90%.
 `S5-AUD-007`, `S5-AUD-008` и `S5-AUD-010`; R4 закрывает `S5-AUD-009` и
 `S5-AUD-012`. R5 устраняет оставшийся путь прерывания `S5-AUD-001`,
 воспроизведённый повторным аудитом. Этап сохраняет статус `IN_PROGRESS`:
-замечания аудита изображений ожидают R6, затем требуется повторный финальный аудит.
+R6 закрыл замечания аудита изображений; требуется focused closure rerun финального аудита.
 Полная проверка R4: 1236 passed,
 2 skipped, coverage 90% (89,69% при точности до сотых); целевая проверка:
 217 passed. Ruff, проверка форматирования затронутых Python-файлов, mypy,
@@ -816,7 +816,9 @@ passed, 2 skipped, coverage 90%.
 - [x] R5 — прерывание после запуска рабочего или дочернего процесса проходит
   ограниченную последовательность stop/reap; исходное прерывание сохраняется, неподтверждённая безопасность
   передаётся через существующий R1 barrier и блокирует cleanup/release/FINISHED;
-- [ ] R6 — оставшиеся замечания аудита изображений (APNG и tRNS);
+- [x] R6 — оставшиеся замечания аудита изображений (APNG и tRNS): отдельный
+  default image не подменяет первый APNG animation frame, а RGB/grayscale/palette
+  `tRNS` материализуется в alpha до очистки raw metadata;
 - [ ] повторный независимый финальный аудит (final closure rerun).
 
 ## Обязательные задачи

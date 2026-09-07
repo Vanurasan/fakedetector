@@ -256,6 +256,19 @@ def _assert_registered_before_first_access(
         assert registry.events[first_access][2] is False
 
 
+def _png_chunk_types(path: Path) -> list[bytes]:
+    data = path.read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    offset = 8
+    chunks = []
+    while offset < len(data):
+        length = int.from_bytes(data[offset : offset + 4], "big")
+        chunks.append(data[offset + 4 : offset + 8])
+        offset += length + 12
+    assert offset == len(data)
+    return chunks
+
+
 @pytest.mark.parametrize(
     ("mode", "pixel", "expected_mode"),
     [
@@ -304,6 +317,88 @@ def test_image_normalizes_png_without_resize_and_keeps_only_required_alpha(
         "scope": "first_frame",
     }
     _assert_registered_before_first_access(prepared, case.registry)
+    case.cleanup()
+
+
+@pytest.mark.parametrize(
+    ("mode", "pixels", "transparency", "expected_pixels"),
+    [
+        (
+            "RGB",
+            [(10, 20, 30), (40, 50, 60)],
+            (10, 20, 30),
+            [(10, 20, 30, 0), (40, 50, 60, 255)],
+        ),
+        (
+            "L",
+            [10, 40],
+            10,
+            [(10, 10, 10, 0), (40, 40, 40, 255)],
+        ),
+    ],
+)
+def test_png_trns_is_materialized_as_rgba_pixels_without_raw_metadata(
+    tmp_path: Path,
+    mode: str,
+    pixels: list[int] | list[tuple[int, int, int]],
+    transparency: int | tuple[int, int, int],
+    expected_pixels: list[tuple[int, int, int, int]],
+) -> None:
+    source_path = tmp_path / "source.png"
+    with Image.new(mode, (2, 1)) as image:
+        image.putdata(pixels)
+        image.save(source_path, format="PNG", transparency=transparency)
+    assert b"tRNS" in _png_chunk_types(source_path)
+    case = _case(
+        tmp_path,
+        source_path,
+        _image_descriptor(width=2, height=1, image_format="PNG", color_mode=mode),
+    )
+
+    prepared = ImagePreprocessor(ImagePreprocessingConfig()).prepare(
+        case.request,
+        PreprocessingRequirements(),
+    )
+
+    normalized_path = _artifact_path(case.registry, prepared.artifacts[0])
+    with Image.open(normalized_path) as normalized:
+        normalized.load()
+        assert normalized.mode == "RGBA"
+        assert list(normalized.get_flattened_data()) == expected_pixels
+        assert normalized.info == {}
+    assert b"tRNS" not in _png_chunk_types(normalized_path)
+    case.cleanup()
+
+
+def test_palette_png_transparency_is_materialized_as_rgba_pixels(tmp_path: Path) -> None:
+    source_path = tmp_path / "palette.png"
+    palette = [255, 0, 0, 0, 255, 0] + [0] * (256 * 3 - 6)
+    with Image.new("P", (2, 1)) as image:
+        image.putpalette(palette)
+        image.putdata([0, 1])
+        image.save(source_path, format="PNG", transparency=0)
+    assert b"tRNS" in _png_chunk_types(source_path)
+    case = _case(
+        tmp_path,
+        source_path,
+        _image_descriptor(width=2, height=1, image_format="PNG", color_mode="P"),
+    )
+
+    prepared = ImagePreprocessor(ImagePreprocessingConfig()).prepare(
+        case.request,
+        PreprocessingRequirements(),
+    )
+
+    normalized_path = _artifact_path(case.registry, prepared.artifacts[0])
+    with Image.open(normalized_path) as normalized:
+        normalized.load()
+        assert normalized.mode == "RGBA"
+        assert list(normalized.get_flattened_data()) == [
+            (255, 0, 0, 0),
+            (0, 255, 0, 255),
+        ]
+        assert normalized.info == {}
+    assert b"tRNS" not in _png_chunk_types(normalized_path)
     case.cleanup()
 
 
@@ -385,15 +480,7 @@ def test_normalized_png_strips_raw_metadata_and_preserves_oriented_pixels_and_fa
         assert normalized.info == {}
         assert not normalized.getexif()
         assert normalized.n_frames == 1
-    data = normalized_path.read_bytes()
-    assert data[:8] == b"\x89PNG\r\n\x1a\n"
-    offset = 8
-    chunks = []
-    while offset < len(data):
-        length = int.from_bytes(data[offset : offset + 4], "big")
-        chunks.append(data[offset + 4 : offset + 8])
-        offset += length + 12
-    assert offset == len(data)
+    chunks = _png_chunk_types(normalized_path)
     assert chunks[0] == b"IHDR"
     assert chunks[-1] == b"IEND"
     assert set(chunks) == {b"IHDR", b"IDAT", b"IEND"}
@@ -417,7 +504,59 @@ def test_normalized_png_strips_raw_metadata_and_preserves_oriented_pixels_and_fa
     case.cleanup()
 
 
-def test_multiframe_image_uses_first_displayed_frame_and_warns(tmp_path: Path) -> None:
+def test_apng_with_separate_default_uses_first_animation_frame_and_warns(tmp_path: Path) -> None:
+    source_path = tmp_path / "animated.png"
+    with (
+        Image.new("RGB", (5, 4), (255, 0, 0)) as default,
+        Image.new("RGB", (5, 4), (0, 255, 0)) as first,
+        Image.new("RGB", (5, 4), (0, 0, 255)) as second,
+    ):
+        default.save(
+            source_path,
+            format="PNG",
+            save_all=True,
+            append_images=[first, second],
+            default_image=True,
+            duration=[100, 100],
+            loop=0,
+        )
+    with Image.open(source_path) as source:
+        assert source.default_image is True
+        assert source.n_frames == 3
+        assert source.convert("RGB").getpixel((0, 0)) == (255, 0, 0)
+        source.seek(1)
+        assert source.convert("RGB").getpixel((0, 0)) == (0, 255, 0)
+        source.seek(2)
+        assert source.convert("RGB").getpixel((0, 0)) == (0, 0, 255)
+    case = _case(
+        tmp_path,
+        source_path,
+        _image_descriptor(
+            width=5,
+            height=4,
+            image_format="PNG",
+            color_mode="RGB",
+            frame_count=3,
+        ),
+    )
+
+    prepared = ImagePreprocessor(ImagePreprocessingConfig()).prepare(
+        case.request,
+        PreprocessingRequirements(),
+    )
+
+    with Image.open(_artifact_path(case.registry, prepared.artifacts[0])) as normalized:
+        assert normalized.mode == "RGB"
+        assert normalized.getpixel((0, 0)) == (0, 255, 0)
+    assert cast(dict[str, object], prepared.metadata["source"])["frame_count"] == 3
+    assert prepared.metadata["frame_scope"] == "first_frame"
+    assert len(prepared.warnings) == 1
+    case.cleanup()
+
+
+def test_apng_without_separate_default_uses_first_animation_frame_and_warns(
+    tmp_path: Path,
+) -> None:
     source_path = tmp_path / "animated.png"
     with (
         Image.new("RGB", (5, 4), (255, 0, 0)) as first,
@@ -431,6 +570,10 @@ def test_multiframe_image_uses_first_displayed_frame_and_warns(tmp_path: Path) -
             duration=100,
             loop=0,
         )
+    with Image.open(source_path) as source:
+        assert source.default_image is False
+        assert source.n_frames == 2
+        assert source.convert("RGB").getpixel((0, 0)) == (255, 0, 0)
     case = _case(
         tmp_path,
         source_path,
@@ -449,11 +592,52 @@ def test_multiframe_image_uses_first_displayed_frame_and_warns(tmp_path: Path) -
     )
 
     with Image.open(_artifact_path(case.registry, prepared.artifacts[0])) as normalized:
-        assert normalized.convert("RGB").getpixel((0, 0)) == (255, 0, 0)
+        assert normalized.mode == "RGB"
+        assert normalized.getpixel((0, 0)) == (255, 0, 0)
     assert cast(dict[str, object], prepared.metadata["source"])["frame_count"] == 2
     assert prepared.metadata["frame_scope"] == "first_frame"
     assert len(prepared.warnings) == 1
     assert "temporal behavior" in prepared.warnings[0]
+    case.cleanup()
+
+
+def test_animated_gif_keeps_first_frame_semantics(tmp_path: Path) -> None:
+    source_path = tmp_path / "animated.gif"
+    with (
+        Image.new("RGB", (5, 4), (255, 0, 0)) as first,
+        Image.new("RGB", (5, 4), (0, 0, 255)) as second,
+    ):
+        first.save(
+            source_path,
+            format="GIF",
+            save_all=True,
+            append_images=[second],
+            duration=100,
+            loop=0,
+        )
+    case = _case(
+        tmp_path,
+        source_path,
+        _image_descriptor(
+            width=5,
+            height=4,
+            image_format="GIF",
+            color_mode="P",
+            frame_count=2,
+            original_name="animated.gif",
+        ),
+    )
+
+    prepared = ImagePreprocessor(ImagePreprocessingConfig()).prepare(
+        case.request,
+        PreprocessingRequirements(),
+    )
+
+    with Image.open(_artifact_path(case.registry, prepared.artifacts[0])) as normalized:
+        assert normalized.mode == "RGB"
+        assert normalized.getpixel((0, 0)) == (255, 0, 0)
+    assert cast(dict[str, object], prepared.metadata["source"])["frame_count"] == 2
+    assert len(prepared.warnings) == 1
     case.cleanup()
 
 

@@ -633,10 +633,13 @@ cleanup`; отдельная Stage 5 cleanup subsystem не вводится.
 - обязательное нормализованное представление в PNG со сжатием без потерь и без изменения размеров,
   с применённой ориентацией EXIF и преобразованием в RGB/RGBA; PNG содержит
   только пиксели и необходимые структурные данные, без исходных EXIF/XMP/ICC;
+  влияющая на пиксели PNG transparency материализуется в alpha до удаления raw
+  metadata, поэтому исходный `tRNS` в нормализованный PNG не переносится;
 - bounded safe metadata без raw EXIF/XMP/ICC blobs;
-- first-frame normalized representation для multi-frame image с сохранением
-  factual frame count и явным предупреждением об отсутствии полного temporal
-  analysis.
+- first-frame normalized representation для multi-frame image содержит первый
+  animation frame; отдельный APNG default image, не входящий в animation
+  sequence, не подменяет этот кадр. Factual frame count сохраняется, а отсутствие
+  полного temporal analysis отмечается явным предупреждением.
 
 Для аудио:
 
