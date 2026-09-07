@@ -392,6 +392,12 @@ Internal application model `AnalysisTask` может агрегировать:
 репозиторий, persistence, промежуточный `AnalysisResult` и
 `ResultRepository.save()` не создаются.
 
+Stage 6 хранит нормализованные `Finding[]` в отдельном sibling task state и не
+расширяет смысл `Stage5TaskData`. Новое состояние остаётся internal-only,
+сохраняет связь каждого finding с `source_analyzer_id` и
+`source_analyzer_version` и не вводит промежуточный `AnalysisResult`, persistence
+или public schema.
+
 До visible terminal publication aggregate может содержать минимальный
 internal-only `TerminalSettlement`. Он не входит в `TaskSnapshot`, external JSON,
 domain schema или persistence model. Его фазы:
@@ -1446,6 +1452,24 @@ stdout читается ограниченными блоками и поток�
 ```
 
 Дополнительные виды локализации требуют повышения минорной версии схемы.
+
+### 9.4. Finding policy Stage 6 MVP v1
+
+Stage 6 преобразует analyzer `candidate_findings` в нормализованные `Finding`.
+Для первоначального профиля v1 действуют следующие нормативные ограничения:
+
+- все первоначальные findings имеют `severity=weak`;
+- `AnalyzerResult.score=null` и `AnalyzerResult.score_name=null`;
+- `Finding.source_score=null` и `Finding.score_impact=null`;
+- `Finding.critical_override_eligible=false`;
+- AI probability не формируется;
+- heuristic thresholds не получают статистической интерпретации и являются
+  versioned deterministic MVP defaults.
+
+Analyzer identity, analyzer version и связь finding с источником сохраняются при
+преобразовании. Значения threshold могут изменяться в Stage 6 только после
+обоснования deterministic positive/negative/challenge fixtures и фиксации
+изменения. Это уточнение поведения не меняет структуру external schema `1.0`.
 
 ---
 

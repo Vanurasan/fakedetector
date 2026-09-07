@@ -342,6 +342,31 @@ YYYY-MM-DD
 
 ### 2026-09-07
 
+### Decision
+
+- **[Stage 6/Increment 0] Приняты Profile B и provenance policy перед
+  реализацией реальных analyzers.** Profile B содержит
+  `image_metadata_consistency`, `audio_pcm_quality`,
+  `video_sampled_frame_quality` и `image_copy_move_correspondence` версии
+  `1.0.0`; MVP остаётся CPU-only без ML, model weights, PyTorch, CUDA и без
+  audio/video content detection. Первоначальные findings имеют только
+  `severity=weak`, nullable score-поля остаются `null`, critical override
+  запрещён, а deterministic thresholds не получают статистической или
+  вероятностной интерпретации. Нормализованные `Finding[]` принадлежат отдельному
+  sibling Stage 6 task state и не расширяют `Stage5TaskData`.
+- **[Stage 6/Dependencies, fixtures и provenance] Зафиксированы воспроизводимые
+  prerequisites реализации.** Для copy-move analyzer запланированы
+  `opencv-python-headless==4.14.0.94` и `numpy==2.5.2` с обязательным Increment 2
+  smoke gate и возможностью только dependency correction при несовместимых
+  wheels; остальные analyzers не требуют новых runtime dependencies. Fixtures
+  создаются детерминированно для positive, negative, false-positive/challenge и
+  boundary/not-applicable случаев без заявления validation dataset. Новый
+  канонический `REFERENCES.md` разделяет происхождение метода и реализации по
+  правилу NO PROVENANCE — NO ANALYZER; текущий development/reference computer
+  допустим для benchmark, но не является deployment requirement,
+  предварительный ориентир — x86-64 CPU и 16 GiB RAM без GPU, а окончательные
+  требования определяются closure benchmark.
+
 ### Changed
 
 - **[Roadmap/Stage 5] Этап 5 официально закрыт.** Remediation завершена;

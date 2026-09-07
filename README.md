@@ -101,6 +101,7 @@ skipped, coverage 89.76%**; branch coverage включён.
 - [CONTRACTS](docs/CONTRACTS.md) — модели данных, интерфейсы и нормативное
   поведение.
 - [ROADMAP](docs/ROADMAP.md) — этапы разработки и текущий статус.
+- [REFERENCES](docs/REFERENCES.md) — происхождение методов и реализаций анализаторов.
 - [CHANGELOG](docs/CHANGELOG.md) — история существенных изменений и принятых
   решений.
 

@@ -112,10 +112,10 @@ AFTER_MVP
 ```text
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 6 — Базовые анализаторы и формирование признаков
-Статус этапа: NOT_STARTED
-Ближайшее действие: выбрать минимальный набор реальных MVP analyzers, их версии, applicability, fixtures и analyzer-specific semantics для raw_metrics / candidate_findings
+Статус этапа: IN_PROGRESS
+Ближайшее действие: реализовать technical analyzer + Finding vertical slice
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–5 завершены; Stage 5 Increments 1–5 и remediation R1–R6 = DONE; final verification = PASS; focused closure audit = PASS; Architecture Truth Review = CLOSE_STAGE5_UNCHANGED; следующий этап — Stage 6
+Реализация программы: Этапы 1–5 завершены; Stage 6 Increment 0 documentation prerequisite = DONE; Profile B и provenance policy приняты; production implementation Stage 6 ещё не начата
 Документационная база: сформирована
 ```
 
@@ -133,9 +133,12 @@ AFTER_MVP
 
 ### 2.2. Ближайшие три результата
 
-1. приложение запускается и валидирует конфигурацию;
-2. файл проходит единый приём, проверку и безопасную очистку;
-3. сквозной тестовый анализ формирует JSON-результат через заглушечный анализатор.
+1. technical analyzer + Finding vertical slice сохраняет нормализованные признаки
+   в отдельном sibling Stage 6 task state;
+2. dependency smoke gate подтверждает planned OpenCV/NumPy pins, после чего
+   реализуется `image_copy_move_correspondence`;
+3. все четыре analyzer Profile B проходят deterministic fixtures, а closure
+   benchmark фиксирует фактические resource requirements.
 
 ---
 
@@ -149,7 +152,7 @@ AFTER_MVP
 | 3 | Приём и первичная проверка файлов | DONE | Безопасно принятый или отклонённый файл |
 | 4 | Жизненный цикл задачи, хранение и маршрутизация | DONE | Управляемая задача с очисткой |
 | 5 | Предварительная обработка и каркас анализаторов | DONE | Единый запуск анализаторов |
-| 6 | Базовые анализаторы и формирование признаков | NOT_STARTED | Реальные нормализованные признаки |
+| 6 | Базовые анализаторы и формирование признаков | IN_PROGRESS | Реальные нормализованные признаки |
 | 7 | Полнота, риск и рекомендации | NOT_STARTED | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | NOT_STARTED | Пользователь и система получают результат |
 | 9 | Надёжность, безопасность и сквозные тесты | NOT_STARTED | Проверенный MVP |
@@ -902,7 +905,7 @@ applicability, fixtures и analyzer-specific semantics для `raw_metrics` /
 
 ---
 
-# Этап 6. Базовые анализаторы и формирование признаков — NOT_STARTED
+# Этап 6. Базовые анализаторы и формирование признаков — IN_PROGRESS
 
 ## Цель
 
@@ -910,17 +913,99 @@ applicability, fixtures и analyzer-specific semantics для `raw_metrics` /
 
 ## Ворота этапа
 
-До начала должны быть зафиксированы:
+### Increment 0 — analyzer profile, provenance и documentation prerequisite — DONE
 
-- характеристики компьютера;
-- наличие/отсутствие GPU и CUDA;
-- точные analyzer_id;
-- версии библиотек/моделей;
-- лицензии и источники;
-- условия применимости;
-- ожидаемые тестовые данные.
+Owner утвердил Profile B и provenance policy. До production implementation
+зафиксированы:
 
-Если это не определено, этап получает `BLOCKED`, но предыдущий сквозной контур продолжает работать с тестовыми анализаторами.
+- четыре `analyzer_id` и их версии;
+- Finding policy v1 и граница sibling Stage 6 task state;
+- versioned deterministic MVP thresholds;
+- dependency, hardware и fixture policies;
+- обязательный канонический provenance registry `REFERENCES.md`.
+
+Profile B:
+
+| Analyzer | Version | Назначение |
+|---|---|---|
+| `image_metadata_consistency` | `1.0.0` | технический image analyzer |
+| `audio_pcm_quality` | `1.0.0` | технический audio analyzer |
+| `video_sampled_frame_quality` | `1.0.0` | технический video analyzer |
+| `image_copy_move_correspondence` | `1.0.0` | content-oriented image analyzer |
+
+Audio/video content analyzers сознательно не входят в MVP v1. ML analyzers,
+model weights, PyTorch и CUDA не входят в Stage 6 MVP. Профиль остаётся CPU-only;
+GPU не требуется.
+
+### Finding policy v1
+
+- все первоначальные findings имеют `severity=weak`;
+- `score`, `score_name`, `source_score` и `score_impact` равны `null`;
+- `critical_override_eligible=false`;
+- AI probability и статистическая интерпретация heuristic thresholds запрещены;
+- thresholds являются versioned deterministic MVP defaults;
+- candidate findings преобразуются в `Finding` на Stage 6 с сохранением analyzer
+  identity, version и связи с источником;
+- нормализованные `Finding[]` хранятся в отдельном sibling Stage 6 task state;
+  смысл `Stage5TaskData` не расширяется.
+
+### Threshold policy
+
+Для `audio_pcm_quality`:
+
+```text
+full_scale_sample_ratio threshold = 0.001
+```
+
+Для `image_copy_move_correspondence`:
+
+```text
+min_dimension_px = 128
+max_pixels = 12_000_000
+max_keypoints = 5_000
+descriptor_ratio = 0.75
+min_spatial_separation_px = max(32, 0.05 * min_dimension)
+ransac_reprojection_threshold_px = 3
+min_cluster_inliers = 12
+min_cluster_inlier_ratio = 0.5
+max_clusters = 4
+```
+
+Значения не являются статистически валидированными forensic thresholds. Это
+воспроизводимые MVP defaults; их изменение в Stage 6 требует обоснования
+deterministic positive/negative/challenge fixtures и отдельной фиксации.
+
+### Dependency, hardware и fixture policies
+
+- planned pins для `image_copy_move_correspondence`:
+  `opencv-python-headless==4.14.0.94` и `numpy==2.5.2`;
+- Increment 2 до основной реализации выполняет dependency smoke gate: package
+  installation, `import numpy`, `import cv2`, создание ORB и минимальная
+  descriptor operation;
+- несовместимая пара wheels может быть скорректирована как dependency correction
+  без пересмотра архитектуры Stage 6;
+- остальные три analyzers не требуют новых runtime dependencies;
+- текущий development/reference computer можно использовать для benchmark, но
+  он не становится обязательным deployment requirement;
+- предварительный ориентир reference environment: x86-64 CPU, 16 GiB RAM, без
+  GPU; это не окончательная minimum specification;
+- closure increment измеряет фактические resource requirements на benchmark и
+  фиксирует результат;
+- repository хранит deterministic generated positive, negative,
+  false-positive/challenge и boundary/not-applicable fixtures;
+- реальные datasets/media на этом этапе не добавляются, а fixtures не
+  представляются статистической validation dataset.
+
+### Provenance requirement
+
+`REFERENCES.md` является каноническим реестром происхождения методов,
+реализаций, библиотек, repositories, статей, моделей и weights. Правило Stage 6:
+**NO PROVENANCE — NO ANALYZER**. Реальный analyzer нельзя считать завершённым,
+пока применимая provenance information не заполнена и происхождение метода
+отделено от происхождения реализации.
+
+Предыдущий сквозной контур продолжает работать с тестовыми анализаторами до
+появления production implementations.
 
 ## Рекомендуемый минимальный принцип выбора
 
@@ -934,17 +1019,20 @@ applicability, fixtures и analyzer-specific semantics для `raw_metrics` /
 
 ## Обязательные задачи
 
-- [ ] утвердить профиль анализаторов image;
-- [ ] утвердить профиль анализаторов audio;
-- [ ] утвердить профиль анализаторов video;
+- [x] утвердить профиль анализаторов image;
+- [x] утвердить профиль анализаторов audio;
+- [x] утвердить профиль анализаторов video;
 - [ ] реализовать выбранные анализаторы как независимые модули;
-- [ ] зафиксировать версии;
+- [x] зафиксировать версии;
 - [ ] добавить тестовые fixtures;
 - [ ] реализовать преобразование candidate findings в `Finding`;
+- [ ] хранить `Finding[]` в отдельном sibling Stage 6 task state;
 - [ ] сохранять связь с анализатором и версией;
 - [ ] реализовать локализацию, где она доступна;
 - [ ] ввести correlation_group для связанных результатов;
 - [ ] не назначать critical автоматически по confidence.
+- [x] создать `REFERENCES.md` и зафиксировать правило NO PROVENANCE — NO ANALYZER;
+- [ ] актуализировать provenance после каждой фактической реализации analyzer.
 
 ## Обязательные тесты
 
@@ -959,7 +1047,9 @@ applicability, fixtures и analyzer-specific semantics для `raw_metrics` /
 
 ## Критерий завершения
 
-Сквозной контур работает хотя бы с одним утверждённым реальным анализатором для каждого поддерживаемого типа либо с явно утверждённым более узким демонстрационным профилем.
+Сквозной контур работает с утверждённым Profile B; каждый analyzer имеет
+проверенные deterministic fixtures и заполненную запись в `REFERENCES.md`, а
+нормализованные findings сохраняют provenance в отдельном sibling Stage 6 state.
 
 ---
 
