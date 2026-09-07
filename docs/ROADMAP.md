@@ -111,11 +111,11 @@ AFTER_MVP
 
 ```text
 Общий статус: IN_PROGRESS
-Текущий этап: Этап 5 — Предварительная обработка и каркас анализаторов
+Текущий этап: Этап 6 — Базовые анализаторы и формирование признаков
 Статус этапа: NOT_STARTED
-Ближайшее действие: Stage 5 Increment 1 — internal models + source/artifact capability boundary
+Ближайшее действие: выбрать минимальный набор реальных MVP analyzers, их версии, applicability, fixtures и analyzer-specific semantics для raw_metrics / candidate_findings
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–4 завершены; все три functional increment Этапа 4 завершены; historical findings S4-AUD-001, S4-RERUN-001, S4-RERUN2-001, S4-RERUN3-001 и S4-RERUN4-001 независимо подтверждены как CLOSED; independent final audit rerun5 = PASS; quality barrier полностью green: 994 passed, 2 skipped, coverage 91%; repository integrity confirmed; Stage 5 architecture PLAN принят с owner clarifications и зафиксирован как prerequisite, implementation Stage 5 ещё не начат
+Реализация программы: Этапы 1–5 завершены; Stage 5 Increments 1–5 и remediation R1–R6 = DONE; final verification = PASS; focused closure audit = PASS; Architecture Truth Review = CLOSE_STAGE5_UNCHANGED; следующий этап — Stage 6
 Документационная база: сформирована
 ```
 
@@ -148,7 +148,7 @@ AFTER_MVP
 | 2 | Доменные модели и репозитории | DONE | Типизированные модели контрактов |
 | 3 | Приём и первичная проверка файлов | DONE | Безопасно принятый или отклонённый файл |
 | 4 | Жизненный цикл задачи, хранение и маршрутизация | DONE | Управляемая задача с очисткой |
-| 5 | Предварительная обработка и каркас анализаторов | NOT_STARTED | Единый запуск анализаторов |
+| 5 | Предварительная обработка и каркас анализаторов | DONE | Единый запуск анализаторов |
 | 6 | Базовые анализаторы и формирование признаков | NOT_STARTED | Реальные нормализованные признаки |
 | 7 | Полнота, риск и рекомендации | NOT_STARTED | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | NOT_STARTED | Пользователь и система получают результат |
@@ -708,7 +708,7 @@ coverage 91%; repository integrity confirmed. Stage 4 имеет статус `D
 
 ---
 
-# Этап 5. Предварительная обработка и каркас анализаторов — NOT_STARTED
+# Этап 5. Предварительная обработка и каркас анализаторов — DONE
 
 ## Цель
 
@@ -718,7 +718,7 @@ coverage 91%; repository integrity confirmed. Stage 4 имеет статус `D
 
 ```text
 Stage 5 architecture PLAN: ACCEPTED WITH OWNER CLARIFICATIONS
-Implementation status: NOT_STARTED
+Implementation status: DONE
 ```
 
 Архитектурная prerequisite подготовлена и зафиксирована документацией.
@@ -734,69 +734,161 @@ timestamp.
 
 ## Implementation decomposition
 
-Все increments имеют статус `NOT_STARTED`:
+Текущие статусы increments:
 
-1. **Increment 1:** internal models + source/artifact capability boundary.
-2. **Increment 2:** bounded subprocess primitive + Stage 3 parity migration.
-3. **Increment 3:** image/audio/video preprocessing.
-4. **Increment 4:** analyzer registry/orchestration + hard process timeout.
-5. **Increment 5:** integrated Stage 4 → Stage 5 lifecycle.
-6. **Final Stage 5 audit:** отдельный последующий increment/branch после
-   functional readiness.
+1. **Increment 1 — DONE:** internal models + source/artifact capability boundary.
+2. **Increment 2 — DONE:** bounded subprocess primitive + Stage 3 parity migration.
+3. **Increment 3 — DONE:** image/audio/video preprocessing.
+4. **Increment 4 — DONE:** analyzer registry/orchestration + hard process timeout.
+5. **Increment 5 — DONE:** integrated Stage 4 → Stage 5 lifecycle.
+6. **Исправления по итогам финального аудита Stage 5 — DONE:** R1–R6 = DONE;
+   focused closure audit = PASS.
+
+Increment 2 выделил private shared process boundary с hard-bounded stdout,
+discard-режимом, explicit cwd, `shell=False`, disabled stdin, timeout и
+подтверждённым terminate/kill/reap. `FFmpegMediaInspector` мигрирован без
+изменения Stage 3 argument construction и rejected/failed semantics.
+
+Increment 3 добавил внутренний детерминированный dispatcher и реализации
+предобработки для image/audio/video. Все создаваемые файлы резервируются в
+`WorkspaceArtifactRegistry` до физического создания; `PreparedMedia` содержит
+только непрозрачные ссылки и ограниченные неизменяемые метаданные. Для image
+создаётся PNG первого отображаемого кадра с применённой EXIF orientation, для
+audio — PCM s16le WAV, фактические фрагменты и спектрограмма по требованию, для
+video — ограниченный набор периодических PNG-кадров и FLAC-аудиодорожка по
+требованию.
+
+Increment 4 добавил внутренний analyzer contract, закрытый worker-resolvable
+registry с analyzer-specific typed settings validation и последовательный
+orchestrator в точном порядке per-media `enabled`. Каждый фактически запущенный
+analyzer выполняется в отдельном explicit-spawn worker; private bounded transport
+не переносит parent capabilities или media bytes. Analyzer exception и
+serialization failure дают безопасный canonical `ERROR`, а canonical `TIMEOUT`
+возникает только после подтверждённого terminate/kill/reap; unreapable worker
+остаётся fatal infrastructure failure. Framework подтверждён только internal fake
+analyzers без score, findings и default-config activation.
+
+Increment 5 добавил внутренний `Stage5ExecutionService`, совместимый с прежним
+`TaskExecutor.execute(task)`, и связал production path Stage 3/4 с preprocessing,
+авторитетным `Stage5TaskData`, переходом `PREPROCESSING → ANALYSIS` и
+последовательным analyzer orchestration. Требования к demand-driven артефактам
+вычисляются только по активному analyzer plan; единый monotonic deadline от входа
+в executor ограничивает preprocessing и каждый analyzer. Отдельные
+`ERROR`/`TIMEOUT` сохраняются как `AnalyzerResult`, фатальная инфраструктурная
+ошибка и общий timeout завершают execution как `FAILED`, а terminal settlement,
+cleanup и release остаются исключительной ответственностью Stage 4. Полный quality barrier: 1143
+passed, 2 skipped, coverage 90%.
+
+Функциональная реализация Stage 5 и исправления по результатам финального аудита
+завершены. R1
+закрывает `S5-AUD-001` и `S5-AUD-002`; R2 закрывает `S5-AUD-003`,
+`S5-AUD-004`, `S5-AUD-005`, `S5-AUD-006` и `S5-AUD-011`; R3 закрывает
+`S5-AUD-007`, `S5-AUD-008` и `S5-AUD-010`; R4 закрывает `S5-AUD-009` и
+`S5-AUD-012`. R5 устраняет оставшийся путь прерывания `S5-AUD-001`,
+воспроизведённый повторным аудитом. R6 закрыл замечания аудита изображений.
+Полная проверка R4: 1236 passed,
+2 skipped, coverage 90% (89,69% при точности до сотых); целевая проверка:
+217 passed. Ruff, проверка форматирования затронутых Python-файлов, mypy,
+`poe check`, pre-commit, CLI smoke и `git diff --check` прошли.
+
+Целевая проверка R5: worker/process/lifecycle/R1/R2 — 337 passed, 1 skipped
+(создание symlink недоступно в среде); дополнительные проверки preprocessing
+по resource/budget/timeout/termination — 6 passed, 30 deselected. Добавлены
+72 проверки прерываний с реальными дочерними процессами, включая ограниченный reap,
+сохранение барьера и однократную очистку при восстановлении. Ruff, проверка
+форматирования восьми затронутых Python-файлов, `mypy src` и `git diff --check` прошли.
+Полный pytest/poe barrier в R5 не запускался; полный набор проверок остаётся после R6.
+
+## Исправления по итогам финального аудита
+
+- [x] R1 — безопасность процессов и владения: неподтверждённое завершение
+  процесса блокирует физическую очистку и `FINISHED`; ошибки ввода-вывода
+  контролируемого входа отделены от ошибок анализатора;
+- [x] R2 — согласованные ограничения ресурсов и транспорта, а также единый
+  идентификатор снимка конфигурации;
+- [x] R3 — резервирование артефактов с учётом псевдонимов путей Windows, очистка исходных
+  EXIF/XMP/ICC из нормализованного PNG и обязательность нормализации в конфигурации;
+- [x] R4 — публикация оставшихся включённых анализаторов как `SKIPPED` по политике
+  остановки и неизменяемое авторитетное хранение результатов с отделённым чтением
+  через реестр; единый сериализатор и предел R2 сохранены;
+- [x] R5 — прерывание после запуска рабочего или дочернего процесса проходит
+  ограниченную последовательность stop/reap; исходное прерывание сохраняется, неподтверждённая безопасность
+  передаётся через существующий R1 barrier и блокирует cleanup/release/FINISHED;
+- [x] R6 — оставшиеся замечания аудита изображений (APNG и tRNS): отдельный
+  default image не подменяет первый APNG animation frame, а RGB/grayscale/palette
+  `tRNS` материализуется в alpha до очистки raw metadata;
+- [x] повторный независимый финальный аудит (focused closure audit): `PASS`;
+  `S5-AUD-001`, `S5-RERUN-001` и `S5-RERUN-002` — `CLOSED`, 146 targeted
+  passed, новых findings нет.
+
+## Финальное закрытие
+
+- **Final verification:** `PASS` — 1313 passed, 2 skipped, coverage 89.76%,
+  branch coverage enabled; Ruff, mypy, `poe check`, pre-commit и CLI — `PASS`.
+- **Focused closure audit:** `PASS` — `S5-AUD-001`, `S5-RERUN-001` и
+  `S5-RERUN-002` имеют статус `CLOSED`; 146 targeted passed; новых findings нет.
+- **Architecture Truth Review:** `CLOSE_STAGE5_UNCHANGED`. Перед Stage 6 новых
+  архитектурных решений не требуется.
+- **Future/post-v1.0 candidates:** deprecate/remove
+  `analyzers.defaults.continue_on_error`; deprecate/remove
+  `image.normalize_for_analysis`; возможное переименование
+  `keyframe_interval_seconds` при будущей schema revision; отдельный generated
+  artifact budget, chunked result transport и restart recovery — только при
+  измеренной потребности.
 
 ## Обязательные задачи
 
 ### Предварительная обработка изображения
 
-- [ ] переиспользовать проверенный source и безопасно открыть изображение для
+- [x] переиспользовать проверенный source и безопасно открыть изображение для
   подготовки аналитических представлений;
-- [ ] переиспользовать либо дополнить подтверждённые технические параметры;
-- [ ] извлечь доступные метаданные;
-- [ ] создать нормализованную рабочую копию;
-- [ ] зарегистрировать промежуточный артефакт.
+- [x] переиспользовать либо дополнить подтверждённые технические параметры;
+- [x] извлечь доступные метаданные;
+- [x] создать нормализованную рабочую копию;
+- [x] зарегистрировать промежуточный артефакт.
 
 ### Предварительная обработка аудио
 
-- [ ] декодировать проверенный source в объёме, необходимом для подготовки;
-- [ ] переиспользовать либо дополнить подтверждённые параметры;
-- [ ] создать canonical signed 16-bit PCM WAV fragments без resample/downmix;
-- [ ] разделить на фрагменты по конфигурации;
-- [ ] построить спектрограмму только при необходимости;
-- [ ] зарегистрировать артефакты.
+- [x] декодировать проверенный source в объёме, необходимом для подготовки;
+- [x] переиспользовать либо дополнить подтверждённые параметры;
+- [x] создать canonical signed 16-bit PCM WAV fragments без resample/downmix;
+- [x] разделить на фрагменты по конфигурации;
+- [x] построить спектрограмму только при необходимости;
+- [x] зарегистрировать артефакты.
 
 ### Предварительная обработка видео
 
-- [ ] переиспользовать проверенный source и при необходимости дополнить параметры
+- [x] переиспользовать проверенный source и при необходимости дополнить параметры
   через FFmpeg/ffprobe безопасным вызовом;
-- [ ] не загружать всё видео в память;
-- [ ] извлечь periodic sampled representative frames/сегменты;
-- [ ] извлечь аудиодорожку при наличии;
-- [ ] зарегистрировать артефакты;
-- [ ] ограничить время внешних процессов.
+- [x] не загружать всё видео в память;
+- [x] извлечь periodic sampled representative frames/сегменты;
+- [x] извлечь аудиодорожку при наличии;
+- [x] зарегистрировать артефакты;
+- [x] ограничить время внешних процессов.
 
 ### Каркас анализаторов
 
-- [ ] реализовать протокол `Analyzer`;
-- [ ] реализовать registry;
-- [ ] включать анализаторы конфигурацией;
-- [ ] проверять применимость;
-- [ ] реализовать timeout;
-- [ ] изолировать ошибку отдельного анализатора;
-- [ ] реализовать тестовый анализатор для каждого маршрута или общий fake analyzer;
-- [ ] собирать `AnalyzerResult`.
+- [x] реализовать протокол `Analyzer`;
+- [x] реализовать registry;
+- [x] включать анализаторы конфигурацией;
+- [x] проверять применимость;
+- [x] реализовать timeout;
+- [x] изолировать ошибку отдельного анализатора;
+- [x] реализовать тестовый анализатор для каждого маршрута или общий fake analyzer;
+- [x] собирать `AnalyzerResult`.
 
 ## Обязательные тесты
 
-- [ ] подготовка валидного изображения;
-- [ ] подготовка валидного аудио;
-- [ ] подготовка валидного видео;
-- [ ] повреждённые данные дают контролируемую ошибку;
-- [ ] внешний процесс вызывается без shell-инъекции;
-- [ ] disabled analyzer не запускается;
-- [ ] not applicable отражается корректно;
-- [ ] error одного анализатора не останавливает остальные;
-- [ ] timeout отражается;
-- [ ] артефакты попадают в очистку.
+- [x] подготовка валидного изображения;
+- [x] подготовка валидного аудио;
+- [x] подготовка валидного видео;
+- [x] повреждённые данные дают контролируемую ошибку;
+- [x] внешний процесс вызывается без shell-инъекции;
+- [x] disabled analyzer не запускается;
+- [x] not applicable отражается корректно;
+- [x] error одного анализатора не останавливает остальные;
+- [x] timeout отражается;
+- [x] артефакты попадают в очистку.
 
 ## Критерий завершения
 
@@ -804,7 +896,9 @@ timestamp.
 
 ## Решение до этапа 6
 
-Необходимо выбрать минимальный набор **реальных** анализаторов MVP по каждому типу медиа.
+Необходимо выбрать минимальный набор **реальных** MVP analyzers, их версии,
+applicability, fixtures и analyzer-specific semantics для `raw_metrics` /
+`candidate_findings`.
 
 ---
 

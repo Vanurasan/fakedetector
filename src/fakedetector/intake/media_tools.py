@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import json
 import math
-import subprocess
-import threading
-from contextlib import suppress
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
+
+from fakedetector.core._bounded_process import (
+    ProcessInfrastructureError,
+    ProcessInfrastructurePhase,
+    ProcessOutputLimitError,
+    ProcessTimeoutError,
+    run_bounded_process,
+)
 
 _PROBE_SIZE_BYTES = 5 * 1024 * 1024
 _ANALYZE_DURATION_MICROSECONDS = 5_000_000
@@ -182,95 +187,49 @@ class FFmpegMediaInspector:
         )
 
     def _run_probe(self, arguments: list[str], *, cwd: Path) -> bytes:
-        process = self._start(arguments, stdout=subprocess.PIPE, cwd=cwd)
-        stdout_pipe = process.stdout
-        assert stdout_pipe is not None
-        output = bytearray()
-        output_exceeded = threading.Event()
-        output_read_failed = threading.Event()
-
-        def read_output() -> None:
-            try:
-                while len(output) <= _MAX_PROBE_OUTPUT_BYTES:
-                    chunk = stdout_pipe.read(
-                        min(4096, _MAX_PROBE_OUTPUT_BYTES + 1 - len(output))
-                    )
-                    if not chunk:
-                        break
-                    output.extend(chunk)
-                if len(output) > _MAX_PROBE_OUTPUT_BYTES:
-                    output_exceeded.set()
-                    process.kill()
-            except OSError:
-                output_read_failed.set()
-                with suppress(OSError):
-                    process.kill()
-
-        reader = threading.Thread(target=read_output, daemon=True)
-        reader.start()
-        return_code: int | None = None
-        timed_out = False
-        wait_failed = False
         try:
-            return_code = process.wait(timeout=self._timeout_seconds)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            with suppress(OSError):
-                process.kill()
-            try:
-                process.wait()
-            except OSError:
-                wait_failed = True
-        except OSError:
-            wait_failed = True
-            with suppress(OSError):
-                process.kill()
-            with suppress(OSError):
-                process.wait()
-        reader.join()
-        try:
-            stdout_pipe.close()
-        except OSError:
-            if output_read_failed.is_set():
-                raise MediaToolSystemError("ffprobe_stdout_read") from None
-            raise MediaToolSystemError("ffprobe_stdout_close") from None
-        if output_read_failed.is_set():
-            raise MediaToolSystemError("ffprobe_stdout_read") from None
-        if wait_failed:
-            raise MediaToolSystemError("process_wait") from None
-        if timed_out:
+            result = run_bounded_process(
+                arguments,
+                cwd=cwd,
+                timeout_seconds=self._timeout_seconds,
+                stdout_limit_bytes=_MAX_PROBE_OUTPUT_BYTES,
+            )
+        except ProcessInfrastructureError as error:
+            raise MediaToolSystemError(_probe_infrastructure_phase(error.phase)) from None
+        except ProcessTimeoutError:
             raise MediaRejectedError("ffprobe_timeout") from None
-        if output_exceeded.is_set():
-            raise MediaRejectedError("ffprobe_output_limit")
-        assert return_code is not None
-        if return_code != 0:
+        except ProcessOutputLimitError:
+            raise MediaRejectedError("ffprobe_output_limit") from None
+        if result.return_code != 0:
             raise MediaRejectedError("ffprobe")
-        return bytes(output)
+        assert result.stdout is not None
+        return result.stdout
 
     def _run_decode(self, arguments: list[str], *, cwd: Path) -> None:
-        process = self._start(arguments, stdout=subprocess.DEVNULL, cwd=cwd)
         try:
-            return_code = process.wait(timeout=self._timeout_seconds)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
+            result = run_bounded_process(
+                arguments,
+                cwd=cwd,
+                timeout_seconds=self._timeout_seconds,
+            )
+        except ProcessInfrastructureError as error:
+            phase = "process_start" if error.phase == "start" else "process_wait"
+            raise MediaToolSystemError(phase) from None
+        except ProcessTimeoutError:
             raise MediaRejectedError("ffmpeg_timeout") from None
-        if return_code != 0:
+        if result.return_code != 0:
             raise MediaRejectedError("ffmpeg_decode")
 
-    @staticmethod
-    def _start(arguments: list[str], *, stdout: int, cwd: Path) -> subprocess.Popen[bytes]:
-        try:
-            return subprocess.Popen(
-                arguments,
-                shell=False,
-                stdin=subprocess.DEVNULL,
-                stdout=stdout,
-                stderr=subprocess.DEVNULL,
-                cwd=cwd,
-            )
-        except OSError:
-            raise MediaToolSystemError("process_start") from None
+
+def _probe_infrastructure_phase(phase: ProcessInfrastructurePhase) -> str:
+    return {
+        "start": "process_start",
+        "stdout_read": "ffprobe_stdout_read",
+        "stdout_write": "process_wait",
+        "stdout_close": "ffprobe_stdout_close",
+        "wait": "process_wait",
+        "termination": "process_wait",
+    }[phase]
 
 
 def audio_parameters(probe: ProbeResult) -> AudioProbe:
@@ -302,9 +261,7 @@ def video_parameters(probe: ProbeResult) -> VideoProbe:
     codec = _nonempty_string(stream.get("codec_name"))
     width = _positive_int(stream.get("width"))
     height = _positive_int(stream.get("height"))
-    fps = _frame_rate(stream.get("avg_frame_rate")) or _frame_rate(
-        stream.get("r_frame_rate")
-    )
+    fps = _frame_rate(stream.get("avg_frame_rate")) or _frame_rate(stream.get("r_frame_rate"))
     if duration is None or codec is None or width is None or height is None or fps is None:
         raise MediaRejectedError("video_parameters")
     audio_codec = None

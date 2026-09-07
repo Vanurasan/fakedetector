@@ -4,10 +4,100 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Callable, Iterator
+from multiprocessing.process import BaseProcess
 from pathlib import Path
 
 import pytest
 from PIL import Image
+
+from fakedetector.analyzers._worker import _MultiprocessingSpawnBackend
+
+
+class _ProbeInterruption(BaseException):
+    pass
+
+
+@pytest.fixture(params=[KeyboardInterrupt, SystemExit, _ProbeInterruption])
+def process_interruption(request: pytest.FixtureRequest) -> BaseException:
+    return request.param("PRIVATE process interruption")
+
+
+@pytest.fixture
+def real_worker_processes(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[BaseProcess]]:
+    """Track real spawn children and reap even when a test replaces stop/join methods."""
+    processes: list[BaseProcess] = []
+    teardowns: list[Callable[[], None]] = []
+    create_process = _MultiprocessingSpawnBackend.create_process
+    close_process = BaseProcess.close
+
+    def checked_close(process) -> None:
+        if process.pid is not None:
+            assert not process.is_alive()
+            process.join(timeout=0.0)
+            assert process.exitcode is not None
+        close_process(process)
+
+    monkeypatch.setattr(BaseProcess, "close", checked_close)
+
+    def track_process(self, **kwargs):
+        process = create_process(self, **kwargs)
+        processes.append(process)
+        is_alive, join, kill = process.is_alive, process.join, process.kill
+
+        def teardown() -> None:
+            if process._closed:
+                return
+            if process.pid is not None:
+                if is_alive():
+                    kill()
+                join(timeout=5.0)
+                assert not is_alive()
+                assert process.exitcode is not None
+            close_process(process)
+
+        teardowns.append(teardown)
+        return process
+
+    monkeypatch.setattr(_MultiprocessingSpawnBackend, "create_process", track_process)
+    try:
+        yield processes
+    finally:
+        for teardown in teardowns:
+            teardown()
+
+
+@pytest.fixture
+def real_subprocesses(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[subprocess.Popen[bytes]]]:
+    """Keep original stop/wait operations so injected failures cannot leak probe children."""
+    processes: list[subprocess.Popen[bytes]] = []
+    teardowns: list[Callable[[], None]] = []
+    popen = subprocess.Popen
+
+    def track_process(*args, **kwargs):
+        process = popen(*args, **kwargs)
+        processes.append(process)
+        poll, wait, kill = process.poll, process.wait, process.kill
+        stdout = process.stdout
+        close_stdout = None if stdout is None else stdout.close
+
+        def teardown() -> None:
+            if poll() is None:
+                kill()
+            assert wait(timeout=5.0) == process.returncode
+            assert poll() is not None
+            if close_stdout is not None:
+                close_stdout()
+
+        teardowns.append(teardown)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", track_process)
+    try:
+        yield processes
+    finally:
+        for teardown in teardowns:
+            teardown()
 
 
 @pytest.fixture(scope="session")

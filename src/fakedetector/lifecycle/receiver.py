@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path, PureWindowsPath
 
+from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
 from fakedetector.core import AuthoritativeLifecycleClock
+from fakedetector.core._cleanup_safety import _CleanupSafetyInterruption
 from fakedetector.domain import AnalysisStatus, ErrorDetail, ProcessingStage
 from fakedetector.intake import Stage3Accepted
 from fakedetector.lifecycle.artifacts import WorkspaceArtifactRegistry
@@ -24,7 +26,6 @@ from fakedetector.lifecycle.models import (
     TaskExecutionOutcome,
     TaskSnapshot,
     TerminalSettlementPhase,
-    config_snapshot_fingerprint,
 )
 
 
@@ -47,12 +48,14 @@ class Stage4TaskReceiver:
         router: MediaRouter,
         queue: TaskQueue,
     ) -> None:
-        self._config = config
+        config_snapshot = _ConfigSnapshot.capture(config)
+        captured_config = config_snapshot.materialize()
         self._clock = clock
         self._registry = registry
         self._router = router
         self._queue = queue
-        self._config_snapshot_id = config_snapshot_fingerprint(config)
+        self._temporary_root_path = captured_config.temporary_storage.root_path
+        self._config_snapshot_id = config_snapshot.snapshot_id
 
     def accept(self, accepted: Stage3Accepted) -> None:
         """Perform the provisional receiver phase and return only after commit."""
@@ -61,7 +64,7 @@ class Stage4TaskReceiver:
         try:
             self._validate_accepted(accepted)
             workspace_path = _workspace_path(
-                self._config.temporary_storage.root_path,
+                self._temporary_root_path,
                 accepted.analysis_id,
             )
             context = AnalysisContext(
@@ -152,9 +155,13 @@ class Stage4TaskProcessor:
         clock: AuthoritativeLifecycleClock,
         registry: TaskRegistry,
     ) -> None:
+        captured_config = _ConfigSnapshot.capture(config).materialize()
         self._clock = clock
         self._registry = registry
-        self._cleanup = WorkspaceCleanup(config=config.temporary_storage, clock=clock)
+        self._cleanup = WorkspaceCleanup(
+            config=captured_config.temporary_storage,
+            clock=clock,
+        )
 
     def execute(self, analysis_id: str, executor: TaskExecutor) -> TaskSnapshot:
         """Claim and finish one confirmed task, propagating only ``BaseException``."""
@@ -178,6 +185,12 @@ class Stage4TaskProcessor:
             outcome = executor.execute(task)
             if not isinstance(outcome, TaskExecutionOutcome):
                 raise TypeError("executor returned an invalid outcome")
+        except _CleanupSafetyInterruption as error:
+            outcome = TaskExecutionOutcome.failed(
+                _execution_error(),
+                _cleanup_safety_barrier=error._cleanup_safety_barrier,
+            )
+            termination = error.interruption
         except Exception:
             outcome = TaskExecutionOutcome.failed(_execution_error())
         except BaseException as error:
@@ -207,6 +220,13 @@ class Stage4TaskProcessor:
         """Own or recover terminal publication without repeating FACT_READY cleanup."""
         task, owner_token = self._registry.claim_terminal_settlement(analysis_id)
         try:
+            if not self._registry._try_confirm_terminal_cleanup_safe(
+                analysis_id,
+                owner_token,
+            ):
+                snapshot = self._registry.snapshot(analysis_id)
+                self._registry.release_terminal_settlement(analysis_id, owner_token)
+                return snapshot
             settlement = self._registry.terminal_settlement(analysis_id, owner_token)
             if settlement.phase is TerminalSettlementPhase.CLAIMED:
                 self._registry.start_terminal_cleanup(analysis_id, owner_token)

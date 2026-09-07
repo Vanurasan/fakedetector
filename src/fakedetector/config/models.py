@@ -194,6 +194,14 @@ class ImagePreprocessingConfig(BaseModel):
     extract_metadata: bool = True
     normalize_for_analysis: bool = True
 
+    @field_validator("normalize_for_analysis")
+    @classmethod
+    def require_image_normalization(cls, value: bool) -> bool:
+        """Reject disabling the mandatory Stage 5 image representation."""
+        if not value:
+            raise ValueError("image normalization must be enabled")
+        return value
+
 
 class AudioPreprocessingConfig(BaseModel):
     """Audio preprocessing settings."""

@@ -8,7 +8,7 @@ import re
 import shutil
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import BinaryIO, Literal, Protocol, TypeVar
@@ -159,6 +159,13 @@ class AcceptedSource:
         with self._owner.open_for_read(self._owned_source) as source:
             yield source
 
+    def with_local_source_path(
+        self,
+        trusted_operation: Callable[[Path], _OperationResult],
+    ) -> _OperationResult:
+        """Run a trusted local-path operation through the active owner boundary."""
+        return self._owner.with_local_source_path(self._owned_source, trusted_operation)
+
     def cleanup(self) -> None:
         """Release the downstream source without exposing physical storage."""
         self._owner.cleanup(self._owned_source)
@@ -170,6 +177,35 @@ class AcceptedSource:
     def _cleanup_quarantine(self) -> bool:
         """Release this source only when it owns the current quarantine item."""
         return self._owner._cleanup_quarantine(self._owned_source)
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedSourceRef:
+    """Narrow internal source capability for Stage 5 preprocessing."""
+
+    _accepted_source: AcceptedSource = field(repr=False)
+
+    @property
+    def analysis_id(self) -> str:
+        """Return the source identity without exposing ownership operations."""
+        return self._accepted_source.analysis_id
+
+    @contextmanager
+    def open_for_read(self) -> Iterator[BinaryIO]:
+        """Open the accepted source through its existing controlled boundary."""
+        with self._accepted_source.open_for_read() as source:
+            yield source
+
+    def with_local_source_path(
+        self,
+        trusted_operation: Callable[[Path], _OperationResult],
+    ) -> _OperationResult:
+        """Run one trusted Stage 5 operation without retaining its path."""
+        return self._accepted_source.with_local_source_path(trusted_operation)
+
+    def _references(self, accepted_source: AcceptedSource) -> bool:
+        """Return whether this ref wraps the exact accepted source capability."""
+        return self._accepted_source is accepted_source
 
 
 class LocalTemporaryInputOwner:

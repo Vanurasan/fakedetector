@@ -295,8 +295,11 @@ def test_retry_preserves_deleted_artifact_fact(
     root = tmp_path / "temp"
     task, owner = make_task(root, analysis_id)
     artifact = root / analysis_id / "artifact.bin"
-    artifact.write_bytes(b"artifact")
-    task.artifacts.register("artifact", "artifact.bin")
+    artifact_ref = task.artifacts.register("artifact", "artifact.bin")
+    task.artifacts.with_local_artifact_path(
+        artifact_ref,
+        lambda path: path.write_bytes(b"artifact"),
+    )
     real_cleanup = owner.cleanup
     source_calls = 0
     unlink_calls = 0

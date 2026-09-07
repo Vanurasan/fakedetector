@@ -11,7 +11,7 @@ from typing import NoReturn
 
 import pytest
 
-import fakedetector.intake.media_tools as media_tools_module
+import fakedetector.core._bounded_process as bounded_process_module
 import fakedetector.intake.temporary_input as temporary_input_module
 from fakedetector.config.models import AppConfig
 from fakedetector.core import AuthoritativeLifecycleClock, Clock
@@ -638,6 +638,7 @@ def test_ffprobe_stdout_read_failure_is_failed_and_cleans_owned_source(
         def __init__(self) -> None:
             self.stdout = FailingStdout()
             self.killed = False
+            self.terminated = False
             self.wait_calls = 0
 
         def wait(self, timeout: float | None = None) -> int:
@@ -647,11 +648,19 @@ def test_ffprobe_stdout_read_failure_is_failed_and_cleans_owned_source(
         def kill(self) -> None:
             self.killed = True
 
+        def terminate(self) -> None:
+            self.terminated = True
+
     process = StartedProcess()
     monkeypatch.setattr(
-        media_tools_module.subprocess,
+        bounded_process_module.subprocess,
         "Popen",
         lambda arguments, **kwargs: process,
+    )
+    monkeypatch.setattr(
+        bounded_process_module,
+        "_make_stdout_nonblocking",
+        lambda _stdout: None,
     )
     service, _owner, receiver = make_service(tmp_path)
 
@@ -670,7 +679,7 @@ def test_ffprobe_stdout_read_failure_is_failed_and_cleans_owned_source(
     assert sentinel not in repr(outcome.errors)
     assert outcome.cleanup is not None
     assert outcome.cleanup.status is CleanupStatus.COMPLETED
-    assert process.killed
+    assert process.terminated
     assert process.wait_calls == 1
     assert process.stdout.closed
     assert receiver.calls == 0

@@ -619,14 +619,27 @@ arbitrary analyzer code и не через обычные поля `AnalyzerRequ
 `WorkspaceArtifactRegistry → WorkspaceCleanup → Stage4TaskProcessor terminal
 cleanup`; отдельная Stage 5 cleanup subsystem не вводится.
 
+Для одной задачи действует единый внутренний предел `_MAX_STAGE5_ARTIFACTS = 256`:
+производитель проверяет план до первой регистрации, `PreparedMedia` защищает
+инвариант, а `WorkerRequest` повторяет проверку на границе транспорта. Совокупный
+максимальный физический размер всех созданных артефактов для типа `m`
+ограничен значением `limits.max_file_size_mb[m] * 1_048_576`; исходный
+файл учитывается отдельно. Бюджет создаётся из того же неизменяемого
+снимка конфигурации и служит обязательным ограничением во время потокового
+вывода; каждый артефакт регистрируется до записи.
+
 Для изображений:
 
-- lossless PNG working representation без resize, с применённой EXIF orientation
-  и RGB/RGBA normalization;
+- обязательное нормализованное представление в PNG со сжатием без потерь и без изменения размеров,
+  с применённой ориентацией EXIF и преобразованием в RGB/RGBA; PNG содержит
+  только пиксели и необходимые структурные данные, без исходных EXIF/XMP/ICC;
+  влияющая на пиксели PNG transparency материализуется в alpha до удаления raw
+  metadata, поэтому исходный `tRNS` в нормализованный PNG не переносится;
 - bounded safe metadata без raw EXIF/XMP/ICC blobs;
-- first-frame normalized representation для multi-frame image с сохранением
-  factual frame count и явным предупреждением об отсутствии полного temporal
-  analysis.
+- first-frame normalized representation для multi-frame image содержит первый
+  animation frame; отдельный APNG default image, не входящий в animation
+  sequence, не подменяет этот кадр. Factual frame count сохраняется, а отсутствие
+  полного temporal analysis отмечается явным предупреждением.
 
 Для аудио:
 
@@ -668,12 +681,25 @@ plan и не получает вызов applicability; enabled analyzer мож�
 enabled analyzer проходят analyzer-owned typed validation до начала task
 execution.
 
+При `error_handling.continue_if_analyzer_fails=false` после первого `ERROR` или
+`TIMEOUT` оставшиеся включённые анализаторы публикуются как `SKIPPED` в том же
+порядке, без проверки применимости и запуска новых рабочих процессов.
+
 Generic analyzer invocation изолируется отдельным spawned child process без
 матрицы execution modes. Parent преобразует internal models в private picklable
 `WorkerRequest`; trusted worker локально создаёт read-only analyzer inputs.
 Внутренние filesystem locations этого transport не являются public API, не
 логируются и не попадают в `PreparedMedia`, `AnalyzerRequest`, `AnalyzerResult`
 или внешний JSON; media bytes через IPC не передаются.
+
+Поле `original_name`, предназначенное только для отображения, не передаётся рабочему
+процессу. Вместо полного `ValidatedFileDescriptor` рабочий процесс получает
+ограниченную внутреннюю проекцию машинных фактов без возможностей доступа к
+исходному файлу и реестру, а также без идентификаторов интерфейса; контролируемые
+пути остаются отдельными деталями транспорта. Канонический `AnalyzerResult` сохраняет общую
+схему, но выполнение Stage 5 принимает его только в пределах внутреннего байтового
+конверта, вычисленного из ограничения ответа 65 536 байт и фактических накладных расходов
+компактного конверта.
 
 Нормальный analyzer timeout публикуется только после подтверждённых
 terminate/kill и join/reap worker. Невозможность подтвердить остановку после
@@ -686,6 +712,14 @@ terminate/kill и join/reap worker. Невозможность подтверд�
 в состоянии `RUNNING / PREPROCESSING`; каждая bounded operation получает минимум
 собственного timeout и remaining overall budget. Исчерпание общего budget —
 task-level processing failure, а не набор обычных analyzer timeout.
+
+Контекст Stage 4, `PreprocessingDispatcher`, `AnalyzerRegistry`/
+`AnalyzerOrchestrator`, `Stage5ExecutionService` и бюджет созданных артефактов связаны единым
+внутренним идентификатором неизменяемого снимка конфигурации: каноническими байтами
+провалидированного JSON и полным SHA-256. Разные экземпляры `AppConfig` с одинаковым
+содержимым совместимы; последующее изменение исходного объекта не влияет на зафиксированное
+поведение, а несовпадение идентификаторов снимков отклоняется до предварительной обработки и
+физического ввода-вывода.
 
 ### 6.10. Анализаторы
 
@@ -868,7 +902,10 @@ Stage 5 заканчивается primary outcome и не меняет terminal
 `COMPLETED | FAILED / CLEANUP → same primary status / FINISHED`, cleanup и
 FINISHED publication. Concrete preprocessors и analyzers lifecycle самостоятельно
 не изменяют. До Stages 6–8 подготовленные данные и `AnalyzerResult[]` хранятся
-только внутри in-process task aggregate; Stage 5 не создаёт `Finding`, полноту,
+только внутри in-process task aggregate. Авторитетное хранилище результатов
+анализаторов неизменяемо; внутреннее чтение через реестр возвращает отделённые
+канонические значения. Формат хранения и граница чтения определены в
+`CONTRACTS.md` §3.3. Stage 5 не создаёт `Finding`, полноту,
 риск, `AnalysisResult`, persistence, HTTP/WebUI analysis, SQLite, broker, durable
 recovery или реальные forensic analyzers.
 

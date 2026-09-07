@@ -340,11 +340,60 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-07
+
+### Changed
+
+- **[Roadmap/Stage 5] Этап 5 официально закрыт.** Remediation завершена;
+  final barrier и focused closure audit прошли со статусом `PASS`, а Architecture
+  Truth Review рекомендовал `CLOSE_STAGE5_UNCHANGED` и не потребовал изменения
+  архитектуры. Stage 5 переведён в `DONE`, следующим этапом является Stage 6.
+
+### Fixed
+
+- **[Stage 5/Исправления финального аудита R6] Закрыты `S5-RERUN-001` и `S5-RERUN-002`.** Нормализация APNG пропускает отдельный default image и сохраняет первый реальный animation frame, не меняя семантику других animated formats и factual `frame_count`. PNG transparency из RGB, grayscale и palette `tRNS` материализуется в RGBA-пиксели до очистки `.info`; normalized artifact не переносит raw `tRNS`, EXIF, XMP или ICC, а обычный RGB остаётся RGB. Focused closure rerun финального аудита ожидает выполнения.
+
+- **[Stage 5/Исправления финального аудита R5] Устранён оставшийся путь прерывания `S5-AUD-001`.** После запуска worker/subprocess прерывания проходят ограниченную последовательность stop/reap; исходные `KeyboardInterrupt`, `SystemExit` и другие `BaseException` сохраняются. Неподтверждённый reap передаёт существующий барьер безопасности очистки R1 до Stage 4 и запрещает cleanup/release/FINISHED до успешного восстановления; очистка выполняется однократно. Приоритет безопасности завершения процесса из R2 сохранён. Целевые проверки: 343 passed, 1 skipped; полный набор проверок ожидает R6, замечания аудита изображений и повторный финальный аудит остаются невыполненными.
+
+### 2026-09-05
+
+### Fixed
+
+- **[Stage 5/Исправления финального аудита R4] Закрыты `S5-AUD-009` и `S5-AUD-012`.** После `ERROR`/`TIMEOUT` при `continue_if_analyzer_fails=false` оставшиеся включённые анализаторы публикуются как `SKIPPED` в порядке конфигурации без запуска рабочих процессов. Авторитетные результаты хранятся в неизменяемых канонических байтах через сериализатор и предел R2; внутреннее чтение возвращает отделённые модели, сохраняющие факты при последующих мутациях и завершении задачи. Полная проверка: 1236 passed, 2 skipped, coverage 90% (89,69% при точности до сотых); повторный финальный аудит ожидает выполнения.
+
+- **[Stage 5/Исправления финального аудита R3] Закрыты `S5-AUD-007`, `S5-AUD-008` и `S5-AUD-010`.** До резервирования артефактов отклоняются компоненты с завершающими точками/пробелами и дубликаты канонической цели в Windows без учёта регистра. Нормализованный PNG очищен от исходных EXIF/XMP/ICC при сохранении ориентации, пикселей и фактических параметров. Поле `normalize_for_analysis` сохранено; `false` отклоняется при проверке конфигурации, успешная ветка без нормализованного артефакта удалена. Регистрация до записи, очистка и ограничения R2 сохранены. Полная проверка: 1218 passed, 2 skipped, coverage 90% (89,63% без округления); R4 и повторный финальный аудит ожидают выполнения.
+
+- **[Stage 5/Исправления финального аудита R2] Закрыты `S5-AUD-003`, `S5-AUD-004`, `S5-AUD-005`, `S5-AUD-006` и `S5-AUD-011`.** Единый неизменяемый снимок конфигурации связывает задачу, предварительную обработку, план анализаторов, сервис выполнения и бюджет созданных артефактов; общий предел количества 256 проверяется производителем, `PreparedMedia` и транспортом рабочего процесса, а совокупный физический размер созданных артефактов потоково ограничен существующими побайтовыми пределами для каждого типа медиа, с предварительной оценкой PCM-аудио и сохранением обязанности очистки. Рабочий процесс получает ограниченную `_AnalyzerFileFacts` без предназначенного только для отображения `original_name`; канонический `AnalyzerResult` Stage 5 ограничен вычисленным размером полезной нагрузки 65 509 байт и повторно проверяется до авторитетной публикации. Передача вывода напрямую в приёмник сохраняет барьер R1 `terminate`/`kill`/`reap` и не накапливает полностью декодированное медиа в памяти Python. Полная проверка: 1192 passed, 2 skipped, coverage 90%; R3/R4 и повторный финальный аудит остаются невыполненными.
+
+### 2026-09-04
+
+### Added
+
+- **[Stage 5/Increment 5] Завершена функциональная интеграция производственного жизненного цикла Stage 4 → Stage 5.** Внутренний `Stage5ExecutionService` сохранил контракт `TaskExecutor.execute(task)`, добавил авторитетную публикацию `PreparedMedia` и упорядоченных `AnalyzerResult` в `Stage5TaskData`, нормативный переход `PREPROCESSING → ANALYSIS` и единый monotonic deadline с ограничением операций preprocessing и analyzer timeout по остаточному бюджету. Требования к создаваемым по запросу представлениям выводятся только из активного analyzer plan без проверки analyzer IDs; отдельные `ERROR`/`TIMEOUT` остаются результатами, а фатальная инфраструктурная ошибка и общий timeout используют `FAILED`. Ответственность за terminal settlement, cleanup и source release остаётся у Stage 4; файловая и процессная работа выполняется вне global registry lock. Полный barrier: 1143 passed, 2 skipped, coverage 90%; следующий шаг — отдельный read-only финальный аудит Stage 5.
+
+### Fixed
+
+- **[Stage 5/Исправления финального аудита R1] Закрыты `S5-AUD-001` и `S5-AUD-002`.** Если завершение рабочего процесса анализатора или дочернего процесса FFmpeg не подтверждено, внутренний барьер безопасности очистки сохраняется в существующем `TerminalSettlement`: пока ограниченная по времени проверка вне блокировки реестра не завершилась успешно, задача остаётся `FAILED / CLEANUP` без физической очистки, освобождения исходного файла и `FINISHED`; `Exception` из `try_confirm_safe()` также считается отсутствием подтверждения. Последующее восстановление ровно один раз выполняет штатную очистку. Закрытая для записи оболочка потока внутри рабочего процесса анализатора классифицирует ошибки операций `open()`/`read()`/`seek()`/`tell()`/итерации/`close()` контролируемого исходного файла или артефакта как инфраструктурный `WORKER_ERROR`, сохраняя `OSError` из логики анализатора как канонический `ERROR` без раскрытия пути или исходных сведений ОС. Проверка: 1159 passed, 2 skipped, coverage 90%.
+
+### 2026-09-03
+
+### Added
+
+- **[Stage 5/Increment 4] Реализованы внутренние analyzer registry и sequential orchestration с hard spawned-process timeout.** Registry fail-fast проверяет registration identity/media binding, duplicate и unknown enabled IDs, точный порядок per-media `enabled`, analyzer-specific typed bounded settings и равенство legacy `analyzers.defaults.continue_on_error` с authoritative `error_handling.continue_if_analyzer_fails`. Каждый запущенный analyzer разрешается только через закрытый trusted worker catalog и выполняется в отдельном explicit-spawn process; на поддерживаемых normal completion/timeout ветках capability callbacks остаются активны до подтверждённого завершения worker, private picklable request не содержит parent capabilities или media bytes, а bounded JSON IPC не возвращает traceback, внутренний physical path или raw exception. `ERROR`/`TIMEOUT` соблюдают continue policy, normal `TIMEOUT` публикуется только после подтверждённого terminate/kill/reap, unreapable worker является fatal infrastructure failure. Internal fake analyzers покрывают image/audio/video, non-applicable, exception, serialization, crash и hang без score/findings, новых artifacts и default-config activation. Полный barrier: 1121 passed, 2 skipped, coverage 90%; следующий шаг — Stage 5 Increment 5.
+
+- **[Stage 5/Increment 3] Реализован внутренний слой предобработки image/audio/video.** `ImagePreprocessor` создаёт PNG первого отображаемого кадра без resize, применяет EXIF orientation, сохраняет фактическое число кадров и предупреждает об ограничении multi-frame представления; `AudioPreprocessor` потоково создаёт PCM s16le WAV, детерминированные фактические фрагменты без дополнения тишиной и спектрограмму только при одновременном разрешении конфигурации и явном требовании; `VideoPreprocessor` создаёт ограниченный набор периодических representative PNG-кадров и lossless FLAC-аудиодорожку только при наличии audio и явном требовании. Детерминированный dispatcher выбирает реализацию только по проверенному `MediaType`; каждый создаваемый файл регистрируется до физического создания и возвращается через непрозрачную ссылку без раскрытия путей. Полный barrier: 1062 passed, 2 skipped, coverage 91%; следующий шаг — Stage 5 Increment 4.
+
+- **[Stage 5/Increment 2] Реализован private shared bounded subprocess primitive и выполнена parity migration Stage 3.** Primitive принимает только application-built argv, использует `shell=False`, disabled stdin, explicit trusted cwd, discard либо hard-bounded stdout и возвращает timeout/output-limit только после подтверждённого stop/reap; unsafe process details не попадают в ошибки. `FFmpegMediaInspector` переведён на эту boundary с сохранением ffprobe/ffmpeg arguments, лимитов и rejected/failed mappings. Cross-platform regression-тесты подтверждают literal shell metacharacters, cwd, non-zero/start/read/wait failures, timeout, output bounding и отсутствие живого reader после возврата. Полный barrier: 1035 passed, 2 skipped, coverage 91%; следующий шаг — Stage 5 Increment 3.
+
 ### 2026-09-02
 
 ### Decision
 
 - **[Stage 5/Architecture] Stage 5 PLAN принят с owner clarifications и нормативно зафиксирован до implementation.** Internal prepared models и private worker transport не раскрывают physical paths наружу; artifacts регистрируются до создания и остаются в Stage 4 cleanup lifecycle; analyzers выполняются последовательно в spawned workers с normal `TIMEOUT` только после confirmed stop/reap; общий processing budget является monotonic и начинается на входе `Stage5ExecutionService.execute(task)`. Production code, external schema `1.0` и закрытая Stage 4 architecture не изменялись; Stage 5 остаётся `NOT_STARTED`, next action — Stage 5 Increment 1: internal models + source/artifact capability boundary.
+
+### Added
+
+- **[Stage 5/Increment 1] Реализована внутренняя source/artifact capability boundary и immutable prepared state.** `PreparedSourceRef` делегирует controlled read и trusted local-path callback принятому `AcceptedSource` без cleanup/transfer/path API; `WorkspaceArtifactRegistry.register()` теперь возвращает registry-owned opaque ref и резервирует cleanup obligation до physical create/write, запрещая duplicate target и использование foreign/completed ref. Private `PreparedArtifact`, `PreparedMedia` и скрытый от `TaskSnapshot` `Stage5TaskData` добавлены без public export, schema/config/dependency expansion, preprocessing logic, analyzer execution или отдельной cleanup subsystem. Полный barrier: 1006 passed, 2 skipped, coverage 90%; следующий шаг — Stage 5 Increment 2.
 
 ### 2026-08-31
 

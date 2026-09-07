@@ -396,6 +396,14 @@ def test_config_snapshot_fingerprint_is_stable_full_digest_and_sensitive(tmp_pat
     assert "MEDIA_ANALYZER_API_TOKEN" not in fingerprint
 
 
+def test_config_snapshot_capture_revalidates_mutated_app_config(tmp_path: Path) -> None:
+    config = make_config(tmp_path / "temp")
+    config.limits.__dict__["processing_timeout_seconds"] = 0
+
+    with pytest.raises(ValueError):
+        config_snapshot_fingerprint(config)
+
+
 def test_context_and_task_snapshot_are_truthful_safe_and_read_only(
     accepted_task: tuple[AnalysisTask, TaskRegistry, RecordingExecutor],
     tmp_path: Path,
@@ -408,9 +416,11 @@ def test_context_and_task_snapshot_are_truthful_safe_and_read_only(
     assert task.context.media_type is MediaType.IMAGE
     assert task.context.started_at is None
     assert task.context.finished_at is None
+    assert task.stage5_data is None
     assert snapshot.queued_at is not None
     assert snapshot.route is MediaType.IMAGE
     assert "accepted_source" not in {item.name for item in fields(TaskSnapshot)}
+    assert "stage5_data" not in {item.name for item in fields(TaskSnapshot)}
     assert "workspace_path" not in {item.name for item in fields(TaskSnapshot)}
     assert str(tmp_path) not in repr(snapshot)
     with pytest.raises(FrozenInstanceError):
@@ -893,6 +903,17 @@ def test_router_has_all_canonical_bindings_and_uses_only_validated_media_type(
         ("frame", "C:\\outside.bin"),
         ("user/name", "frames/001.png"),
         ("frame", "CON"),
+        ("frame", "con.png"),
+        ("frame", "nested/AUX.txt"),
+        ("frame", "COM1.bin"),
+        ("frame", "lpt9.log"),
+        ("frame", "output./child.png"),
+        ("frame", "output /child.png"),
+        ("frame", "nested/output."),
+        ("frame", "nested/output "),
+        ("frame", "output:stream"),
+        ("frame", "nested/../outside.bin"),
+        ("frame", "output\u00e9.png"),
     ],
 )
 def test_artifact_registry_rejects_user_controlled_paths(
@@ -903,15 +924,126 @@ def test_artifact_registry_rejects_user_controlled_paths(
     registry = WorkspaceArtifactRegistry(tmp_path / "workspace")
     with pytest.raises(ArtifactRegistrationError):
         registry.register(artifact_id, relative_path)
+    assert registry.cleanup_obligations() == ()
+    assert not (tmp_path / "workspace").exists()
+
+
+@pytest.mark.parametrize(
+    ("original", "alias"),
+    [
+        ("output", "output."),
+        ("output", "output "),
+        ("output", "OUTPUT"),
+        ("Frames/Output.png", "frames/output.PNG"),
+        ("Frames/Output.png", "FRAMES/Output.png"),
+    ],
+)
+def test_artifact_registry_rejects_windows_alias_before_write(
+    tmp_path: Path, original: str, alias: str
+) -> None:
+    workspace = tmp_path / "workspace"
+    registry = WorkspaceArtifactRegistry(workspace)
+    original_ref = registry.register("original", original)
+
+    with pytest.raises(ArtifactRegistrationError):
+        alias_ref = registry.register("alias", alias)
+        registry.with_local_artifact_path(alias_ref, lambda path: path.write_bytes(b"alias"))
+
+    assert registry.cleanup_obligations() == (workspace / original,)
+    assert not workspace.exists()
+    assert (
+        registry.with_local_artifact_path(original_ref, lambda path: path) == workspace / original
+    )
+    # A rejected target must not consume the ID or create a cleanup obligation.
+    registry.register("alias", "distinct.png")
+    assert registry.cleanup_once().completed
+
+
+def test_artifact_registry_allows_distinct_siblings_and_nested_paths(tmp_path: Path) -> None:
+    registry = WorkspaceArtifactRegistry(tmp_path)
+    relative_paths = (
+        "output",
+        "output.png",
+        "outputs/one.png",
+        "outputs/two.png",
+        "outputs/deep/x.png",
+    )
+    refs = [
+        registry.register(f"artifact_{index}", path) for index, path in enumerate(relative_paths)
+    ]
+    assert registry.cleanup_obligations() == tuple(tmp_path / path for path in relative_paths)
+    assert list(tmp_path.iterdir()) == []
+
+    def write(path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(path.name.encode("ascii"))
+
+    for ref in refs:
+        registry.with_local_artifact_path(ref, write)
+    for ref, relative_path in zip(refs, relative_paths, strict=True):
+        assert registry.with_local_artifact_path(ref, lambda path: path.read_bytes()) == Path(
+            relative_path
+        ).name.encode("ascii")
+    assert registry.cleanup_once().completed
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_artifact_registry_tracks_and_cleans_application_obligations(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     artifact = workspace / "frames" / "001.png"
-    artifact.parent.mkdir(parents=True)
-    artifact.write_bytes(b"generated")
+    workspace.mkdir()
     registry = WorkspaceArtifactRegistry(workspace)
-    registry.register("frame_001", "frames/001.png")
+    artifact_ref = registry.register("frame_001", "frames/001.png")
+
+    assert not artifact.exists()
+
+    def create_artifact(path: Path) -> None:
+        path.parent.mkdir()
+        path.write_bytes(b"generated")
+
+    registry.with_local_artifact_path(artifact_ref, create_artifact)
+
+    assert registry.cleanup_obligations() == (artifact,)
+    assert registry.cleanup_once().completed
+    assert not artifact.exists()
+
+
+def test_artifact_registry_rejects_foreign_ref_and_duplicate_target(tmp_path: Path) -> None:
+    first = WorkspaceArtifactRegistry(tmp_path / "first")
+    second = WorkspaceArtifactRegistry(tmp_path / "second")
+    artifact_ref = first.register("frame_001", "frames/001.png")
+
+    with pytest.raises(ArtifactRegistrationError):
+        second.with_local_artifact_path(artifact_ref, lambda path: path)
+    with pytest.raises(ArtifactRegistrationError):
+        first.register("frame_002", "frames/001.png")
+
+
+def test_completed_or_missing_artifact_obligation_cannot_reopen(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    registry = WorkspaceArtifactRegistry(workspace)
+    artifact_ref = registry.register("missing_artifact", "missing.bin")
+
+    assert registry.cleanup_once().completed
+    assert registry.cleanup_obligations() == (workspace / "missing.bin",)
+    with pytest.raises(ArtifactRegistrationError):
+        registry.with_local_artifact_path(artifact_ref, lambda path: path)
+
+
+def test_artifact_obligation_survives_failure_during_physical_creation(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    artifact = workspace / "partial.bin"
+    registry = WorkspaceArtifactRegistry(workspace)
+    artifact_ref = registry.register("partial_artifact", "partial.bin")
+
+    def fail_after_partial_create(path: Path) -> NoReturn:
+        path.write_bytes(b"partial")
+        raise OSError("creation failed")
+
+    with pytest.raises(OSError, match="creation failed"):
+        registry.with_local_artifact_path(artifact_ref, fail_after_partial_create)
 
     assert registry.cleanup_obligations() == (artifact,)
     assert registry.cleanup_once().completed
@@ -1460,3 +1592,29 @@ def test_execution_outcome_rejects_non_terminal_and_inconsistent_values() -> Non
         TaskExecutionOutcome(status=AnalysisStatus.COMPLETED, errors=(safe_execution_error(),))
     with pytest.raises(ValueError):
         TaskExecutionOutcome(status=AnalysisStatus.FAILED)
+
+
+def test_failed_execution_outcome_keeps_cleanup_barrier_private_and_nonsemantic() -> None:
+    class Barrier:
+        def try_confirm_safe(self) -> bool:
+            return False
+
+    first_barrier = Barrier()
+    second_barrier = Barrier()
+    first = TaskExecutionOutcome.failed(
+        safe_execution_error(),
+        _cleanup_safety_barrier=first_barrier,
+    )
+    second = TaskExecutionOutcome.failed(
+        safe_execution_error(),
+        _cleanup_safety_barrier=second_barrier,
+    )
+
+    assert first == second
+    assert "Barrier" not in repr(first)
+    assert "cleanup_safety" not in repr(first)
+    with pytest.raises(ValueError):
+        TaskExecutionOutcome(
+            status=AnalysisStatus.COMPLETED,
+            _cleanup_safety_barrier=first_barrier,
+        )
