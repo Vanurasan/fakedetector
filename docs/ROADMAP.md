@@ -111,11 +111,11 @@ AFTER_MVP
 
 ```text
 Общий статус: IN_PROGRESS
-Текущий этап: Этап 5 — Предварительная обработка и каркас анализаторов
-Статус этапа: IN_PROGRESS
-Ближайшее действие: focused closure rerun финального аудита Stage 5
+Текущий этап: Этап 6 — Базовые анализаторы и формирование признаков
+Статус этапа: NOT_STARTED
+Ближайшее действие: выбрать минимальный набор реальных MVP analyzers, их версии, applicability, fixtures и analyzer-specific semantics для raw_metrics / candidate_findings
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–4 завершены; Stage 5 architecture PLAN принят с owner clarifications; Increments 1–5 реализовали internal models/capability boundary, shared bounded subprocess primitive с parity migration Stage 3, image/audio/video preprocessing, analyzer registry/orchestration со spawned-process timeout и интегрированный Stage 4 → Stage 5 lifecycle; исходный полный набор проверок: 1143 passed, 2 skipped, coverage 90%; Stage 5 Increments 1–5 = DONE, исправления по итогам финального аудита = IN_PROGRESS, R1–R6 = DONE; focused closure rerun финального аудита остаётся невыполненным
+Реализация программы: Этапы 1–5 завершены; Stage 5 Increments 1–5 и remediation R1–R6 = DONE; final verification = PASS; focused closure audit = PASS; Architecture Truth Review = CLOSE_STAGE5_UNCHANGED; следующий этап — Stage 6
 Документационная база: сформирована
 ```
 
@@ -148,7 +148,7 @@ AFTER_MVP
 | 2 | Доменные модели и репозитории | DONE | Типизированные модели контрактов |
 | 3 | Приём и первичная проверка файлов | DONE | Безопасно принятый или отклонённый файл |
 | 4 | Жизненный цикл задачи, хранение и маршрутизация | DONE | Управляемая задача с очисткой |
-| 5 | Предварительная обработка и каркас анализаторов | IN_PROGRESS | Единый запуск анализаторов |
+| 5 | Предварительная обработка и каркас анализаторов | DONE | Единый запуск анализаторов |
 | 6 | Базовые анализаторы и формирование признаков | NOT_STARTED | Реальные нормализованные признаки |
 | 7 | Полнота, риск и рекомендации | NOT_STARTED | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | NOT_STARTED | Пользователь и система получают результат |
@@ -708,7 +708,7 @@ coverage 91%; repository integrity confirmed. Stage 4 имеет статус `D
 
 ---
 
-# Этап 5. Предварительная обработка и каркас анализаторов — IN_PROGRESS
+# Этап 5. Предварительная обработка и каркас анализаторов — DONE
 
 ## Цель
 
@@ -718,7 +718,7 @@ coverage 91%; repository integrity confirmed. Stage 4 имеет статус `D
 
 ```text
 Stage 5 architecture PLAN: ACCEPTED WITH OWNER CLARIFICATIONS
-Implementation status: IN_PROGRESS
+Implementation status: DONE
 ```
 
 Архитектурная prerequisite подготовлена и зафиксирована документацией.
@@ -741,9 +741,8 @@ timestamp.
 3. **Increment 3 — DONE:** image/audio/video preprocessing.
 4. **Increment 4 — DONE:** analyzer registry/orchestration + hard process timeout.
 5. **Increment 5 — DONE:** integrated Stage 4 → Stage 5 lifecycle.
-6. **Исправления по итогам финального аудита Stage 5 — IN_PROGRESS:** аудит в
-   режиме только для чтения завершён; R1–R6 = DONE; focused closure rerun
-   финального аудита ожидает выполнения.
+6. **Исправления по итогам финального аудита Stage 5 — DONE:** R1–R6 = DONE;
+   focused closure audit = PASS.
 
 Increment 2 выделил private shared process boundary с hard-bounded stdout,
 discard-режимом, explicit cwd, `shell=False`, disabled stdin, timeout и
@@ -780,14 +779,13 @@ Increment 5 добавил внутренний `Stage5ExecutionService`, сов
 cleanup и release остаются исключительной ответственностью Stage 4. Полный quality barrier: 1143
 passed, 2 skipped, coverage 90%.
 
-Функциональная реализация Stage 5 завершена; выполняются исправления по
-результатам финального аудита, проведённого в режиме только для чтения. R1
+Функциональная реализация Stage 5 и исправления по результатам финального аудита
+завершены. R1
 закрывает `S5-AUD-001` и `S5-AUD-002`; R2 закрывает `S5-AUD-003`,
 `S5-AUD-004`, `S5-AUD-005`, `S5-AUD-006` и `S5-AUD-011`; R3 закрывает
 `S5-AUD-007`, `S5-AUD-008` и `S5-AUD-010`; R4 закрывает `S5-AUD-009` и
 `S5-AUD-012`. R5 устраняет оставшийся путь прерывания `S5-AUD-001`,
-воспроизведённый повторным аудитом. Этап сохраняет статус `IN_PROGRESS`:
-R6 закрыл замечания аудита изображений; требуется focused closure rerun финального аудита.
+воспроизведённый повторным аудитом. R6 закрыл замечания аудита изображений.
 Полная проверка R4: 1236 passed,
 2 skipped, coverage 90% (89,69% при точности до сотых); целевая проверка:
 217 passed. Ruff, проверка форматирования затронутых Python-файлов, mypy,
@@ -819,7 +817,24 @@ R6 закрыл замечания аудита изображений; треб
 - [x] R6 — оставшиеся замечания аудита изображений (APNG и tRNS): отдельный
   default image не подменяет первый APNG animation frame, а RGB/grayscale/palette
   `tRNS` материализуется в alpha до очистки raw metadata;
-- [ ] повторный независимый финальный аудит (final closure rerun).
+- [x] повторный независимый финальный аудит (focused closure audit): `PASS`;
+  `S5-AUD-001`, `S5-RERUN-001` и `S5-RERUN-002` — `CLOSED`, 146 targeted
+  passed, новых findings нет.
+
+## Финальное закрытие
+
+- **Final verification:** `PASS` — 1313 passed, 2 skipped, coverage 89.76%,
+  branch coverage enabled; Ruff, mypy, `poe check`, pre-commit и CLI — `PASS`.
+- **Focused closure audit:** `PASS` — `S5-AUD-001`, `S5-RERUN-001` и
+  `S5-RERUN-002` имеют статус `CLOSED`; 146 targeted passed; новых findings нет.
+- **Architecture Truth Review:** `CLOSE_STAGE5_UNCHANGED`. Перед Stage 6 новых
+  архитектурных решений не требуется.
+- **Future/post-v1.0 candidates:** deprecate/remove
+  `analyzers.defaults.continue_on_error`; deprecate/remove
+  `image.normalize_for_analysis`; возможное переименование
+  `keyframe_interval_seconds` при будущей schema revision; отдельный generated
+  artifact budget, chunked result transport и restart recovery — только при
+  измеренной потребности.
 
 ## Обязательные задачи
 
@@ -881,7 +896,9 @@ R6 закрыл замечания аудита изображений; треб
 
 ## Решение до этапа 6
 
-Необходимо выбрать минимальный набор **реальных** анализаторов MVP по каждому типу медиа.
+Необходимо выбрать минимальный набор **реальных** MVP analyzers, их версии,
+applicability, fixtures и analyzer-specific semantics для `raw_metrics` /
+`candidate_findings`.
 
 ---
 

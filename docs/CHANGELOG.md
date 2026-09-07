@@ -342,6 +342,13 @@ YYYY-MM-DD
 
 ### 2026-09-07
 
+### Changed
+
+- **[Roadmap/Stage 5] Этап 5 официально закрыт.** Remediation завершена;
+  final barrier и focused closure audit прошли со статусом `PASS`, а Architecture
+  Truth Review рекомендовал `CLOSE_STAGE5_UNCHANGED` и не потребовал изменения
+  архитектуры. Stage 5 переведён в `DONE`, следующим этапом является Stage 6.
+
 ### Fixed
 
 - **[Stage 5/Исправления финального аудита R6] Закрыты `S5-RERUN-001` и `S5-RERUN-002`.** Нормализация APNG пропускает отдельный default image и сохраняет первый реальный animation frame, не меняя семантику других animated formats и factual `frame_count`. PNG transparency из RGB, grayscale и palette `tRNS` материализуется в RGBA-пиксели до очистки `.info`; normalized artifact не переносит raw `tRNS`, EXIF, XMP или ICC, а обычный RGB остаётся RGB. Focused closure rerun финального аудита ожидает выполнения.
