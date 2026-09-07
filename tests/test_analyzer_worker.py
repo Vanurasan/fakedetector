@@ -7,6 +7,7 @@ import multiprocessing
 import time
 from collections.abc import Callable
 from dataclasses import replace
+from multiprocessing.process import BaseProcess
 from pathlib import Path
 
 import pytest
@@ -34,8 +35,10 @@ from fakedetector.analyzers._worker import (
     _SpawnedWorkerRunner,
     _validate_completed_result,
     _worker_main,
+    _WorkerReapBarrier,
     _WorkerRunKind,
 )
+from fakedetector.core._cleanup_safety import _CleanupSafetyInterruption
 from fakedetector.domain import (
     AnalyzerResult,
     AnalyzerStatus,
@@ -540,6 +543,128 @@ def test_runner_uses_explicit_spawn_context() -> None:
 
     assert isinstance(runner._backend, _MultiprocessingSpawnBackend)
     assert runner._backend._context.get_start_method() == "spawn"
+
+
+@pytest.mark.parametrize(
+    "phase", ["start", "send_close", "poll", "recv", "join", "deadline", "process_close"]
+)
+def test_real_worker_interruption_reaps_before_propagation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_worker_processes,
+    process_interruption: BaseException,
+    phase: str,
+) -> None:
+    backend = _MultiprocessingSpawnBackend()
+    receive, send = backend.create_pipe()
+    monkeypatch.setattr(backend, "create_pipe", lambda: (receive, send))
+    injected = False
+
+    def interrupt(*_args, **_kwargs):
+        nonlocal injected
+        assert len(real_worker_processes) == 1
+        assert real_worker_processes[0].is_alive()
+        injected = True
+        raise process_interruption
+
+    monotonic = time.monotonic
+    if phase == "start":
+        start_process = BaseProcess.start
+
+        def interrupted_start(process):
+            start_process(process)
+            interrupt()
+
+        monkeypatch.setattr(BaseProcess, "start", interrupted_start)
+    elif phase == "process_close":
+        close_process = BaseProcess.close
+
+        def interrupted_close(process):
+            nonlocal injected
+            close_process(process)
+            injected = True
+            raise process_interruption
+
+        monkeypatch.setattr(BaseProcess, "close", interrupted_close)
+        monkeypatch.setattr(receive, "poll", lambda *_args: False)
+    elif phase == "deadline":
+
+        def monotonic():
+            return interrupt() if real_worker_processes else 0.0
+
+    elif phase == "send_close":
+        close = send.close
+
+        def interrupt_close():
+            monkeypatch.setattr(send, "close", close)
+            interrupt()
+
+        monkeypatch.setattr(send, "close", interrupt_close)
+    elif phase == "poll":
+        monkeypatch.setattr(receive, "poll", interrupt)
+    else:
+        monkeypatch.setattr(receive, "poll", lambda *_args: True)
+        if phase == "recv":
+            monkeypatch.setattr(receive, "recv_bytes", interrupt)
+        else:
+
+            def response_before_interrupted_join(*_args):
+                process = real_worker_processes[0]
+                join = process.join
+
+                def interrupt_join(*args, **kwargs):
+                    monkeypatch.setattr(process, "join", join)
+                    interrupt(*args, **kwargs)
+
+                monkeypatch.setattr(process, "join", interrupt_join)
+                return b'{"kind":"worker_error"}'
+
+            monkeypatch.setattr(receive, "recv_bytes", response_before_interrupted_join)
+
+    with pytest.raises(type(process_interruption)) as raised:
+        _SpawnedWorkerRunner(backend=backend, monotonic=monotonic).run(_request(tmp_path), 5.0)
+
+    assert raised.value is process_interruption
+    assert injected
+    # The fixture's close hook also verifies a real zero-time join and exitcode.
+    assert real_worker_processes[0]._closed
+    assert receive.closed and send.closed
+
+
+def test_real_worker_interrupted_escalation_preserves_barrier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_worker_processes,
+    process_interruption: BaseException,
+) -> None:
+    backend = _MultiprocessingSpawnBackend()
+    receive, send = backend.create_pipe()
+    monkeypatch.setattr(backend, "create_pipe", lambda: (receive, send))
+
+    def timeout_with_interrupted_termination(*_args):
+        child = real_worker_processes[0]
+        terminate = child.terminate
+
+        def interrupt_once():
+            monkeypatch.setattr(child, "terminate", terminate)
+            assert child.is_alive()
+            raise process_interruption
+
+        monkeypatch.setattr(child, "terminate", interrupt_once)
+        return False
+
+    monkeypatch.setattr(receive, "poll", timeout_with_interrupted_termination)
+    with pytest.raises(_CleanupSafetyInterruption) as raised:
+        _SpawnedWorkerRunner(backend=backend).run(_request(tmp_path), 5.0)
+
+    assert raised.value.interruption is process_interruption
+    barrier = raised.value._cleanup_safety_barrier
+    assert isinstance(barrier, _WorkerReapBarrier)
+    assert real_worker_processes[0].is_alive()
+    assert receive.closed and send.closed
+    assert barrier.try_confirm_safe() is True
+    assert barrier.try_confirm_safe() is True
+    assert real_worker_processes[0]._closed
 
 
 def _decoded(response: bytes) -> dict[str, object]:

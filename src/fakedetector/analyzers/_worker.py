@@ -40,6 +40,7 @@ from fakedetector.analyzers._transport import (
     _WorkerRequest,
     _WorkerResponseKind,
 )
+from fakedetector.core._cleanup_safety import _CleanupSafetyInterruption
 from fakedetector.domain import AnalyzerResult, AnalyzerStatus, MediaType
 
 _TERMINATE_JOIN_SECONDS = 0.2
@@ -148,93 +149,107 @@ class _SpawnedWorkerRunner:
                 target=_worker_main,
                 args=(send_connection, request),
             )
-        except (OSError, RuntimeError, TypeError, ValueError):
+        except BaseException as error:
             _close_connection(receive_connection)
             _close_connection(send_connection)
-            raise AnalyzerInfrastructureError("spawn_setup") from None
+            if isinstance(error, (OSError, RuntimeError, TypeError, ValueError)):
+                raise AnalyzerInfrastructureError("spawn_setup") from None
+            raise
 
         process_started = False
-        process_cleanup_deferred = False
-        send_connection_open = True
         try:
             try:
-                process.start()
-                process_started = True
-            except (OSError, RuntimeError, TypeError, ValueError):
-                raise AnalyzerInfrastructureError("spawn_start") from None
+                try:
+                    process.start()
+                    process_started = True
+                except BaseException as start_error:
+                    # start() may be interrupted after the backend acquired a child.
+                    process_started = True
+                    with suppress(OSError, RuntimeError, ValueError):
+                        process_started = process.is_alive() or process.exitcode is not None
+                    if isinstance(start_error, (OSError, RuntimeError, TypeError, ValueError)):
+                        raise AnalyzerInfrastructureError("spawn_start") from None
+                    raise
+                _close_connection(send_connection)
+                kind, response = self._wait_for_response(
+                    process,
+                    receive_connection,
+                    deadline=started_at + timeout_seconds,
+                )
             finally:
-                if process_started:
+                try:
+                    _close_connection(receive_connection)
+                finally:
                     _close_connection(send_connection)
-                    send_connection_open = False
-
-            deadline = started_at + timeout_seconds
-            try:
-                response_ready = receive_connection.poll(max(0.0, deadline - self._monotonic()))
-            except (OSError, EOFError, ValueError):
-                self._stop_and_reap(process)
-                raise AnalyzerInfrastructureError("worker_ipc") from None
-
-            if not response_ready:
-                if not self._is_alive(process):
-                    self._confirm_reaped(process)
-                    raise AnalyzerInfrastructureError("worker_no_response")
-                self._stop_and_reap(process)
-                return _WorkerRun(
-                    kind=_WorkerRunKind.TIMEOUT,
-                    duration_ms=_duration_ms(started_at, self._monotonic()),
-                )
-
-            try:
-                response = receive_connection.recv_bytes(_MAX_RESPONSE_BYTES)
-            except (OSError, EOFError, ValueError):
-                self._stop_and_reap(process)
-                raise AnalyzerInfrastructureError("worker_response") from None
-
-            try:
-                self._bounded_join(process, max(0.0, deadline - self._monotonic()))
-            except AnalyzerInfrastructureError:
-                self._stop_and_reap(process)
-                raise
-            if self._is_alive(process):
-                self._stop_and_reap(process)
-                return _WorkerRun(
-                    kind=_WorkerRunKind.TIMEOUT,
-                    duration_ms=_duration_ms(started_at, self._monotonic()),
-                )
-            self._confirm_reaped(process)
-            if process.exitcode != 0:
-                raise AnalyzerInfrastructureError("worker_exit")
-            return _WorkerRun(
-                kind=_WorkerRunKind.RESPONSE,
-                duration_ms=_duration_ms(started_at, self._monotonic()),
-                response=response,
-            )
-        except AnalyzerInfrastructureError as error:
-            process_cleanup_deferred = error._cleanup_safety_barrier is not None
+        except BaseException as error:
+            if process_started:
+                self._stop_and_reap(process, error=error)
             raise
         finally:
-            _close_connection(receive_connection)
-            if send_connection_open:
-                _close_connection(send_connection)
-            if not process_started or (not process_cleanup_deferred and _known_stopped(process)):
+            if not process_started:
                 with suppress(OSError, ValueError):
                     process.close()
 
-    def _stop_and_reap(self, process: _WorkerProcess) -> None:
+        self._stop_and_reap(process)
+        return _WorkerRun(
+            kind=kind,
+            duration_ms=_duration_ms(started_at, self._monotonic()),
+            response=response,
+        )
+
+    def _wait_for_response(
+        self,
+        process: _WorkerProcess,
+        receive_connection: _Connection,
+        *,
+        deadline: float,
+    ) -> tuple[_WorkerRunKind, bytes | None]:
+        try:
+            response_ready = receive_connection.poll(max(0.0, deadline - self._monotonic()))
+        except (OSError, EOFError, ValueError):
+            raise AnalyzerInfrastructureError("worker_ipc") from None
+
+        if not response_ready:
+            if not self._is_alive(process):
+                raise AnalyzerInfrastructureError("worker_no_response")
+            return _WorkerRunKind.TIMEOUT, None
+
+        try:
+            response = receive_connection.recv_bytes(_MAX_RESPONSE_BYTES)
+        except (OSError, EOFError, ValueError):
+            raise AnalyzerInfrastructureError("worker_response") from None
+
+        self._bounded_join(process, max(0.0, deadline - self._monotonic()))
+        if self._is_alive(process):
+            return _WorkerRunKind.TIMEOUT, None
+        if process.exitcode != 0:
+            raise AnalyzerInfrastructureError("worker_exit")
+        return _WorkerRunKind.RESPONSE, response
+
+    def _stop_and_reap(
+        self,
+        process: _WorkerProcess,
+        *,
+        error: BaseException | None = None,
+    ) -> None:
         barrier = _WorkerReapBarrier(process)
-        if barrier.try_confirm_safe():
-            return
+        try:
+            if barrier.try_confirm_safe():
+                return
+        except BaseException as reap_error:
+            if barrier._confirmed:
+                if error is not None and not isinstance(error, Exception):
+                    raise error from None
+                raise
+            # An interrupted escalation must retain the same unresolved process.
+            if error is None or isinstance(error, Exception):
+                error = reap_error
+        if error is not None and not isinstance(error, Exception):
+            raise _CleanupSafetyInterruption(error, barrier) from None
         raise AnalyzerInfrastructureError(
             "worker_reap",
             _cleanup_safety_barrier=barrier,
         )
-
-    def _confirm_reaped(self, process: _WorkerProcess) -> None:
-        try:
-            self._bounded_join(process, 0.0)
-        except AnalyzerInfrastructureError:
-            self._stop_and_reap(process)
-            raise
 
     @staticmethod
     def _bounded_join(
@@ -251,11 +266,7 @@ class _SpawnedWorkerRunner:
         try:
             return process.is_alive()
         except (OSError, RuntimeError, ValueError):
-            barrier = _WorkerReapBarrier(process)
-            raise AnalyzerInfrastructureError(
-                "worker_reap",
-                _cleanup_safety_barrier=barrier,
-            ) from None
+            raise AnalyzerInfrastructureError("worker_join") from None
 
 
 class _WorkerReapBarrier:
@@ -309,10 +320,10 @@ class _WorkerReapBarrier:
         return cls._try_join(process, 0.0)
 
     def _mark_confirmed(self, process: _WorkerProcess) -> bool:
-        with suppress(OSError, ValueError):
-            process.close()
         self._confirmed = True
         self._process = None
+        with suppress(OSError, ValueError):
+            process.close()
         return True
 
 
@@ -481,10 +492,3 @@ def _duration_ms(started_at: float, finished_at: float) -> int:
 def _close_connection(connection: _Connection) -> None:
     with suppress(OSError, ValueError):
         connection.close()
-
-
-def _known_stopped(process: _WorkerProcess) -> bool:
-    try:
-        return not process.is_alive()
-    except (OSError, RuntimeError, ValueError):
-        return False

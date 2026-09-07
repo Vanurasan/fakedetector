@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from collections.abc import Callable
 from copy import copy
 from dataclasses import FrozenInstanceError, fields
@@ -15,9 +16,12 @@ from typing import NoReturn, cast
 import pytest
 import yaml
 
+import fakedetector.analyzers._orchestrator as orchestrator_module
+import fakedetector.analyzers._worker as worker_module
 import fakedetector.core._bounded_process as bounded_process_module
 import fakedetector.lifecycle as lifecycle
 import fakedetector.lifecycle.execution as execution_module
+import fakedetector.preprocessing._media_tools as preprocessing_tools_module
 from fakedetector._stage5_resources import _GeneratedArtifactBudget
 from fakedetector.analyzers._catalog import _framework_test_registrations
 from fakedetector.analyzers._errors import AnalyzerInfrastructureError
@@ -1279,6 +1283,175 @@ def test_fatal_analyzer_infrastructure_failure_cleans_after_safety_confirmation(
     assert task.stage5_data.analyzer_results == ()
     assert task.accepted_source.is_released
     assert barrier.calls == 1
+
+
+@pytest.mark.parametrize("child_kind", ["worker", "subprocess"])
+@pytest.mark.parametrize("unsafe", [False, True], ids=["reaped", "deferred"])
+def test_real_interrupted_child_preserves_settlement_ownership_and_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_worker_processes,
+    real_subprocesses,
+    process_interruption: BaseException,
+    child_kind: str,
+    unsafe: bool,
+) -> None:
+    root = tmp_path / "temp"
+    config = _config(root, enabled=["fake_hang_analyzer"])
+    task, registry = _claimed_task(root, config)
+    analysis_id = task.context.analysis_id
+    children = real_worker_processes if child_kind == "worker" else real_subprocesses
+    stop_events: list[str] = []
+    cleanup_events: list[str] = []
+    stop_patch = pytest.MonkeyPatch()
+
+    def assert_reaped() -> None:
+        child = children[0]
+        if child_kind == "worker":
+            assert child._closed  # Fixture verifies stopped + join before close.
+        else:
+            assert child.returncode is not None
+            assert child.wait(timeout=0.0) == child.returncode
+            assert child.stdout.closed
+
+    def interrupt(*_args, **_kwargs):
+        assert len(children) == 1
+        child = children[0]
+        assert child.is_alive() if child_kind == "worker" else child.poll() is None
+        if unsafe:
+
+            def retain_child(operation: str) -> None:
+                _assert_registry_unlocked(registry, analysis_id)
+                stop_events.append(operation)
+
+            def unconfirmed_wait(timeout=None):
+                assert timeout is not None and 0.0 <= timeout <= 1.0
+                retain_child("wait")
+                raise OSError("PRIVATE reap confirmation failure")
+
+            stop_patch.setattr(child, "terminate", lambda: retain_child("terminate"))
+            stop_patch.setattr(child, "kill", lambda: retain_child("kill"))
+            stop_patch.setattr(
+                child,
+                "join" if child_kind == "worker" else "wait",
+                unconfirmed_wait,
+            )
+        raise process_interruption
+
+    if child_kind == "worker":
+        monkeypatch.setattr(worker_module._SpawnedWorkerRunner, "_wait_for_response", interrupt)
+        preprocessing = _RecordingPreprocessing(create_artifact=True)
+    else:
+        monkeypatch.setattr(bounded_process_module, "_read_stdout_chunk", interrupt)
+
+        def run_probe(_arguments, **kwargs):
+            return bounded_process_module.run_bounded_process(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                **kwargs,
+            )
+
+        monkeypatch.setattr(preprocessing_tools_module, "run_bounded_process", run_probe)
+        preprocessing = _FFmpegTerminationPreprocessing()
+    service = _service(config, registry, preprocessing, monotonic=_ManualMonotonic())
+    processor = Stage4TaskProcessor(
+        config=config,
+        clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
+        registry=registry,
+    )
+    cleanup = processor._cleanup.cleanup_task
+    source_cleanup = task.accepted_source._owner.cleanup
+
+    def checked_cleanup(*args, **kwargs):
+        assert_reaped()
+        _assert_registry_unlocked(registry, analysis_id)
+        cleanup_events.append("cleanup")
+        return cleanup(*args, **kwargs)
+
+    def checked_release(*args, **kwargs):
+        assert_reaped()
+        _assert_registry_unlocked(registry, analysis_id)
+        cleanup_events.append("release")
+        return source_cleanup(*args, **kwargs)
+
+    monkeypatch.setattr(processor._cleanup, "cleanup_task", checked_cleanup)
+    monkeypatch.setattr(task.accepted_source._owner, "cleanup", checked_release)
+    try:
+        with pytest.raises(type(process_interruption)) as raised:
+            processor.execute_claimed(task, service)
+        assert raised.value is process_interruption
+        if unsafe:
+            obligations = task.artifacts.cleanup_obligations()
+            barrier = task.terminal_settlement._cleanup_safety_barrier
+            assert barrier is not None
+            for _ in range(2):
+                snapshot = registry.snapshot(analysis_id)
+                assert snapshot.status is AnalysisStatus.FAILED
+                assert snapshot.stage is ProcessingStage.CLEANUP
+                assert snapshot.finished_at is None and snapshot.cleanup is None
+                assert "PRIVATE" not in repr(snapshot)
+                assert not task.accepted_source.is_released
+                assert obligations and all(path.is_file() for path in obligations)
+                assert task.artifacts.cleanup_obligations() == obligations
+                assert task.terminal_settlement._cleanup_safety_barrier is barrier
+                assert task.terminal_settlement.owner_token is None
+                assert cleanup_events == []
+                assert registry.recoverable_terminal_tasks() == (analysis_id,)
+                processor.settle_terminal(analysis_id)
+            assert stop_events == ["terminate", "wait", "kill", "wait"] * 4
+            stop_patch.undo()
+            final = processor.settle_terminal(analysis_id)
+            assert all(not path.exists() for path in obligations)
+            assert task.terminal_settlement is None
+            assert barrier.try_confirm_safe() is True
+        else:
+            final = registry.snapshot(analysis_id)
+        assert_reaped()
+        assert final.status is AnalysisStatus.FAILED
+        assert final.stage is ProcessingStage.FINISHED
+        assert final.finished_at is not None and final.cleanup is not None
+        assert task.accepted_source.is_released
+        assert registry.recoverable_terminal_tasks() == ()
+        assert registry._read_stage5_analyzer_results(task) == ()
+        assert cleanup_events == ["cleanup", "release"]
+        with pytest.raises(LifecycleStateError):
+            processor.settle_terminal(analysis_id)
+        assert cleanup_events == ["cleanup", "release"]
+    finally:
+        stop_patch.undo()
+
+
+def test_response_decode_interruption_propagates_after_real_worker_reap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_worker_processes,
+    process_interruption: BaseException,
+) -> None:
+    root = tmp_path / "temp"
+    config = _config(root, enabled=["fake_image_analyzer"])
+    task, registry = _claimed_task(root, config)
+
+    def interrupted_decode(_response):
+        assert len(real_worker_processes) == 1 and real_worker_processes[0]._closed
+        raise process_interruption
+
+    monkeypatch.setattr(orchestrator_module, "_decode_response", interrupted_decode)
+    service = _service(
+        config,
+        registry,
+        _RecordingPreprocessing(create_artifact=True),
+        monotonic=_ManualMonotonic(),
+    )
+    processor = Stage4TaskProcessor(
+        config=config,
+        clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
+        registry=registry,
+    )
+    with pytest.raises(type(process_interruption)) as raised:
+        processor.execute_claimed(task, service)
+    assert raised.value is process_interruption
+    assert registry.snapshot(task.context.analysis_id).stage is ProcessingStage.FINISHED
+    assert task.accepted_source.is_released
+    assert registry._read_stage5_analyzer_results(task) == ()
 
 
 def test_unreapable_worker_defers_cleanup_until_recovery_confirms_safe(

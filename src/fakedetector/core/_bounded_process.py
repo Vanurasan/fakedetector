@@ -13,7 +13,7 @@ from time import monotonic as _monotonic
 from time import sleep as _sleep
 from typing import IO, Literal
 
-from fakedetector.core._cleanup_safety import _CleanupSafetyBarrier
+from fakedetector.core._cleanup_safety import _CleanupSafetyBarrier, _CleanupSafetyInterruption
 
 _READ_CHUNK_BYTES = 64 * 1024
 _POLL_INTERVAL_SECONDS = 0.005
@@ -133,14 +133,53 @@ def run_bounded_process(
         cwd=cwd,
         capture_stdout=stdout_limit_bytes is not None,
     )
-    if stdout_limit_bytes is None:
-        return _wait_without_capture(process, timeout_seconds=timeout_seconds)
-    return _wait_with_bounded_capture(
-        process,
-        timeout_seconds=timeout_seconds,
-        stdout_limit_bytes=stdout_limit_bytes,
-        stdout_sink=stdout_sink,
-    )
+    execution_error: BaseException | None = None
+    try:
+        if stdout_limit_bytes is None:
+            result = _wait_without_capture(process, timeout_seconds=timeout_seconds)
+        else:
+            result = _wait_with_bounded_capture(
+                process,
+                timeout_seconds=timeout_seconds,
+                stdout_limit_bytes=stdout_limit_bytes,
+                stdout_sink=stdout_sink,
+            )
+    except BaseException as error:
+        execution_error = _stop_after_execution_failure(process, error)
+
+    close_error: BaseException | None = None
+    if process.stdout is not None:
+        try:
+            process.stdout.close()
+        except OSError:
+            close_error = ProcessInfrastructureError("stdout_close")
+        except BaseException as error:
+            close_error = error
+
+    # Preserve interruption and R2 termination/read/write precedence over close failures.
+    if execution_error is not None and not isinstance(execution_error, Exception):
+        raise execution_error
+    if close_error is not None and not isinstance(close_error, Exception):
+        if (
+            isinstance(execution_error, ProcessInfrastructureError)
+            and execution_error._cleanup_safety_barrier is not None
+        ):
+            raise _CleanupSafetyInterruption(
+                close_error,
+                execution_error._cleanup_safety_barrier,
+            )
+        raise close_error
+    if isinstance(execution_error, ProcessInfrastructureError) and execution_error.phase in {
+        "termination",
+        "stdout_read",
+        "stdout_write",
+    }:
+        raise execution_error
+    if close_error is not None:
+        raise close_error
+    if execution_error is not None:
+        raise execution_error
+    return result
 
 
 def _validated_argv(arguments: Sequence[str]) -> tuple[str, ...]:
@@ -178,7 +217,12 @@ def _wait_without_capture(
     *,
     timeout_seconds: float,
 ) -> ProcessResult:
-    return_code = _wait_for_execution(process, timeout_seconds=timeout_seconds)
+    try:
+        return_code = process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        raise ProcessTimeoutError() from None
+    except OSError:
+        raise ProcessInfrastructureError("wait") from None
     return ProcessResult(return_code=return_code, stdout=None)
 
 
@@ -191,51 +235,18 @@ def _wait_with_bounded_capture(
 ) -> ProcessResult:
     stdout_pipe = process.stdout
     assert stdout_pipe is not None
-    execution_error: (
-        ProcessInfrastructureError | ProcessTimeoutError | ProcessOutputLimitError | None
-    ) = None
-    return_code: int | None = None
     output = _BoundedStdoutTarget(
         limit_bytes=stdout_limit_bytes,
         sink=stdout_sink,
         captured=bytearray() if stdout_sink is None else None,
     )
-    try:
-        _make_stdout_nonblocking(stdout_pipe)
-        return_code = _capture_until_complete(
-            process,
-            stdout_pipe,
-            output=output,
-            timeout_seconds=timeout_seconds,
-        )
-    except (
-        ProcessInfrastructureError,
-        ProcessTimeoutError,
-        ProcessOutputLimitError,
-    ) as error:
-        execution_error = _stop_after_capture_failure(process, error)
-
-    close_failed = False
-    try:
-        stdout_pipe.close()
-    except OSError:
-        close_failed = True
-
-    if (
-        isinstance(execution_error, ProcessInfrastructureError)
-        and execution_error.phase == "termination"
-    ):
-        raise execution_error
-    if isinstance(execution_error, ProcessInfrastructureError) and execution_error.phase in {
-        "stdout_read",
-        "stdout_write",
-    }:
-        raise execution_error
-    if close_failed:
-        raise ProcessInfrastructureError("stdout_close") from None
-    if execution_error is not None:
-        raise execution_error
-    assert return_code is not None
+    _make_stdout_nonblocking(stdout_pipe)
+    return_code = _capture_until_complete(
+        process,
+        stdout_pipe,
+        output=output,
+        timeout_seconds=timeout_seconds,
+    )
     return ProcessResult(return_code=return_code, stdout=output.result())
 
 
@@ -351,37 +362,21 @@ def _confirm_reaped(process: subprocess.Popen[bytes]) -> int:
         raise ProcessInfrastructureError("wait") from None
 
 
-def _stop_after_capture_failure(
+def _stop_after_execution_failure(
     process: subprocess.Popen[bytes],
-    error: ProcessInfrastructureError | ProcessTimeoutError | ProcessOutputLimitError,
-) -> ProcessInfrastructureError | ProcessTimeoutError | ProcessOutputLimitError:
-    try:
-        _terminate_and_reap(process)
-    except ProcessInfrastructureError as termination_error:
-        return termination_error
-    return error
-
-
-def _wait_for_execution(
-    process: subprocess.Popen[bytes],
-    *,
-    timeout_seconds: float,
-) -> int:
-    try:
-        return process.wait(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        _terminate_and_reap(process)
-        raise ProcessTimeoutError() from None
-    except OSError:
-        _terminate_and_reap(process)
-        raise ProcessInfrastructureError("wait") from None
-
-
-def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
+    error: BaseException,
+) -> BaseException:
     barrier = _ProcessTerminationBarrier(process)
-    if barrier.try_confirm_safe():
-        return
-    raise ProcessInfrastructureError(
+    try:
+        if barrier.try_confirm_safe():
+            return error
+    except BaseException as termination_error:
+        # An interrupted escalation still owns the child until a later safe reap.
+        if isinstance(error, Exception):
+            error = termination_error
+    if not isinstance(error, Exception):
+        return _CleanupSafetyInterruption(error, barrier)
+    return ProcessInfrastructureError(
         "termination",
         _cleanup_safety_barrier=barrier,
-    ) from None
+    )

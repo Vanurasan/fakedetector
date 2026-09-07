@@ -17,6 +17,7 @@ from fakedetector.core._bounded_process import (
     ProcessTimeoutError,
     run_bounded_process,
 )
+from fakedetector.core._cleanup_safety import _CleanupSafetyInterruption
 
 
 def python_child(source: str, *arguments: str) -> list[str]:
@@ -602,3 +603,176 @@ def test_unconfirmed_termination_is_infrastructure_failure(
     assert barrier.try_confirm_safe() is True
     assert barrier.try_confirm_safe() is True
     assert process.wait_calls == 6
+
+
+@pytest.mark.parametrize("phase", ["wait", "poll", "read", "sink", "deadline", "result"])
+def test_real_process_interruption_reaps_and_closes_stdout_before_propagation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_subprocesses,
+    process_interruption: BaseException,
+    phase: str,
+) -> None:
+    injected = False
+
+    def interrupt(*_args, **_kwargs):
+        nonlocal injected
+        assert len(real_subprocesses) == 1
+        child = real_subprocesses[0]
+        assert (child.poll() is not None) == (phase == "result")
+        injected = True
+        raise process_interruption
+
+    if phase == "wait":
+        wait_without_capture = bounded_process_module._wait_without_capture
+
+        def interrupt_wait(process, **kwargs):
+            wait = process.wait
+
+            def wait_once(*args, **options):
+                monkeypatch.setattr(process, "wait", wait)
+                interrupt(*args, **options)
+
+            monkeypatch.setattr(process, "wait", wait_once)
+            return wait_without_capture(process, **kwargs)
+
+        monkeypatch.setattr(bounded_process_module, "_wait_without_capture", interrupt_wait)
+    elif phase == "poll":
+        monkeypatch.setattr(bounded_process_module, "_poll_process", interrupt)
+    elif phase == "read":
+        monkeypatch.setattr(bounded_process_module, "_read_stdout_chunk", interrupt)
+    elif phase == "deadline":
+        monkeypatch.setattr(bounded_process_module, "_monotonic", interrupt)
+    elif phase == "result":
+        monkeypatch.setattr(bounded_process_module._BoundedStdoutTarget, "result", interrupt)
+
+    sink = BytesIO()
+    if phase == "sink":
+        monkeypatch.setattr(sink, "write", interrupt)
+    source = "import sys, time; sys.stdout.buffer.write(b'x'); sys.stdout.buffer.flush()"
+    if phase != "result":
+        source += "; time.sleep(30)"
+
+    with pytest.raises(type(process_interruption)) as raised:
+        run_bounded_process(
+            python_child(source),
+            cwd=tmp_path,
+            timeout_seconds=5.0,
+            stdout_limit_bytes=None if phase == "wait" else 1024,
+            stdout_sink=sink if phase == "sink" else None,
+        )
+
+    assert raised.value is process_interruption
+    assert injected
+    child = real_subprocesses[0]
+    assert child.returncode is not None
+    assert child.wait(timeout=0.0) == child.returncode
+    assert child.stdout is None or child.stdout.closed
+    assert not sink.closed
+
+
+@pytest.mark.parametrize("stdout_limit_bytes", [None, 1024], ids=["discard", "capture"])
+def test_real_process_interrupted_escalation_retains_recoverable_barrier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_subprocesses,
+    process_interruption: BaseException,
+    stdout_limit_bytes: int | None,
+) -> None:
+    terminate = bounded_process_module._ProcessTerminationBarrier.try_confirm_safe
+    injected = False
+
+    def interrupted_termination(barrier):
+        nonlocal injected
+        process = real_subprocesses[0]
+        if not injected:
+            injected = True
+            real_terminate = process.terminate
+
+            def terminate_once():
+                monkeypatch.setattr(process, "terminate", real_terminate)
+                assert process.poll() is None
+                raise process_interruption
+
+            monkeypatch.setattr(process, "terminate", terminate_once)
+        return terminate(barrier)
+
+    monkeypatch.setattr(
+        bounded_process_module._ProcessTerminationBarrier,
+        "try_confirm_safe",
+        interrupted_termination,
+    )
+
+    with pytest.raises(_CleanupSafetyInterruption) as raised:
+        run_bounded_process(
+            python_child("import time; time.sleep(30)"),
+            cwd=tmp_path,
+            timeout_seconds=0.05,
+            stdout_limit_bytes=stdout_limit_bytes,
+        )
+
+    assert raised.value.interruption is process_interruption
+    barrier = raised.value._cleanup_safety_barrier
+    child = real_subprocesses[0]
+    assert child.poll() is None
+    assert child.stdout is None or child.stdout.closed
+    assert barrier.try_confirm_safe() is True
+    assert barrier.try_confirm_safe() is True
+    assert child.wait(timeout=0.0) == child.returncode
+
+
+@pytest.mark.parametrize("failure", ["output_limit", "stdout_read", "termination"])
+def test_stdout_close_interruption_preserves_pending_termination_safety(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_subprocesses,
+    process_interruption: BaseException,
+    failure: str,
+) -> None:
+    with pytest.MonkeyPatch.context() as stop_patch:
+
+        def fail_read(stdout, _size):
+            child = real_subprocesses[0]
+            assert child.poll() is None
+            close = stdout.close
+
+            def interrupted_close():
+                monkeypatch.setattr(stdout, "close", close)
+                close()
+                raise process_interruption
+
+            monkeypatch.setattr(stdout, "close", interrupted_close)
+            if failure == "termination":
+                stop_patch.setattr(child, "terminate", lambda: None)
+                stop_patch.setattr(child, "kill", lambda: None)
+
+                def unconfirmed_wait(timeout):
+                    raise subprocess.TimeoutExpired("probe", timeout)
+
+                stop_patch.setattr(child, "wait", unconfirmed_wait)
+            if failure == "stdout_read":
+                raise ProcessInfrastructureError("stdout_read")
+            raise ProcessOutputLimitError
+
+        monkeypatch.setattr(bounded_process_module, "_read_stdout_chunk", fail_read)
+        expected_error = (
+            _CleanupSafetyInterruption if failure == "termination" else type(process_interruption)
+        )
+        with pytest.raises(expected_error) as raised:
+            run_bounded_process(
+                python_child("import time; time.sleep(30)"),
+                cwd=tmp_path,
+                timeout_seconds=5.0,
+                stdout_limit_bytes=1,
+            )
+        child = real_subprocesses[0]
+        assert child.stdout.closed
+        if failure == "termination":
+            assert raised.value.interruption is process_interruption
+            assert child.poll() is None
+            stop_patch.undo()
+            assert raised.value._cleanup_safety_barrier.try_confirm_safe() is True
+        else:
+            assert raised.value is process_interruption
+        assert child.returncode is not None
+        assert child.wait(timeout=0.0) == child.returncode

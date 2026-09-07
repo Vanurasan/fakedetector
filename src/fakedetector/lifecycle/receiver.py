@@ -7,6 +7,7 @@ from pathlib import Path, PureWindowsPath
 from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
 from fakedetector.core import AuthoritativeLifecycleClock
+from fakedetector.core._cleanup_safety import _CleanupSafetyInterruption
 from fakedetector.domain import AnalysisStatus, ErrorDetail, ProcessingStage
 from fakedetector.intake import Stage3Accepted
 from fakedetector.lifecycle.artifacts import WorkspaceArtifactRegistry
@@ -184,6 +185,12 @@ class Stage4TaskProcessor:
             outcome = executor.execute(task)
             if not isinstance(outcome, TaskExecutionOutcome):
                 raise TypeError("executor returned an invalid outcome")
+        except _CleanupSafetyInterruption as error:
+            outcome = TaskExecutionOutcome.failed(
+                _execution_error(),
+                _cleanup_safety_barrier=error._cleanup_safety_barrier,
+            )
+            termination = error.interruption
         except Exception:
             outcome = TaskExecutionOutcome.failed(_execution_error())
         except BaseException as error:
