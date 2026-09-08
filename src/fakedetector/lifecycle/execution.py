@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import datetime
 from threading import RLock
@@ -18,6 +19,7 @@ from fakedetector.domain import (
     AnalyzerResult,
     CleanupResult,
     ErrorDetail,
+    Finding,
     MediaType,
     ProcessingStage,
     ValidatedFileDescriptor,
@@ -27,16 +29,19 @@ from fakedetector.lifecycle.models import (
     AnalysisTask,
     CleanupFacts,
     Stage5TaskData,
+    Stage6TaskData,
     TaskExecutionOutcome,
     TaskSnapshot,
     TerminalSettlement,
     TerminalSettlementPhase,
     TerminalSettlementSnapshot,
     _StoredAnalyzerResult,
+    _StoredFinding,
 )
 from fakedetector.preprocessing._models import PreparedMedia
 
 _CleanupOutcome = TypeVar("_CleanupOutcome")
+_MAX_STAGE6_FINDINGS = 48
 
 
 class LifecycleStateError(Exception):
@@ -345,6 +350,7 @@ class TaskRegistry:
             data = authoritative.stage5_data
             if (
                 data is None
+                or authoritative.stage6_data is not None
                 or stored_result.media_type is not authoritative.context.media_type
                 or any(
                     existing.analyzer_id == stored_result.analyzer_id
@@ -371,6 +377,72 @@ class TaskRegistry:
         return tuple(
             AnalyzerResult.model_validate_json(result.canonical_json) for result in results
         )
+
+    def publish_stage6_findings(
+        self,
+        task: AnalysisTask,
+        findings: Sequence[Finding],
+    ) -> None:
+        """Publish one canonical immutable Stage 6 sibling value during analysis."""
+        if len(findings) > _MAX_STAGE6_FINDINGS:
+            raise LifecycleStateError()
+        try:
+            validated = tuple(
+                Finding.model_validate(finding.model_dump(mode="python", warnings="error"))
+                for finding in findings
+            )
+            stored_findings = tuple(
+                _StoredFinding(
+                    finding_id=finding.finding_id,
+                    source_analyzer_id=finding.source_analyzer_id,
+                    source_analyzer_version=finding.source_analyzer_version,
+                    canonical_json=_serialize_stage6_finding(finding),
+                )
+                for finding in validated
+            )
+            stage6_data = Stage6TaskData(findings=stored_findings)
+        except (
+            AttributeError,
+            PydanticSerializationError,
+            ValidationError,
+            TypeError,
+            ValueError,
+        ):
+            raise LifecycleStateError() from None
+
+        with self._lock:
+            authoritative = self._require_stage5_task(task, ProcessingStage.ANALYSIS)
+            stage5_data = authoritative.stage5_data
+            if stage5_data is None or authoritative.stage6_data is not None:
+                raise LifecycleStateError()
+            try:
+                analyzer_results = {
+                    result.analyzer_id: result
+                    for stored_result in stage5_data.analyzer_results
+                    for result in (
+                        AnalyzerResult.model_validate_json(stored_result.canonical_json),
+                    )
+                }
+            except (ValidationError, TypeError, ValueError):
+                raise LifecycleStateError() from None
+            if any(
+                (source := analyzer_results.get(finding.source_analyzer_id)) is None
+                or finding.source_analyzer_version != source.analyzer_version
+                or finding.group != source.group
+                for finding in validated
+            ):
+                raise LifecycleStateError()
+            authoritative.stage6_data = stage6_data
+
+    def _read_stage6_findings(self, task: AnalysisTask) -> tuple[Finding, ...]:
+        """Materialize detached canonical Stage 6 facts, including after terminalization."""
+        with self._lock:
+            authoritative = self._get(task.context.analysis_id)
+            if authoritative is not task:
+                raise LifecycleStateError()
+            data = authoritative.stage6_data
+            findings = () if data is None else data.findings
+        return tuple(Finding.model_validate_json(finding.canonical_json) for finding in findings)
 
     def record_outcome(self, analysis_id: str, outcome: TaskExecutionOutcome) -> None:
         with self._lock:
@@ -691,6 +763,16 @@ class TaskRegistry:
             return self._tasks[analysis_id]
         except KeyError:
             raise TaskNotFoundError() from None
+
+
+def _serialize_stage6_finding(finding: Finding) -> bytes:
+    return json.dumps(
+        finding.model_dump(mode="json", warnings="error"),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
 
 
 class MediaRouter:

@@ -235,6 +235,38 @@ class Stage5TaskData:
         object.__setattr__(self, "analyzer_results", results)
 
 
+@dataclass(frozen=True, slots=True)
+class _StoredFinding:
+    """Immutable canonical finding bytes and identity for registry checks."""
+
+    finding_id: str
+    source_analyzer_id: str
+    source_analyzer_version: str
+    canonical_json: bytes = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.finding_id or not self.source_analyzer_id or not self.source_analyzer_version:
+            raise ValueError("stored finding identity is incomplete")
+        if not isinstance(self.canonical_json, bytes):
+            raise TypeError("stored finding requires immutable bytes")
+
+
+@dataclass(frozen=True, slots=True)
+class Stage6TaskData:
+    """Internal sibling state retaining canonical normalized findings."""
+
+    findings: tuple[_StoredFinding, ...] = ()
+
+    def __post_init__(self) -> None:
+        findings = tuple(self.findings)
+        if any(not isinstance(finding, _StoredFinding) for finding in findings):
+            raise TypeError("Stage 6 task data requires stored findings")
+        finding_ids = [finding.finding_id for finding in findings]
+        if len(finding_ids) != len(set(finding_ids)):
+            raise ValueError("Stage 6 task data contains conflicting finding IDs")
+        object.__setattr__(self, "findings", findings)
+
+
 @dataclass(slots=True)
 class AnalysisTask:
     """Internal application aggregate retaining the accepted-source capability."""
@@ -245,6 +277,7 @@ class AnalysisTask:
     accepted_source: AcceptedSource
     artifacts: WorkspaceArtifactRegistry
     stage5_data: Stage5TaskData | None = None
+    stage6_data: Stage6TaskData | None = None
     queued_at: datetime | None = None
     cleanup_result: CleanupResult | None = None
     errors: list[ErrorDetail] = field(default_factory=list)
@@ -277,6 +310,11 @@ class AnalysisTask:
                 for artifact in prepared_media.artifacts
             ):
                 raise ValueError("task Stage 5 artifact capability does not match task registry")
+        if self.stage6_data is not None:
+            if not isinstance(self.stage6_data, Stage6TaskData):
+                raise TypeError("task Stage 6 data must be Stage6TaskData")
+            if self.stage5_data is None:
+                raise ValueError("task Stage 6 data requires Stage 5 data")
 
     def snapshot(self) -> TaskSnapshot:
         """Copy the current aggregate into an immutable capability-free projection."""

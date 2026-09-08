@@ -10,10 +10,10 @@ FakeDetector — прототип системы предварительног�
 
 ## Состояние проекта
 
-**Stage 5 — DONE.** Реализованы предварительная обработка всех поддерживаемых
-типов медиа и каркас выполнения анализаторов.
-
-**Следующий этап: Stage 6 — реальные MVP analyzers.** Он ещё не начат.
+**Stage 6 — DONE/CLOSED.** Реализация Profile B, интеграция в рабочий контур и
+формирование нормализованных `Finding` завершены; успешная независимая проверка
+закрытия подтвердила завершение этапа. Следующий этап — Stage 7: полнота, риск и
+рекомендации.
 
 | Stage | Status | Что реализовано или запланировано |
 |---:|---|---|
@@ -22,10 +22,10 @@ FakeDetector — прототип системы предварительног�
 | 3 | DONE | Intake, validation и контролируемое владение source |
 | 4 | DONE | Lifecycle задачи, routing, scheduler, workspace и cleanup/recovery |
 | 5 | DONE | Preprocessing image/audio/video и analyzer framework |
-| 6 | NEXT | Базовые реальные анализаторы и формирование признаков |
-| 7 | PLANNED | Полнота анализа, риск и рекомендации |
-| 8 | PLANNED | Итоговый JSON, API и WebUI |
-| 9 | PLANNED | Надёжность, безопасность и сквозные тесты |
+| 6 | DONE | Profile B и рабочий путь Finding реализованы; этап закрыт |
+| 7 | NOT_STARTED | Полнота анализа, риск и рекомендации |
+| 8 | NOT_STARTED | Итоговый JSON, API и WebUI |
+| 9 | NOT_STARTED | Надёжность, безопасность и сквозные тесты |
 
 ## Что уже умеет система
 
@@ -44,24 +44,25 @@ FakeDetector — прототип системы предварительног�
   `AnalyzerResult`.
 - Применять детерминированную политику выполнения и хранить внутреннее состояние
   Stage 5 в неизменяемом виде.
+- Выполнять четыре CPU-only анализатора Profile B для image/audio/video и
+  преобразовывать authoritative `AnalyzerResult` в нормализованные weak `Finding`
+  с отдельным immutable Stage 6 task state.
 
 ## Что пока не реализовано
 
-- Реальные MVP/production analyzers: Stage 5 проверен только внутренними
-  fake/test analyzers без forensic-возможностей.
-- Формирование `Finding`, расчёт полноты и риска, а также рекомендации.
+- Расчёт полноты и риска, а также рекомендации.
 - Сборка и persistence итогового результата, публичный upload API и Web UI.
 - Production deployment и эксплуатационный hardening.
 
 ## Общая схема pipeline
 
 ```text
-РЕАЛИЗОВАНО — STAGES 1–5
-Input → Validation → Task lifecycle → Preprocessing → Analyzer framework
+РЕАЛИЗОВАНО — STAGES 1–6
+Input → Validation → Task lifecycle → Preprocessing
+→ Profile B analyzers → Finding formation
 
 ДАЛЕЕ
-Real analyzers (Stage 6)
-→ Risk / completeness / recommendation (Stage 7)
+Risk / completeness / recommendation (Stage 7)
 → Result / persistence / API / Web UI (Stage 8)
 → Hardening и end-to-end verification (Stage 9)
 ```
@@ -86,11 +87,12 @@ uv run poe server-smoke
 uv run poe check
 ```
 
-## Quality status
+## Статус качества
 
-Stage 5 прошёл полный набор проверок, итоговый аудит закрытия и Architecture
-Truth Review. Контрольная точка на момент закрытия Stage 5: **1313 passed, 2
-skipped, coverage 89.76%**; branch coverage включён.
+Финальная проверка качества Stage 6: **1438 passed, 2 skipped, совокупное
+покрытие 89.78%**; покрытие операторов 92.27%, покрытие ветвей 79.73% и
+`--cov-branch` включён. Независимая проверка закрытия завершена с решением
+`CLOSE_STAGE6_WITH_ACCEPTED_LIMITATION`.
 
 Это зафиксированный результат закрытия этапа, а не гарантированное текущее число
 тестов после будущих изменений.
@@ -101,6 +103,7 @@ skipped, coverage 89.76%**; branch coverage включён.
 - [CONTRACTS](docs/CONTRACTS.md) — модели данных, интерфейсы и нормативное
   поведение.
 - [ROADMAP](docs/ROADMAP.md) — этапы разработки и текущий статус.
+- [REFERENCES](docs/REFERENCES.md) — происхождение методов и реализаций анализаторов.
 - [CHANGELOG](docs/CHANGELOG.md) — история существенных изменений и принятых
   решений.
 

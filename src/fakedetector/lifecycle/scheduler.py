@@ -96,7 +96,7 @@ class BoundedLocalScheduler:
 
     @property
     def is_stopped(self) -> bool:
-        """Return whether shutdown joined all worker resources."""
+        """Return whether the scheduler reached its terminal lifecycle state."""
         with self._condition:
             return self._state is _SchedulerState.STOPPED
 
@@ -133,26 +133,46 @@ class BoundedLocalScheduler:
                 for media_type in MediaType
                 for index in range(self._limits[media_type])
             ]
+            attempted: list[Thread] = []
             started: list[Thread] = []
+            startup_error: BaseException | None = None
             try:
                 for thread in threads:
+                    attempted.append(thread)
                     thread.start()
-                    started.append(thread)
-            except Exception:
-                self._threads = started
-                self._state = _SchedulerState.STOPPED
-                self._condition.notify_all()
-                failure = True
-            else:
+
+                # Startup commit publishes complete worker ownership before
+                # RUNNING. Both publications and notification remain inside the
+                # same failure-cleanup boundary as the launch attempts.
                 self._threads = threads
                 self._state = _SchedulerState.RUNNING
                 self._condition.notify_all()
-                failure = False
+                return
+            except BaseException as error:
+                startup_error = error
+                # ident is the best public observation after an interrupted start;
+                # its absence does not prove that no native thread was created.
+                started = list(self._threads)
+                started.extend(
+                    thread
+                    for thread in attempted
+                    if thread.ident is not None and thread not in started
+                )
+                self._threads = started
+                self._state = _SchedulerState.SHUTTING_DOWN
+                self._drain = False
+                self._condition.notify_all()
 
-        if failure:
-            for thread in started:
-                thread.join()
+        for thread in started:
+            thread.join()
+        with self._condition:
+            self._threads.clear()
+            self._state = _SchedulerState.STOPPED
+            self._condition.notify_all()
+        assert startup_error is not None
+        if isinstance(startup_error, Exception):
             raise SchedulerStateError() from None
+        raise startup_error
 
     def enqueue(self, task: AnalysisTask, executor: TaskExecutor) -> None:
         """Reserve capacity non-blockingly while the handoff remains provisional."""

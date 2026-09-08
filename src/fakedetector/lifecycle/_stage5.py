@@ -13,6 +13,10 @@ from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
 from fakedetector.domain import AnalyzerResult, ErrorDetail
 from fakedetector.intake.temporary_input import PreparedSourceRef
+from fakedetector.lifecycle._stage6 import (
+    Stage6FindingFormationError,
+    Stage6FindingService,
+)
 from fakedetector.lifecycle.execution import TaskRegistry
 from fakedetector.lifecycle.models import (
     AnalysisTask,
@@ -42,6 +46,7 @@ class Stage5ExecutionService:
         registry: TaskRegistry,
         preprocessing: PreprocessingDispatcher,
         orchestrator: AnalyzerOrchestrator,
+        finding_service: Stage6FindingService,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._config_snapshot = _ConfigSnapshot.capture(config)
@@ -54,6 +59,7 @@ class Stage5ExecutionService:
         self._registry = registry
         self._preprocessing = preprocessing
         self._orchestrator = orchestrator
+        self._finding_service = finding_service
         self._monotonic = monotonic
 
     def execute(self, task: AnalysisTask) -> TaskExecutionOutcome:
@@ -108,6 +114,13 @@ class Stage5ExecutionService:
             if not isinstance(results, tuple) or tuple(published_results) != results:
                 raise AnalyzerInfrastructureError("result_publication")
             remaining_timeout_seconds()
+            authoritative_results = self._registry._read_stage5_analyzer_results(task)
+            if authoritative_results != results:
+                raise AnalyzerInfrastructureError("result_publication")
+            findings = self._finding_service.form_findings(authoritative_results)
+            remaining_timeout_seconds()
+            self._registry.publish_stage6_findings(task, findings)
+            remaining_timeout_seconds()
         except _Stage5DeadlineExceededError:
             return TaskExecutionOutcome.failed(_processing_timeout(phase))
         except PreprocessingError as error:
@@ -128,6 +141,8 @@ class Stage5ExecutionService:
                 _stage5_failure("analysis"),
                 _cleanup_safety_barrier=error._cleanup_safety_barrier,
             )
+        except Stage6FindingFormationError:
+            return TaskExecutionOutcome.failed(_stage5_failure("analysis"))
         return TaskExecutionOutcome.completed()
 
     def _new_deadline(self) -> float:

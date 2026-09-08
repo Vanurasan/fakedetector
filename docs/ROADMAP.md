@@ -111,11 +111,11 @@ AFTER_MVP
 
 ```text
 Общий статус: IN_PROGRESS
-Текущий этап: Этап 6 — Базовые анализаторы и формирование признаков
+Текущий этап: Этап 7 — Полнота, риск и рекомендации
 Статус этапа: NOT_STARTED
-Ближайшее действие: выбрать минимальный набор реальных MVP analyzers, их версии, applicability, fixtures и analyzer-specific semantics для raw_metrics / candidate_findings
+Ближайшее действие: начать Stage 7 согласно зафиксированным задачам и критериям
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–5 завершены; Stage 5 Increments 1–5 и remediation R1–R6 = DONE; final verification = PASS; focused closure audit = PASS; Architecture Truth Review = CLOSE_STAGE5_UNCHANGED; следующий этап — Stage 6
+Реализация программы: Этапы 1–6 завершены; Stage 6 закрыт с решением CLOSE_STAGE6_WITH_ACCEPTED_LIMITATION; Stage 7 ещё не начат
 Документационная база: сформирована
 ```
 
@@ -133,9 +133,9 @@ AFTER_MVP
 
 ### 2.2. Ближайшие три результата
 
-1. приложение запускается и валидирует конфигурацию;
-2. файл проходит единый приём, проверку и безопасную очистку;
-3. сквозной тестовый анализ формирует JSON-результат через заглушечный анализатор.
+1. Stage 7 формирует полноту, риск и рекомендации без псевдовероятности.
+2. Stage 8 собирает итоговый JSON и внешние границы API/WebUI.
+3. Stage 9 завершает повышение надёжности и сквозную проверку MVP.
 
 ---
 
@@ -149,7 +149,7 @@ AFTER_MVP
 | 3 | Приём и первичная проверка файлов | DONE | Безопасно принятый или отклонённый файл |
 | 4 | Жизненный цикл задачи, хранение и маршрутизация | DONE | Управляемая задача с очисткой |
 | 5 | Предварительная обработка и каркас анализаторов | DONE | Единый запуск анализаторов |
-| 6 | Базовые анализаторы и формирование признаков | NOT_STARTED | Реальные нормализованные признаки |
+| 6 | Базовые анализаторы и формирование признаков | DONE | Реальные нормализованные признаки |
 | 7 | Полнота, риск и рекомендации | NOT_STARTED | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | NOT_STARTED | Пользователь и система получают результат |
 | 9 | Надёжность, безопасность и сквозные тесты | NOT_STARTED | Проверенный MVP |
@@ -902,7 +902,7 @@ applicability, fixtures и analyzer-specific semantics для `raw_metrics` /
 
 ---
 
-# Этап 6. Базовые анализаторы и формирование признаков — NOT_STARTED
+# Этап 6. Базовые анализаторы и формирование признаков — DONE
 
 ## Цель
 
@@ -910,17 +910,290 @@ applicability, fixtures и analyzer-specific semantics для `raw_metrics` /
 
 ## Ворота этапа
 
-До начала должны быть зафиксированы:
+### Increment 0 — analyzer profile, provenance и documentation prerequisite — DONE
 
-- характеристики компьютера;
-- наличие/отсутствие GPU и CUDA;
-- точные analyzer_id;
-- версии библиотек/моделей;
-- лицензии и источники;
-- условия применимости;
-- ожидаемые тестовые данные.
+Owner утвердил Profile B и provenance policy. До production implementation
+зафиксированы:
 
-Если это не определено, этап получает `BLOCKED`, но предыдущий сквозной контур продолжает работать с тестовыми анализаторами.
+- четыре `analyzer_id` и их версии;
+- Finding policy v1 и граница sibling Stage 6 task state;
+- versioned deterministic MVP thresholds;
+- dependency, hardware и fixture policies;
+- обязательный канонический provenance registry `REFERENCES.md`.
+
+Profile B:
+
+| Analyzer | Version | Назначение |
+|---|---|---|
+| `image_metadata_consistency` | `1.0.0` | технический image analyzer |
+| `audio_pcm_quality` | `1.0.0` | технический audio analyzer |
+| `video_sampled_frame_quality` | `1.0.0` | технический video analyzer |
+| `image_copy_move_correspondence` | `1.0.0` | content-oriented image analyzer |
+
+Audio/video content analyzers сознательно не входят в MVP v1. ML analyzers,
+model weights, PyTorch и CUDA не входят в Stage 6 MVP. Профиль остаётся CPU-only;
+GPU не требуется.
+
+### Finding policy v1
+
+- все первоначальные findings имеют `severity=weak`;
+- `score`, `score_name`, `source_score` и `score_impact` равны `null`;
+- `critical_override_eligible=false`;
+- AI probability и статистическая интерпретация heuristic thresholds запрещены;
+- thresholds являются versioned deterministic MVP defaults;
+- candidate findings преобразуются в `Finding` на Stage 6 с сохранением analyzer
+  identity, version и связи с источником;
+- нормализованные `Finding[]` хранятся в отдельном sibling Stage 6 task state;
+  смысл `Stage5TaskData` не расширяется.
+
+### Threshold policy
+
+Для `audio_pcm_quality`:
+
+```text
+full_scale_sample_ratio threshold = 0.001
+```
+
+Для `image_copy_move_correspondence`:
+
+```text
+min_dimension_px = 128
+max_pixels = 12_000_000
+max_keypoints = 5_000
+descriptor_ratio = 0.75
+min_spatial_separation_px = max(32, 0.05 * min_dimension)
+ransac_reprojection_threshold_px = 3
+min_cluster_inliers = 12
+min_cluster_inlier_ratio = 0.5
+max_clusters = 4
+```
+
+Значения не являются статистически валидированными forensic thresholds. Это
+воспроизводимые MVP defaults; их изменение в Stage 6 требует обоснования
+deterministic positive/negative/challenge fixtures и отдельной фиксации.
+
+### Dependency, hardware и fixture policies
+
+- planned pins для `image_copy_move_correspondence`:
+  `opencv-python-headless==4.14.0.94` и `numpy==2.5.2`;
+- Increment 2 до основной реализации выполняет dependency smoke gate: package
+  installation, `import numpy`, `import cv2`, создание ORB и минимальная
+  descriptor operation;
+- несовместимая пара wheels может быть скорректирована как dependency correction
+  без пересмотра архитектуры Stage 6;
+- остальные три analyzers не требуют новых runtime dependencies;
+- текущий development/reference computer можно использовать для benchmark, но
+  он не становится обязательным deployment requirement;
+- предварительный ориентир reference environment: x86-64 CPU, 16 GiB RAM, без
+  GPU; это не окончательная minimum specification;
+- closure increment измеряет фактические resource requirements на benchmark и
+  фиксирует результат;
+- repository хранит deterministic generated positive, negative,
+  false-positive/challenge и boundary/not-applicable fixtures;
+- реальные datasets/media на этом этапе не добавляются, а fixtures не
+  представляются статистической validation dataset.
+
+### Provenance requirement
+
+`REFERENCES.md` является каноническим реестром происхождения методов,
+реализаций, библиотек, repositories, статей, моделей и weights. Правило Stage 6:
+**NO PROVENANCE — NO ANALYZER**. Реальный analyzer нельзя считать завершённым,
+пока применимая provenance information не заполнена и происхождение метода
+отделено от происхождения реализации.
+
+Framework test analyzers сохраняются только для проверки общей execution
+архитектуры; production implementations подключаются отдельными trusted
+registrations.
+
+### Increment 1 — technical analyzers + Finding vertical slice — DONE
+
+Реализованы три независимых production-path technical analyzers версии `1.0.0`:
+
+- `image_metadata_consistency` использует controlled original source и не
+  интерпретирует отсутствие metadata или software tag как finding;
+- `audio_pcm_quality` потоково анализирует canonical signed 16-bit little-endian
+  PCM WAV и локализует не более 16 strongest saturation observations по
+  существующим fragments;
+- `video_sampled_frame_quality` использует только подготовленные sampled frames,
+  сравнивает decoded pixels и не требует video audio track.
+
+Private typed candidate boundary повторно валидируется deterministic Stage 6
+converter. Content-addressed `finding_id` следует §9.5 `CONTRACTS.md`; findings
+сохраняются как canonical immutable bytes в отдельном sibling `Stage6TaskData`, а
+detached reads не изменяют authoritative state. Новые runtime dependencies,
+public API, persistence, risk/completeness logic и новый `ProcessingStage` не
+добавлены. Generated fixtures и targeted Stage 5/6 regressions подтверждают
+контракт и resource/transport bounds.
+
+Ближайшее действие: Increment 2 — smoke gate planned OpenCV/NumPy pins и
+реализация `image_copy_move_correspondence`.
+
+### Increment 2 — ограниченное соответствие областей изображения — DONE
+
+Запланированные версии `opencv-python-headless==4.14.0.94` и `numpy==2.5.2`
+штатно установлены через uv и подтверждены на Windows / Python 3.12: импорт,
+ORB-дескрипторы и оценка аффинной модели RANSAC прошли детерминированную
+минимальную проверку. Реализован доверенный
+`image_copy_move_correspondence` `1.0.0`, использующий только существующий
+`normalized_image`, сопоставление ORB-признаков внутри изображения только на CPU,
+пространственное разделение и не
+более четырёх итераций OpenCV RANSAC.
+
+Каждый принятый геометрический кластер создаёт ровно два bbox-кандидата с общим
+адресуемым по содержимому `correlation_group`; симметричные самосопоставления и
+близкие дублирующие пары областей детерминированно подавляются. Настройками и кодом
+установлены пределы: 5 000 ключевых точек, 4 кластера и 8 кандидатов; дескрипторы,
+ключевые точки, сопоставления и пиксели не публикуются через транспорт. Пройдены
+генерируемые положительная, отрицательная, с альфа-каналом RGBA, проверка ложного
+срабатывания, граничная, детерминированная и выполняемая в порождённом рабочем
+процессе фикстуры. Наблюдение остаётся `weak` и не утверждает подделку переносом
+области изображения.
+
+### Increment 3 — production integration, benchmark и полный barrier — DONE
+
+`Stage5ExecutionService`, не меняя `TaskExecutor` и ownership terminal lifecycle,
+после orchestration сверяет возвращённый tuple с опубликованными данными, читает
+detached canonical `AnalyzerResult[]` через authoritative `TaskRegistry`, передаёт
+их `Stage6FindingService` и публикует отдельный `Stage6TaskData` в состоянии
+`RUNNING / ANALYSIS`. Пустой `Finding[]` публикуется как корректное состояние;
+ошибка candidate validation безопасно завершает задачу через существующий
+`internal_error` analysis phase. Новый `ProcessingStage`, public executor,
+schema, persistence или Stage 7 logic не добавлены.
+
+Production composition root создаёт закрытый `AnalyzerRegistry` только из четырёх
+real Profile B registrations и связывает intake, preprocessing, spawned analyzer
+workers, Finding formation, registry и bounded scheduler. Канонический example
+config включает планы в порядке:
+
+```text
+image: image_metadata_consistency → image_copy_move_correspondence
+audio: audio_pcm_quality
+video: video_sampled_frame_quality
+```
+
+Сквозные генерируемые image/audio/video tests подтвердили production composition,
+авторитетное хранение results/findings, пустой результат, `NOT_APPLICABLE`,
+изоляцию `ERROR`, безопасный malformed candidate, неизменный смысл
+`Stage5TaskData`, lifecycle `ANALYSIS` до terminalization и detached reads.
+
+Closure benchmark `uv run python scripts/benchmark_stage6_copy_move.py` выполнен
+2026-09-08 на Windows 11 `10.0.26200`, AMD64, Intel(R) Core(TM) Ultra 7 270K Plus,
+24 logical CPU, 130427.84 MiB total RAM, Python 3.12.10, OpenCV 4.14.0 и NumPy
+2.5.2. В отдельном свежем child process анализировался генерируемый по seed 6003
+feature-rich PNG 4000×3000 (12 000 000 pixels, 3 896 452 bytes) с одной
+скопированной областью 700×700; один warm-up исключён, затем измерены три запуска.
+RAM измерена Win32 `GetProcessMemoryInfo / PeakWorkingSetSize`, включая baseline
+интерпретатора и импортов дочернего процесса.
+
+| Run | Wall, s | CPU, s | Peak working set, MiB | Keypoints | Descriptors | Matches | Clusters | Candidates |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.613 | 0.578 | 161.78 | 5000 | 5000 | 104 | 1 | 2 |
+| 2 | 0.615 | 0.562 | 161.65 | 5000 | 5000 | 104 | 1 | 2 |
+| 3 | 0.622 | 0.578 | 161.66 | 5000 | 5000 | 104 | 1 | 2 |
+
+Итог: median wall `0.615 s`, max wall `0.622 s`, max peak working set
+`161.78 MiB`. Это наблюдение одной reference machine, а не универсальная
+hardware guarantee. Предварительный conservative deployment baseline x86-64 CPU,
+16 GiB RAM, без GPU подтверждён и не понижен по одному локальному замеру. Пределы
+12 MP, 5000 ORB keypoints, 4 clusters и 8 candidates не расширялись; измерение
+дало 1 cluster и 2 candidates, raw pixels/keypoints/descriptors в result не
+публикуются, Stage 5 transport bound и deterministic OpenCV one-thread/OpenCL-off
+policy не изменены.
+
+Full Stage 6 quality barrier пройден после implementation и benchmark: `uv lock
+--check`, Ruff, mypy, pre-commit, CLI/import smoke и `1389 passed, 2 skipped`;
+combined coverage `89.55%`, statement coverage `92.03%`, branch coverage `79.52%`
+при включённом `--cov-branch`. Исторические 19 formatter discrepancies остались
+тем же не затронутым Stage 6 debt, все изменённые Python-файлы format-clean.
+Эта проверка качества реализации предшествовала независимому финальному аудиту
+и сохранена для прослеживаемости. Формальное закрытие зафиксировано ниже.
+
+### Ремедиация замечаний независимого аудита и финальное закрытие — DONE
+
+Независимый финальный аудит Stage 6 завершился `FAIL` с четырьмя блокирующими
+замечаниями. `S6-AUD-001`, `S6-AUD-003` и `S6-AUD-004` закрыты. Повторный аудит
+подтвердил устранение наблюдаемых разрывов владения потоками `S6-AUD-002`, но
+обнаружил `S6-REAUD-001` уровня `MEDIUM`: вторичное исключение рабочего потока
+при завершении `lifespan` могло заменить первичное исключение вызывающего кода.
+Локальная ремедиация выполнена без изменения Profile B, публичной схемы,
+`TaskExecutor`, `ProcessingStage` или архитектуры владения Stage 4:
+
+- [x] `S6-AUD-001` — после обнаружения ORB связанные пары keypoint/descriptor
+  канонически упорядочиваются и жёстко ограничиваются `max_keypoints` до
+  самосопоставления; публикуемые счётчики описывают сохранённое подмножество;
+- [x] `S6-AUD-002` — attempts запуска, публикация полного worker ownership,
+  переход в `RUNNING` и startup notify находятся под одной failure-cleanup
+  boundary без `try/except/else`; при сбое до commit планировщик публикует
+  terminating state, запрещает новые передачи задач, явно ожидает через `join()`
+  все наблюдаемо запущенные потоки и затем очищает ownership; обычное `Exception`
+  сохраняет `SchedulerStateError`, а exact `KeyboardInterrupt`/`SystemExit`
+  поднимается повторно; production lifespan включает `start()` в собственную
+  cleanup boundary и после любого подтверждённого startup либо фактического
+  non-stopped состояния вызывает штатный `shutdown()`, включая post-return
+  interruption до локальной фиксации успешного startup;
+- [x] `S6-AUD-003` — `PixelXDimension`/`PixelYDimension` ищутся во всех
+  допустимых представлениях Pillow раньше `ImageWidth`/`ImageLength`;
+  присутствующий некорректный основной тег не подменяется резервным и не создаёт
+  необоснованного заключения о согласованности;
+- [x] `S6-AUD-004` — подавление пар по IoU с прежним порогом `0.5` проверяет оба
+  порядка неупорядоченной пары областей — прямой и перекрёстный; отдельные
+  кластеры сохраняются.
+
+- [x] `S6-REAUD-001: CLOSED` — `lifespan` различает завершение с первичным
+  исключением и без него. После завершённого `shutdown()` сохраняется тот же
+  объект первичного `BaseException`; без первичного исключения ошибка рабочего
+  потока выходит наружу. Сбой незавершённого `shutdown()` не подавляется.
+  Проверены разные объекты `KeyboardInterrupt`, `SystemExit` и `RuntimeError`,
+  реальная задача рабочего потока, однократные `join()` и отсутствие живых
+  `stage4-*`. Устранение подтверждено финальной независимой проверкой закрытия.
+
+#### S6-LIM-001 — CPython `Thread.start()` pre-ack interruption ambiguity
+
+Статус: `ACCEPTED_RUNTIME_LIMITATION`.
+
+Влияние на закрытие: `DOES_NOT_BLOCK_STAGE6_CLOSURE`.
+
+CPython 3.12 может создать нативный поток ОС раньше, чем `Thread.start()`
+опубликует `_started` и `ident`. В этом узком окне `ident` может оставаться
+`None`, `is_alive()` — возвращать `False`, а `join()` — быть недоступным, поэтому
+публичный API `threading` не позволяет доказуемо отличить ещё не созданный поток
+от созданного, но ещё не подтвердившего старт. Планировщик не заявляет явный
+`join()` такого ненаблюдаемого потока.
+
+Остаточное окно принято как эксплуатационное ограничение: после неудачного
+старта состояние планировщика уже является `SHUTTING_DOWN` или `STOPPED`, новые
+передачи задач отклоняются, а поздно подтвердивший старт рабочий поток при входе
+в цикл видит завершающее состояние и заканчивает работу без исполнения задачи.
+Устранение наблюдаемого разрыва владения после цикла запуска `S6-AUD-002`
+подтверждено независимым аудитом. Глобальная для процесса
+отсрочка сигналов, отдельный долгоживущий владелец старта, дополнительный поток
+или процесс запуска, собственный нативный механизм запуска или расширение C,
+приватные глобальные объекты CPython, daemon-потоки и тайм-ауты или опрос для
+угадывания результата старта не вводятся.
+
+Нагрузочная фикстура на зафиксированной версии OpenCV дала `5687` исходных
+keypoints/descriptors и `5000` сохранённых и проанализированных; `BFMatcher`
+получил не более `5000`, результат остался детерминированным и ограниченным.
+Повторный контрольный замер 12 MP сохранил `5000` keypoints/descriptors, `104`
+сопоставления, `1` кластер и `2` кандидата.
+
+Финальная полная проверка качества на HEAD
+`0377185889a703aee92df6c23458a28aef1630a1`: `1438 passed, 2 skipped`;
+совокупное покрытие `89.78%`, покрытие операторов `92.27%` (`5595/6064`),
+покрытие ветвей `79.73%` (`1196/1500`) при включённом `--cov-branch`.
+`uv lock --check`, Ruff, mypy для 56 исходных файлов, pre-commit, базовая
+проверка CLI, импорт пакета, импорт OpenCV 4.14.0, импорт NumPy 2.5.2 и
+`git diff --check` имеют статус `PASS`. Исторический базовый набор расхождений
+форматтера остался тем же: 19 файлов; рабочее дерево при аудите было чистым.
+
+Финальная независимая проверка закрытия вынесла решение
+`CLOSE_STAGE6_WITH_ACCEPTED_LIMITATION`. `S6-AUD-001`…`S6-AUD-004` и
+`S6-REAUD-001` имеют статус `CLOSED`; `S6-AUD-005` — `INFO / NON_BLOCKING`.
+Новых замечаний уровня `HIGH` или `MEDIUM`, блокирующих закрытие, нет.
+`S6-LIM-001` сохранён как осознанное `ACCEPTED_RUNTIME_LIMITATION` /
+`NON_BLOCKING`: он не распространяется на наблюдаемые рабочие потоки, для
+которых все наблюдаемые разрывы владения при запуске устранены. Stage 6 завершён
+и закрыт.
 
 ## Рекомендуемый минимальный принцип выбора
 
@@ -934,32 +1207,37 @@ applicability, fixtures и analyzer-specific semantics для `raw_metrics` /
 
 ## Обязательные задачи
 
-- [ ] утвердить профиль анализаторов image;
-- [ ] утвердить профиль анализаторов audio;
-- [ ] утвердить профиль анализаторов video;
-- [ ] реализовать выбранные анализаторы как независимые модули;
-- [ ] зафиксировать версии;
-- [ ] добавить тестовые fixtures;
-- [ ] реализовать преобразование candidate findings в `Finding`;
-- [ ] сохранять связь с анализатором и версией;
-- [ ] реализовать локализацию, где она доступна;
-- [ ] ввести correlation_group для связанных результатов;
-- [ ] не назначать critical автоматически по confidence.
+- [x] утвердить профиль анализаторов image;
+- [x] утвердить профиль анализаторов audio;
+- [x] утвердить профиль анализаторов video;
+- [x] реализовать выбранные анализаторы как независимые модули;
+- [x] зафиксировать версии;
+- [x] добавить тестовые fixtures;
+- [x] реализовать преобразование candidate findings в `Finding`;
+- [x] хранить `Finding[]` в отдельном sibling Stage 6 task state;
+- [x] сохранять связь с анализатором и версией;
+- [x] реализовать локализацию, где она доступна;
+- [x] ввести correlation_group для связанных результатов;
+- [x] не назначать critical автоматически по confidence.
+- [x] создать `REFERENCES.md` и зафиксировать правило NO PROVENANCE — NO ANALYZER;
+- [x] актуализировать provenance после каждой фактической реализации analyzer.
 
 ## Обязательные тесты
 
-- [ ] каждый анализатор проходит контрактный тест;
-- [ ] корректно сообщает not applicable;
-- [ ] не создаёт выдуманный score;
-- [ ] формирует стабильный finding type;
-- [ ] локализация валидна;
-- [ ] версия присутствует;
-- [ ] ошибка не ломает общий цикл;
-- [ ] коррелированные признаки маркируются.
+- [x] каждый анализатор проходит контрактный тест;
+- [x] корректно сообщает not applicable;
+- [x] не создаёт выдуманный score;
+- [x] формирует стабильный finding type;
+- [x] локализация валидна;
+- [x] версия присутствует;
+- [x] ошибка не ломает общий цикл;
+- [x] коррелированные признаки маркируются.
 
 ## Критерий завершения
 
-Сквозной контур работает хотя бы с одним утверждённым реальным анализатором для каждого поддерживаемого типа либо с явно утверждённым более узким демонстрационным профилем.
+Сквозной контур работает с утверждённым Profile B; каждый analyzer имеет
+проверенные deterministic fixtures и заполненную запись в `REFERENCES.md`, а
+нормализованные findings сохраняют provenance в отдельном sibling Stage 6 state.
 
 ---
 

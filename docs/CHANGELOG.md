@@ -340,7 +340,210 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-09
+
+### Changed
+
+- **[Stage 6/Финальное закрытие] Stage 6 формально закрыт со статусом `DONE`.**
+  Финальная полная проверка качества на HEAD
+  `0377185889a703aee92df6c23458a28aef1630a1` завершилась результатом
+  `1438 passed, 2 skipped`: совокупное покрытие `89.78%`, покрытие операторов
+  `92.27%` (`5595/6064`), покрытие ветвей `79.73%`
+  (`1196/1500`) при включённом `--cov-branch`; `uv lock --check`, Ruff, mypy для
+  56 исходных файлов, pre-commit, базовая проверка CLI, импорт пакета, импорт
+  OpenCV 4.14.0, импорт NumPy 2.5.2 и `git diff --check` прошли. Успешная
+  независимая проверка закрытия вынесла решение
+  `CLOSE_STAGE6_WITH_ACCEPTED_LIMITATION`:
+  `S6-AUD-001`…`S6-AUD-004` и `S6-REAUD-001` подтверждены как `CLOSED`,
+  `S6-AUD-005` классифицирован как `INFO / NON_BLOCKING`, новых блокирующих
+  замечаний уровня `HIGH` или `MEDIUM` нет. `S6-LIM-001` сохранён как осознанное
+  `ACCEPTED_RUNTIME_LIMITATION / NON_BLOCKING`; ограничение не распространяется
+  на наблюдаемые рабочие потоки, все наблюдаемые разрывы владения при запуске
+  устранены. Исторический базовый набор расхождений форматтера не изменился и
+  содержит 19 файлов; рабочее дерево при финальном аудите было чистым.
+
+### Fixed
+
+- **[Stage 6/S6-REAUD-001] Сохранено первичное исключение при завершении
+  production lifespan.** Независимый аудит подтвердил устранение наблюдаемых
+  разрывов владения потоками `S6-AUD-002`, но обнаружил замечание `MEDIUM`:
+  вторичное исключение рабочего потока могло заменить первичный `BaseException`
+  вызывающего кода. В `app.py` разделены пути с первичным исключением и без него:
+  после завершённого `shutdown()` и перехода в `STOPPED` повторно поднимается тот
+  же первичный объект; без него ошибка рабочего потока передаётся наружу.
+  Ошибка незавершённого `shutdown()` не подавляется. `scheduler.py` и публичные
+  контракты не изменены. Регрессии с реальными задачами проверяют разные объекты
+  исключений, сбой `join()`, однократное ожидание потоков и очистку владения;
+  `tests/test_bounded_local_execution.py`: `58 passed`. `S6-REAUD-001` исправлен,
+  `S6-LIM-001` остаётся `ACCEPTED_RUNTIME_LIMITATION`, Stage 6 — `IN_PROGRESS`
+  до повторной независимой проверки закрытия.
+
+### 2026-09-08
+
+### Added
+
+- **[Stage 6/Increment 3] Finding formation подключена к production lifecycle.**
+  После analyzer orchestration execution service сверяет публикацию, читает
+  detached canonical `AnalyzerResult[]` из authoritative `TaskRegistry`, формирует
+  findings и публикует отдельный `Stage6TaskData` до normal terminalization.
+  Пустой `Finding[]` является успешным опубликованным состоянием, а malformed
+  trusted candidate безопасно даёт task-level `internal_error` без раскрытия
+  payload, exception или пути. `TaskExecutor`, `Stage5TaskData`, cleanup ownership,
+  public schema и набор `ProcessingStage` не изменены.
+- **[Stage 6/Production composition] Profile B активирован в рабочей сборке.**
+  Production composition использует только четыре explicit trusted registrations;
+  canonical config включает `image_metadata_consistency` и
+  `image_copy_move_correspondence` для image, `audio_pcm_quality` для audio и
+  `video_sampled_frame_quality` для video в детерминированном порядке. Generated
+  end-to-end image/audio/video tests подтверждают intake, preprocessing, spawned
+  workers, authoritative results, Finding formation, sibling state и terminal
+  detached reads; framework analyzers остаются только тестовыми.
+- **[Stage 6/Benchmark] Выполнен воспроизводимый closure benchmark 12 MP.** На
+  Windows 11 / AMD64 / Intel(R) Core(TM) Ultra 7 270K Plus / 24 logical CPU /
+  130427.84 MiB RAM, Python 3.12.10, OpenCV 4.14.0 и NumPy 2.5.2 три изолированных
+  запуска после warm-up дали wall `0.613/0.615/0.622 s`, CPU
+  `0.578/0.562/0.578 s`, max Win32 PeakWorkingSetSize `161.78 MiB`, по 5000
+  keypoints/descriptors, 104 matches, 1 accepted cluster и 2 candidates.
+  Conservative baseline x86-64 CPU / 16 GiB RAM / no GPU подтверждён как
+  эксплуатационный ориентир одной measured machine, не как универсальная гарантия.
+  Utility: `uv run python scripts/benchmark_stage6_copy_move.py`.
+
+- **[Stage 6/Increment 2] Реализован `image_copy_move_correspondence` `1.0.0`.**
+  Анализатор использует только существующее нормализованное изображение RGB/RGBA
+  в PNG, а OpenCV ORB и RANSAC — как компоненты ограниченной проектной эвристики.
+  Тривиальное сопоставление признака с самим собой исключается до проверки
+  отношения расстояний дескрипторов, применяется пространственное разделение,
+  симметричные пары приводятся к детерминированному виду, геометрическое выделение
+  выполняется не более четырёх раз, а близкие дублирующие пары областей подавляются.
+  Каждый принятый кластер создаёт два нормализованных bbox-кандидата с общим
+  `correlation_group`; максимум — 5 000 ключевых точек, 4 кластера и 8 кандидатов.
+- **[Stage 6/Dependencies] Подтверждены запланированные версии
+  `opencv-python-headless==4.14.0.94` и `numpy==2.5.2`.** Windows / Python 3.12 / uv
+  проверка подтвердила импорт, фактические версии, извлечение ORB-дескрипторов и
+  оценку аффинной модели RANSAC без исправления зависимостей. OpenCV работает
+  только на CPU, с отключённым OpenCL и одним потоком библиотеки для
+  детерминированного поведения MVP.
+- **[Stage 6/Fixtures] Добавлены детерминированные фикстуры соответствия областей
+  изображения.** Синтетическая точная копия, однородный и уникальный отрицательные
+  примеры, случаи с недостаточными или полностью прозрачными признаками, границы
+  применимости по размеру, ограничения настроек и ресурсов, проверка ложного
+  срабатывания, повторяемость идентичности и настоящий транспорт через порождённый
+  рабочий процесс закрепляют семантику слабого наблюдения без утверждения о подделке.
+
+### Changed
+
+- **[Stage 6/Status] Increment 3 и полный implementation barrier завершены.**
+  Реализация Stage 6 complete, но этап остаётся `IN_PROGRESS` до отдельного
+  independent final audit / closure; audit PASS этой записью не утверждается.
+  Финальный barrier: `1389 passed, 2 skipped`, combined coverage `89.55%`,
+  statement coverage `92.03%`, branch coverage `79.52%`; uv lock, Ruff, mypy,
+  pre-commit и CLI/import smoke прошли. Состав исторических 19 formatter
+  discrepancies не изменён, новые и затронутые файлы format-clean.
+- **[Stage 6/Audit status] Уточнён статус ремедиации замечаний.**
+  `S6-AUD-001`, `S6-AUD-003` и `S6-AUD-004` закрыты. Повторный closure re-audit
+  обнаружил, что прежняя правка `S6-AUD-002` не покрывала исключение после
+  завершения launch loop; `S6-AUD-002: REMEDIATED`, но этап остаётся
+  `IN_PROGRESS` до повторной независимой проверки закрытия. Исторический полный
+  барьер `1401 passed, 2 skipped` не считается доказательством закрытия этого
+  нового regression path.
+- **[Stage 6/S6-LIM-001] Принята неоднозначность прерывания до подтверждения
+  `Thread.start()` в CPython.** Публичный API `threading` не позволяет отличить
+  ещё не созданный нативный поток от созданного до публикации `_started`/`ident`;
+  отдельная pre-ack неоднозначность имеет статус `ACCEPTED_RUNTIME_LIMITATION` и
+  не блокирует закрытие Stage 6. После неудачного старта планировщик отклоняет новые
+  передачи задач, а поздно подтвердивший старт рабочий поток завершается без их
+  исполнения. Усложнение архитектуры, глобальная для процесса отсрочка сигналов,
+  приватные глобальные объекты CPython, daemon-потоки и основанные на времени
+  догадки не вводятся.
+
+### Fixed
+
+- **[Stage 6/S6-AUD-001] Введено жёсткое ограничение признаков ORB до
+  сопоставления.** Связанные пары keypoint/descriptor канонически упорядочиваются
+  и обрезаются до `max_keypoints`; нагрузочная фикстура подтвердила переход от
+  `5687` исходных к `5000` сохранённых пар, а публикуемые счётчики, вход
+  `BFMatcher` и результат остаются ограниченными.
+- **[Stage 6/S6-AUD-002] Выполнена ремедиация post-loop startup ownership gap
+  планировщика.** Прежняя `try/except/else` покрывала только launch loop и могла
+  потерять все уже запущенные workers при прерывании до публикации ownership.
+  Теперь startup attempts, публикация полного `_threads`, переход в `RUNNING` и
+  notify находятся под одной failure-cleanup boundary; handler учитывает как уже
+  опубликованный ownership, так и все наблюдаемо запущенные attempted threads,
+  публикует terminating state, выполняет explicit `join()` и только затем очищает
+  ownership. Exact `KeyboardInterrupt`/`SystemExit` сохраняется, обычное
+  `Exception` остаётся `SchedulerStateError`; `S6-LIM-001` ограничен только
+  настоящим CPython native-created-before-ack окном. Production lifespan теперь
+  включает `scheduler.start()` в cleanup boundary: успешный startup передаёт ему
+  ownership до `yield`, а interruption сразу после возврата `start()` и уже
+  начавшийся worker-driven shutdown завершаются штатным `scheduler.shutdown()`;
+  failed-start cleanup не маскируется повторным lifecycle error. Stage 6 остаётся
+  `IN_PROGRESS` до closure re-audit.
+- **[Stage 6/S6-AUD-003] Исправлен приоритет размеров EXIF.**
+  `PixelXDimension`/`PixelYDimension` во внешнем или вложенном Exif IFD имеют
+  приоритет над `ImageWidth`/`ImageLength`; присутствующий некорректный основной
+  тег не скрывается резервным и не создаёт необоснованный `Finding`.
+- **[Stage 6/S6-AUD-004] Подавление пар по IoU сделано инвариантным к порядку
+  областей.** При прежнем внутреннем пороге `0.5` проверяются оба порядка
+  неупорядоченной пары областей — прямой и перекрёстный; дублирующий
+  геометрический кластер подавляется, отдельные пары сохраняются.
+
 ### 2026-09-07
+
+### Decision
+
+- **[Stage 6/Increment 0] Приняты Profile B и provenance policy перед
+  реализацией реальных analyzers.** Profile B содержит
+  `image_metadata_consistency`, `audio_pcm_quality`,
+  `video_sampled_frame_quality` и `image_copy_move_correspondence` версии
+  `1.0.0`; MVP остаётся CPU-only без ML, model weights, PyTorch, CUDA и без
+  audio/video content detection. Первоначальные findings имеют только
+  `severity=weak`, nullable score-поля остаются `null`, critical override
+  запрещён, а deterministic thresholds не получают статистической или
+  вероятностной интерпретации. Нормализованные `Finding[]` принадлежат отдельному
+  sibling Stage 6 task state и не расширяют `Stage5TaskData`.
+- **[Stage 6/Dependencies, fixtures и provenance] Зафиксированы воспроизводимые
+  prerequisites реализации.** Для copy-move analyzer запланированы
+  `opencv-python-headless==4.14.0.94` и `numpy==2.5.2` с обязательным Increment 2
+  smoke gate и возможностью только dependency correction при несовместимых
+  wheels; остальные analyzers не требуют новых runtime dependencies. Fixtures
+  создаются детерминированно для positive, negative, false-positive/challenge и
+  boundary/not-applicable случаев без заявления validation dataset. Новый
+  канонический `REFERENCES.md` разделяет происхождение метода и реализации по
+  правилу NO PROVENANCE — NO ANALYZER; текущий development/reference computer
+  допустим для benchmark, но не является deployment requirement,
+  предварительный ориентир — x86-64 CPU и 16 GiB RAM без GPU, а окончательные
+  требования определяются closure benchmark.
+- **[Stage 6/Finding identity] Утверждён content-addressed `finding_id` v1.** ID
+  использует полный lowercase SHA-256 канонической identity projection из
+  analyzer identity/version, group, type, localization, correlation group и
+  deterministic duplicate ordinal. Текст description, severity/downstream score
+  policy, evidence refs и `analysis_id` в hash не входят; точное правило
+  зафиксировано в `CONTRACTS.md` §9.5.
+
+### Added
+
+- **[Stage 6/Increment 1] Реализован первый real analyzer → Finding vertical
+  slice без новых runtime dependencies.** Trusted catalog получил
+  `image_metadata_consistency`, `audio_pcm_quality` и
+  `video_sampled_frame_quality` версии `1.0.0`; реализации используют controlled
+  original image source, canonical PCM WAV/audio fragments и существующие
+  sampled-frame artifacts соответственно. Image analyzer публикует только
+  bounded factual metadata-presence/dimension metrics, audio analyzer потоково
+  считает interleaved sample-level signed16 metrics: абсолютная амплитуда
+  нормализуется как `abs(sample) / 32768`, digital silence означает только
+  `sample == 0`, а full scale — только `sample in {-32768, 32767}`; применяется
+  threshold `full_scale_sample_ratio >= 0.001`. Video
+  analyzer сравнивает decoded pixels соседних samples и формирует repetition
+  finding только для run из трёх и более кадров.
+- **[Stage 6/Increment 1] Добавлены private typed candidates, deterministic
+  conversion и immutable sibling state.** Transport candidates повторно
+  валидируются discriminated Pydantic-моделями; первоначальные `Finding` сохраняют
+  analyzer identity/version, имеют только `severity=weak`, nullable score-поля и
+  выключенный critical override. `finding_id` является полным content-addressed
+  SHA-256 канонической identity projection с deterministic duplicate ordinal и не
+  зависит от worker completion order или несвязанных findings. Authoritative
+  `Stage6TaskData` хранит только canonical immutable bytes, а чтение через
+  `TaskRegistry` возвращает detached `Finding`; смысл `Stage5TaskData` не изменён.
 
 ### Changed
 
