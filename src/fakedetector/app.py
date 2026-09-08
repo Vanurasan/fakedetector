@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from fakedetector._runtime import _build_production_runtime
 from fakedetector.config.models import AppConfig
+from fakedetector.lifecycle import SchedulerStateError
 
 
 def create_app(config: AppConfig) -> FastAPI:
@@ -15,11 +16,18 @@ def create_app(config: AppConfig) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        runtime.scheduler.start()
+        startup_completed = False
         try:
+            runtime.scheduler.start()
+            startup_completed = True
             yield
         finally:
-            runtime.scheduler.shutdown()
+            if startup_completed or not runtime.scheduler.is_stopped:
+                try:
+                    runtime.scheduler.shutdown()
+                except SchedulerStateError:
+                    if startup_completed:
+                        raise
 
     app = FastAPI(title="FakeDetector", version="0.1.0", lifespan=lifespan)
     app.state.config = config

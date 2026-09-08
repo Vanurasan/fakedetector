@@ -140,20 +140,28 @@ class BoundedLocalScheduler:
                 for thread in threads:
                     attempted.append(thread)
                     thread.start()
-            except BaseException as error:
-                startup_error = error
-                # ident is the best public observation after an interrupted start;
-                # its absence does not prove that no native thread was created.
-                started = [thread for thread in attempted if thread.ident is not None]
-                self._threads = started
-                self._state = _SchedulerState.SHUTTING_DOWN
-                self._drain = False
-                self._condition.notify_all()
-            else:
+
+                # Startup commit publishes complete worker ownership before
+                # RUNNING. Both publications and notification remain inside the
+                # same failure-cleanup boundary as the launch attempts.
                 self._threads = threads
                 self._state = _SchedulerState.RUNNING
                 self._condition.notify_all()
                 return
+            except BaseException as error:
+                startup_error = error
+                # ident is the best public observation after an interrupted start;
+                # its absence does not prove that no native thread was created.
+                started = list(self._threads)
+                started.extend(
+                    thread
+                    for thread in attempted
+                    if thread.ident is not None and thread not in started
+                )
+                self._threads = started
+                self._state = _SchedulerState.SHUTTING_DOWN
+                self._drain = False
+                self._condition.notify_all()
 
         for thread in started:
             thread.join()
