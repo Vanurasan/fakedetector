@@ -1236,12 +1236,15 @@ def test_scheduler_post_loop_failure_joins_all_started_workers(
         stop_scheduler_test_threads(scheduler, created)
 
 
+@pytest.mark.parametrize("failure_type", [KeyboardInterrupt, SystemExit])
 def test_production_lifespan_interrupted_start_leaves_no_partial_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    failure_type: type[BaseException],
 ) -> None:
-    interruption = KeyboardInterrupt("production scheduler startup interrupted")
-    created = install_scheduler_start_failure(monkeypatch, interruption)
+    interruption = failure_type("production scheduler startup interrupted")
+    joined: list[Thread] = []
+    created = install_scheduler_start_failure(monkeypatch, interruption, joined=joined)
     app = create_app(make_config(tmp_path / "temp"))
     scheduler = app.state.runtime.scheduler
 
@@ -1256,23 +1259,28 @@ def test_production_lifespan_interrupted_start_leaves_no_partial_runtime(
             raise AssertionError("lifespan body must not run after failed startup")
 
     try:
-        with pytest.raises(KeyboardInterrupt) as captured:
+        with pytest.raises(failure_type) as captured:
             asyncio.run(run_lifespan())
 
         assert captured.value is interruption
         assert scheduler.is_stopped
         assert scheduler._threads == []
+        assert joined == created[:1]
         assert all(not thread.is_alive() for thread in created)
         assert not any(thread.name.startswith("stage4-") for thread in enumerate_threads())
     finally:
         stop_scheduler_test_threads(scheduler, created)
 
 
-def test_production_lifespan_post_start_interruption_shuts_down_owned_runtime(
+@pytest.mark.parametrize("failure_type", [KeyboardInterrupt, SystemExit, RuntimeError])
+@pytest.mark.parametrize("failure_point", ["post-start", "body"])
+def test_production_lifespan_caller_interruption_shuts_down_owned_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    failure_type: type[BaseException],
+    failure_point: str,
 ) -> None:
-    interruption = KeyboardInterrupt("production lifespan interrupted after scheduler start")
+    interruption = failure_type("production lifespan interrupted after scheduler start")
     created, joined = install_scheduler_thread_tracking(monkeypatch)
     app = create_app(make_config(tmp_path / "temp"))
     scheduler = app.state.runtime.scheduler
@@ -1280,16 +1288,18 @@ def test_production_lifespan_post_start_interruption_shuts_down_owned_runtime(
 
     def start_then_interrupt() -> None:
         real_start()
-        raise interruption
+        if failure_point == "post-start":
+            raise interruption
 
     monkeypatch.setattr(scheduler, "start", start_then_interrupt)
 
     async def run_lifespan() -> None:
         async with app.router.lifespan_context(app):
-            raise AssertionError("lifespan body must not run after interrupted acquisition")
+            assert failure_point == "body"
+            raise interruption
 
     try:
-        with pytest.raises(KeyboardInterrupt) as captured:
+        with pytest.raises(failure_type) as captured:
             asyncio.run(run_lifespan())
 
         assert captured.value is interruption
@@ -1332,38 +1342,127 @@ def test_production_lifespan_normally_starts_and_shuts_down_scheduler(
         stop_scheduler_test_threads(scheduler, created)
 
 
-def test_production_lifespan_shuts_down_worker_terminated_scheduler(
+@pytest.mark.parametrize("failure_point", ["post-start", "body"])
+@pytest.mark.parametrize("worker_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("primary_type", [KeyboardInterrupt, SystemExit, RuntimeError, None])
+def test_production_lifespan_preserves_exception_precedence_after_worker_termination(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+    worker_type: type[BaseException],
+    primary_type: type[BaseException] | None,
 ) -> None:
-    termination = KeyboardInterrupt("production worker terminated")
+    primary = primary_type("primary caller failure") if primary_type is not None else None
+    termination = worker_type("secondary worker termination")
+    assert primary is not termination
     created, joined = install_scheduler_thread_tracking(monkeypatch)
-    app = create_app(make_config(tmp_path / "temp"))
+    config = make_config(tmp_path / "temp")
+    app = create_app(config)
     scheduler = app.state.runtime.scheduler
     real_start = scheduler.start
 
-    def start_then_terminate() -> None:
-        real_start()
-        scheduler._stop_after_worker_termination(termination)
-        raise termination
+    class FailingExecutor:
+        def execute(self, task) -> TaskExecutionOutcome:
+            raise termination
 
-    monkeypatch.setattr(scheduler, "start", start_then_terminate)
+    receiver = Stage4TaskReceiver(
+        config=config,
+        clock=scheduler._processor._clock,
+        registry=app.state.runtime.registry,
+        router=MediaRouter(dict.fromkeys(MediaType, FailingExecutor())),
+        queue=scheduler,
+    )
+    owner = CountingOwner(tmp_path / "temp")
+
+    def run_worker_then_fail_caller() -> None:
+        submit(receiver, owner, "lifespan-worker-termination")
+        assert scheduler.wait_until_not_accepting(5)
+        assert scheduler._termination is termination
+        assert not scheduler.is_running
+        assert not scheduler.is_stopped
+        if primary is not None:
+            raise primary
+
+    if failure_point == "post-start":
+
+        def start_then_fail() -> None:
+            real_start()
+            run_worker_then_fail_caller()
+
+        monkeypatch.setattr(scheduler, "start", start_then_fail)
 
     async def run_lifespan() -> None:
         async with app.router.lifespan_context(app):
-            raise AssertionError("lifespan body must not run after worker termination")
+            if failure_point == "body":
+                run_worker_then_fail_caller()
+            else:
+                assert primary is None
 
+    expected = primary if primary is not None else termination
     try:
-        with pytest.raises(KeyboardInterrupt) as captured:
+        with pytest.raises(BaseException) as captured:
             asyncio.run(run_lifespan())
 
-        assert captured.value is termination
+        assert captured.value is expected
+        assert type(captured.value) is type(expected)
+        assert len(created) == len(MediaType)
         assert joined == created
         assert all(not thread.is_alive() for thread in created)
         assert not scheduler.is_running
         assert scheduler.is_stopped
         assert scheduler._threads == []
         assert not any(thread.name.startswith("stage4-") for thread in enumerate_threads())
+        snapshot = app.state.runtime.registry.snapshot("lifespan-worker-termination")
+        assert snapshot.status is AnalysisStatus.FAILED
+        assert snapshot.stage is ProcessingStage.FINISHED
+        assert owner.cleanup_calls("lifespan-worker-termination") == 1
+    finally:
+        stop_scheduler_test_threads(scheduler, created)
+
+
+@pytest.mark.parametrize("failure_point", ["post-start", "body"])
+@pytest.mark.parametrize("cleanup_type", [RuntimeError, KeyboardInterrupt])
+def test_production_lifespan_does_not_hide_unfinished_shutdown_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+    cleanup_type: type[BaseException],
+) -> None:
+    primary = SystemExit("primary caller failure")
+    cleanup_failure = cleanup_type("join interrupted before cleanup completed")
+    created, joined = install_scheduler_thread_tracking(monkeypatch)
+    app = create_app(make_config(tmp_path / "temp"))
+    scheduler = app.state.runtime.scheduler
+    real_start = scheduler.start
+
+    def start_with_failing_join() -> None:
+        real_start()
+        tracked_join = created[0].join
+
+        def fail_join_once(timeout: float | None = None) -> None:
+            created[0].join = tracked_join
+            raise cleanup_failure
+
+        monkeypatch.setattr(created[0], "join", fail_join_once)
+        if failure_point == "post-start":
+            raise primary
+
+    monkeypatch.setattr(scheduler, "start", start_with_failing_join)
+
+    async def run_lifespan() -> None:
+        async with app.router.lifespan_context(app):
+            raise primary
+
+    try:
+        with pytest.raises(BaseException) as captured:
+            asyncio.run(run_lifespan())
+
+        assert captured.value is cleanup_failure
+        assert captured.value.__context__ is primary
+        assert not scheduler.is_stopped
+        assert not scheduler.is_running
+        assert scheduler._threads == created
+        assert joined == []
     finally:
         stop_scheduler_test_threads(scheduler, created)
 

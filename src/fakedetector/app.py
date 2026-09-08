@@ -21,13 +21,22 @@ def create_app(config: AppConfig) -> FastAPI:
             runtime.scheduler.start()
             startup_completed = True
             yield
-        finally:
+        except BaseException:
             if startup_completed or not runtime.scheduler.is_stopped:
                 try:
                     runtime.scheduler.shutdown()
                 except SchedulerStateError:
                     if startup_completed:
                         raise
+                except BaseException:
+                    # shutdown() reports worker termination after joining workers
+                    # and reaching STOPPED. Only that completed cleanup may defer
+                    # to the active caller exception; unfinished shutdown must fail.
+                    if not runtime.scheduler.is_stopped:
+                        raise
+            raise
+        else:
+            runtime.scheduler.shutdown()
 
     app = FastAPI(title="FakeDetector", version="0.1.0", lifespan=lifespan)
     app.state.config = config
