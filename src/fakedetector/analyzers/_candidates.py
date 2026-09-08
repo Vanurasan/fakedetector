@@ -3,11 +3,23 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
-from fakedetector.domain import FileLocalization, TimeIntervalLocalization
+from fakedetector.domain import (
+    BoundingBoxLocalization,
+    FileLocalization,
+    TimeIntervalLocalization,
+)
 
 _MAX_EVIDENCE_REFS = 4
 _MAX_EVIDENCE_REF_CHARS = 128
@@ -50,11 +62,34 @@ class _RepeatedSampledVideoFramesCandidate(_CandidateBase):
     correlation_group: Literal["video_temporal_repetition"]
 
 
+class _RepeatedImageRegionCorrespondenceCandidate(_CandidateBase):
+    type: Literal["repeated_image_region_correspondence"]
+    localization: BoundingBoxLocalization
+    correlation_group: str = Field(
+        min_length=92,
+        max_length=92,
+        pattern=r"^image_region_correspondence_[0-9a-f]{64}$",
+    )
+
+    @model_validator(mode="after")
+    def validate_non_degenerate_bounded_region(self) -> Self:
+        localization = self.localization
+        if (
+            localization.width <= 0
+            or localization.height <= 0
+            or localization.x + localization.width > 1
+            or localization.y + localization.height > 1
+        ):
+            raise ValueError("candidate bounding box is invalid")
+        return self
+
+
 type _TypedCandidate = Annotated[
     _ImageMetadataDimensionMismatchCandidate
     | _AudioFullScaleSaturationCandidate
     | _VideoSampleResolutionChangeCandidate
-    | _RepeatedSampledVideoFramesCandidate,
+    | _RepeatedSampledVideoFramesCandidate
+    | _RepeatedImageRegionCorrespondenceCandidate,
     Field(discriminator="type"),
 ]
 

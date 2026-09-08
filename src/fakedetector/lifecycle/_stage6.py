@@ -18,6 +18,7 @@ from fakedetector.analyzers._candidates import (
     _TypedCandidate,
     _validate_candidate_transport,
 )
+from fakedetector.analyzers._image_copy_move import ImageCopyMoveCorrespondenceAnalyzer
 from fakedetector.analyzers._image_metadata import ImageMetadataConsistencyAnalyzer
 from fakedetector.analyzers._real_common import _MAX_REAL_ANALYZER_CANDIDATES
 from fakedetector.analyzers._video_frames import VideoSampledFrameQualityAnalyzer
@@ -42,6 +43,10 @@ _DESCRIPTION_BY_TYPE = {
     "repeated_sampled_video_frames": (
         "At least three consecutive prepared video samples have identical decoded pixels."
     ),
+    "repeated_image_region_correspondence": (
+        "This image region participates in a geometrically consistent repeated-region "
+        "correspondence."
+    ),
 }
 
 
@@ -51,9 +56,17 @@ class _RealResultSpec:
     media_type: MediaType
     group: str
     candidate_types: frozenset[str]
+    max_candidates: int = _MAX_REAL_ANALYZER_CANDIDATES
 
 
 _REAL_RESULT_SPECS = {
+    ImageCopyMoveCorrespondenceAnalyzer.analyzer_id: _RealResultSpec(
+        version=ImageCopyMoveCorrespondenceAnalyzer.analyzer_version,
+        media_type=next(iter(ImageCopyMoveCorrespondenceAnalyzer.supported_media_types)),
+        group=ImageCopyMoveCorrespondenceAnalyzer.group,
+        candidate_types=frozenset({"repeated_image_region_correspondence"}),
+        max_candidates=8,
+    ),
     ImageMetadataConsistencyAnalyzer.analyzer_id: _RealResultSpec(
         version=ImageMetadataConsistencyAnalyzer.analyzer_version,
         media_type=next(iter(ImageMetadataConsistencyAnalyzer.supported_media_types)),
@@ -107,12 +120,17 @@ class Stage6FindingService:
                 if result.status is not AnalyzerStatus.COMPLETED or not result.applicable:
                     continue
                 _validate_real_result_identity(result, spec)
-                if len(result.candidate_findings) > _MAX_REAL_ANALYZER_CANDIDATES:
+                if len(result.candidate_findings) > spec.max_candidates:
                     raise ValueError("candidate limit")
+                validated_candidates: list[_TypedCandidate] = []
                 for transport_candidate in result.candidate_findings:
                     candidate = _validate_candidate_transport(transport_candidate)
                     if candidate.type not in spec.candidate_types:
                         raise ValueError("candidate analyzer mismatch")
+                    validated_candidates.append(candidate)
+                if result.analyzer_id == ImageCopyMoveCorrespondenceAnalyzer.analyzer_id:
+                    _validate_copy_move_candidate_pairs(validated_candidates)
+                for candidate in validated_candidates:
                     normalized.append(
                         _NormalizedCandidate(
                             result=result,
@@ -153,6 +171,18 @@ def _validate_real_result_identity(result: AnalyzerResult, spec: _RealResultSpec
         or result.score_name is not None
     ):
         raise ValueError("real analyzer result identity")
+
+
+def _validate_copy_move_candidate_pairs(candidates: Sequence[_TypedCandidate]) -> None:
+    candidates_by_group: dict[str, list[_TypedCandidate]] = {}
+    for candidate in candidates:
+        candidates_by_group.setdefault(candidate.correlation_group, []).append(candidate)
+    for grouped_candidates in candidates_by_group.values():
+        if len(grouped_candidates) != 2:
+            raise ValueError("copy-move candidate group size")
+        first, second = grouped_candidates
+        if first.localization == second.localization:
+            raise ValueError("copy-move candidate localizations")
 
 
 def _base_identity_projection(

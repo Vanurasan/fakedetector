@@ -14,6 +14,10 @@ from fakedetector.analyzers._audio_pcm import (
     AudioPcmQualityAnalyzer,
     AudioPcmQualitySettings,
 )
+from fakedetector.analyzers._image_copy_move import (
+    ImageCopyMoveCorrespondenceAnalyzer,
+    ImageCopyMoveCorrespondenceSettings,
+)
 from fakedetector.analyzers._image_metadata import (
     ImageMetadataConsistencyAnalyzer,
     ImageMetadataConsistencySettings,
@@ -211,6 +215,11 @@ _REAL_ANALYZER_DEFINITIONS = (
         "stage6.video_sampled_frame_quality.v1",
         VideoSampledFrameQualityAnalyzer,
         settings_model=VideoSampledFrameQualitySettings,
+    ),
+    _definition(
+        "stage6.image_copy_move_correspondence.v1",
+        ImageCopyMoveCorrespondenceAnalyzer,
+        settings_model=ImageCopyMoveCorrespondenceSettings,
     ),
 )
 

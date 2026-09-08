@@ -622,12 +622,14 @@ def test_real_catalog_registration_and_settings_contracts() -> None:
         "image_metadata_consistency",
         "audio_pcm_quality",
         "video_sampled_frame_quality",
+        "image_copy_move_correspondence",
     ]
     assert all(registration.analyzer_version == "1.0.0" for registration in registrations)
     assert [registration.group for registration in registrations] == [
         "metadata",
         "signal_quality",
         "sampled_frame_quality",
+        "content",
     ]
     assert all(
         not registration.preprocessing_requirements.audio_spectrogram
@@ -644,7 +646,10 @@ def test_real_catalog_registration_and_settings_contracts() -> None:
 
 def test_real_catalog_builds_active_plans_through_existing_settings_mechanism() -> None:
     raw = yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
-    raw["analyzers"]["image"]["enabled"] = ["image_metadata_consistency"]
+    raw["analyzers"]["image"]["enabled"] = [
+        "image_metadata_consistency",
+        "image_copy_move_correspondence",
+    ]
     raw["analyzers"]["audio"]["enabled"] = ["audio_pcm_quality"]
     raw["analyzers"]["video"]["enabled"] = ["video_sampled_frame_quality"]
     raw["analyzers"]["settings"] = {
@@ -655,9 +660,10 @@ def test_real_catalog_builds_active_plans_through_existing_settings_mechanism() 
         _real_analyzer_registrations(),
     )
 
-    assert registry.active_plan(MediaType.IMAGE)[0].registration.analyzer_id == (
-        "image_metadata_consistency"
-    )
+    assert [item.registration.analyzer_id for item in registry.active_plan(MediaType.IMAGE)] == [
+        "image_metadata_consistency",
+        "image_copy_move_correspondence",
+    ]
     assert registry.active_plan(MediaType.AUDIO)[0].registration.analyzer_id == (
         "audio_pcm_quality"
     )

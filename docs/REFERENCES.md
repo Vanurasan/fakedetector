@@ -69,36 +69,45 @@ false-positive/challenge и boundary/not-applicable fixtures не являютс
 
 ### OpenCV
 
-- Назначение: planned implementation building block для ORB descriptors и
-  RANSAC-based model fitting в `image_copy_move_correspondence`.
-- Planned package pin: `opencv-python-headless==4.14.0.94`.
-- Upstream repository: <https://github.com/opencv/opencv>.
-- Python packaging repository: <https://github.com/opencv/opencv-python>.
-- Package: <https://pypi.org/project/opencv-python-headless/4.14.0.94/>.
+- Назначение: компонент реализации для ORB-дескрипторов и подбора модели методом
+  RANSAC в `image_copy_move_correspondence`.
+- Фактическая версия пакета: `opencv-python-headless==4.14.0.94`; фактическая
+  версия OpenCV: `4.14.0`.
+- Репозиторий исходного проекта: <https://github.com/opencv/opencv>.
+- Репозиторий пакета Python: <https://github.com/opencv/opencv-python>.
+- Пакет: <https://pypi.org/project/opencv-python-headless/4.14.0.94/>.
 - Официальная документация: <https://docs.opencv.org/4.x/>.
-- License: Apache License 2.0;
+- Лицензия OpenCV: Apache License 2.0;
   <https://github.com/opencv/opencv/blob/4.x/LICENSE>.
+- Лицензия проекта упаковки Python `opencv-python`: MIT;
+  <https://github.com/opencv/opencv-python/blob/4.x/LICENSE.txt>.
+- Уведомления о сторонних компонентах wheel: поставка содержит соответствующий
+  версии `LICENSE-3RD-PARTY.txt`; в частности, wheel включает FFmpeg под LGPLv2.1,
+  а полный набор применимых уведомлений зависит от платформы:
+  <https://github.com/opencv/opencv-python/blob/4.x/LICENSE-3RD-PARTY.txt>.
 
-Pin является planned dependency decision до Increment 2. До основной реализации
-обязателен smoke gate: установка пакетов, `import numpy`, `import cv2`, создание
-ORB и минимальная descriptor operation. Несовместимая пара wheels может быть
-скорректирована как dependency correction без пересмотра архитектуры Stage 6.
+Минимальная проверка Increment 2 пройдена на Windows / Python 3.12 / uv:
+`import cv2`, создание ORB, `detectAndCompute` и
+`estimateAffinePartial2D(..., RANSAC)` выполнены успешно. Исправление зависимостей
+не потребовалось.
 
 ### NumPy
 
-- Назначение: planned array/numerical building block для
+- Назначение: фактический компонент работы с массивами и численных операций для
   `image_copy_move_correspondence`.
-- Planned package pin: `numpy==2.5.2`.
-- Project: <https://numpy.org/>.
-- Repository: <https://github.com/numpy/numpy>.
-- Package: <https://pypi.org/project/numpy/2.5.2/>.
+- Фактическая версия пакета и среды выполнения: `numpy==2.5.2`.
+- Проект: <https://numpy.org/>.
+- Репозиторий: <https://github.com/numpy/numpy>.
+- Пакет: <https://pypi.org/project/numpy/2.5.2/>.
 - Официальная документация: <https://numpy.org/doc/stable/>.
 - License: основной код NumPy — BSD-3-Clause; поставка также содержит компоненты
   с лицензиями, перечисленными в versioned license file:
   <https://github.com/numpy/numpy/blob/v2.5.2/LICENSE.txt>.
 
-Pin имеет тот же статус planned dependency decision и проходит общий smoke gate
-Increment 2 до реализации copy-move analyzer.
+Минимальная проверка Increment 2 пройдена без исправления зависимостей. Метаданные
+wheel фиксируют составное лицензионное выражение для включённых компонентов;
+соответствующий версии `LICENSE.txt` остаётся полным источником применимых
+уведомлений.
 
 ## Analyzer references
 
@@ -183,16 +192,18 @@ Increment 2 до реализации copy-move analyzer.
 
 - `analyzer_id`: `image_copy_move_correspondence`.
 - `analyzer_version`: `1.0.0`.
-- Method: поиск пространственно разделённых соответствий локальных признаков с
-  bounded filtering и RANSAC-based geometric consistency.
-- Method source: project-specific heuristic, использующая ORB и RANSAC только как
-  method building blocks.
-- Implementation source: original FakeDetector implementation поверх OpenCV и
-  NumPy.
-- Model/weights source: не применяется.
-- Dataset/source: не применяется; используются deterministic generated fixtures.
+- Статус реализации: реализовано в Stage 6 Increment 2.
+- Группа признаков: `content`.
+- Метод: поиск пространственно разделённых соответствий локальных признаков с
+  ограниченной фильтрацией и проверкой геометрической согласованности методом RANSAC.
+- Источник метода: проектная эвристика, использующая ORB и RANSAC только как
+  составные части метода.
+- Источник реализации: собственная реализация FakeDetector поверх OpenCV и NumPy.
+- Источник модели и весов: не применяется.
+- Источник набора данных: не применяется; используются детерминированные
+  генерируемые фикстуры.
 
-Method building blocks:
+Составные части метода:
 
 1. **ORB.** Ethan Rublee, Vincent Rabaud, Kurt Konolige, Gary Bradski. “ORB: An
    efficient alternative to SIFT or SURF.” Proceedings of the IEEE International
@@ -203,22 +214,30 @@ Method building blocks:
    Cartography.” Communications of the ACM, 1981. DOI:
    <https://doi.org/10.1145/358669.358692>.
 
-Implementation building blocks:
+Компоненты реализации:
 
-- OpenCV / `opencv-python-headless==4.14.0.94` — ORB descriptors и
-  RANSAC-enabled geometric operations;
-- `numpy==2.5.2` — bounded numerical/array operations.
+- OpenCV / `opencv-python-headless==4.14.0.94` — ORB-дескрипторы и геометрические
+  операции с RANSAC;
+- `numpy==2.5.2` — ограниченные численные операции и операции с массивами.
 
-FakeDetector-specific adaptation и original implementation:
+Собственная реализация и адаптация FakeDetector:
 
-- spatial separation;
-- bounded match filtering;
-- cluster acceptance policy;
-- threshold/cap policy;
-- преобразование candidate findings в `Finding`;
-- `correlation_group` policy.
+- ограниченная проверка PNG в RGB/RGBA и маска признаков с учётом альфа-канала;
+- правила сопоставления признаков внутри изображения с исключением тривиального
+  самосопоставления до проверки отношения расстояний;
+- пространственное разделение;
+- ограниченная фильтрация сопоставлений;
+- итеративная геометрическая кластеризация;
+- правила принятия кластера;
+- приведение симметричных пар к каноническому виду и подавление дублирующих кластеров;
+- парное IoU-подавление при перекрытии `>= 0.5` используется только как внутреннее
+  правило устранения дублирующего вывода, а не как порог экспертного анализа;
+- построение ограничивающих прямоугольников;
+- правила порогов и пределов;
+- преобразование кандидатов в `Finding`;
+- правила `correlation_group`.
 
-Versioned deterministic MVP defaults:
+Версионированные детерминированные значения MVP по умолчанию:
 
 | Параметр | Значение |
 |---|---:|
@@ -232,12 +251,17 @@ Versioned deterministic MVP defaults:
 | `min_cluster_inlier_ratio` | `0.5` |
 | `max_clusters` | `4` |
 
-Эти значения не являются статистически валидированными forensic thresholds.
-Они являются воспроизводимыми MVP defaults и могут изменяться в Stage 6 только
-после обоснования deterministic positive/negative/challenge fixtures и фиксации
-изменения.
+Эти значения не являются статистически валидированными порогами экспертного
+анализа. Они являются воспроизводимыми значениями MVP по умолчанию и могут
+изменяться в Stage 6 только после обоснования детерминированными положительными,
+отрицательными и проверяющими ограничения фикстурами и фиксации изменения.
 
-Known limitations: повторяющиеся текстуры, симметрия, сжатие и малые изображения
-могут приводить к ложным или пропущенным соответствиям. Полный copy-move pipeline
-FakeDetector не заявляется реализацией одной из перечисленных статей: ORB и
-RANSAC используются только как building blocks собственной bounded heuristic.
+Известные ограничения: повторяющаяся архитектура, окна, плитка, узоры, логотипы,
+симметричные объекты, интерфейсные элементы, текстуры и естественно повторяющиеся
+детали могут создавать допустимые положительные наблюдения; сжатие и малые
+изображения могут приводить к пропущенным соответствиям. Finding означает только
+геометрически согласованное повторяющееся соответствие областей и не является
+доказательством подделки переносом области, злонамеренного редактирования,
+deepfake или изображения, созданного ИИ. Полный конвейер FakeDetector не заявляется
+реализацией одной из перечисленных статей: ORB и RANSAC используются только как
+составные части собственной ограниченной эвристики.
