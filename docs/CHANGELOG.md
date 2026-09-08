@@ -366,6 +366,37 @@ YYYY-MM-DD
   допустим для benchmark, но не является deployment requirement,
   предварительный ориентир — x86-64 CPU и 16 GiB RAM без GPU, а окончательные
   требования определяются closure benchmark.
+- **[Stage 6/Finding identity] Утверждён content-addressed `finding_id` v1.** ID
+  использует полный lowercase SHA-256 канонической identity projection из
+  analyzer identity/version, group, type, localization, correlation group и
+  deterministic duplicate ordinal. Текст description, severity/downstream score
+  policy, evidence refs и `analysis_id` в hash не входят; точное правило
+  зафиксировано в `CONTRACTS.md` §9.5.
+
+### Added
+
+- **[Stage 6/Increment 1] Реализован первый real analyzer → Finding vertical
+  slice без новых runtime dependencies.** Trusted catalog получил
+  `image_metadata_consistency`, `audio_pcm_quality` и
+  `video_sampled_frame_quality` версии `1.0.0`; реализации используют controlled
+  original image source, canonical PCM WAV/audio fragments и существующие
+  sampled-frame artifacts соответственно. Image analyzer публикует только
+  bounded factual metadata-presence/dimension metrics, audio analyzer потоково
+  считает interleaved sample-level signed16 metrics: абсолютная амплитуда
+  нормализуется как `abs(sample) / 32768`, digital silence означает только
+  `sample == 0`, а full scale — только `sample in {-32768, 32767}`; применяется
+  threshold `full_scale_sample_ratio >= 0.001`. Video
+  analyzer сравнивает decoded pixels соседних samples и формирует repetition
+  finding только для run из трёх и более кадров.
+- **[Stage 6/Increment 1] Добавлены private typed candidates, deterministic
+  conversion и immutable sibling state.** Transport candidates повторно
+  валидируются discriminated Pydantic-моделями; первоначальные `Finding` сохраняют
+  analyzer identity/version, имеют только `severity=weak`, nullable score-поля и
+  выключенный critical override. `finding_id` является полным content-addressed
+  SHA-256 канонической identity projection с deterministic duplicate ordinal и не
+  зависит от worker completion order или несвязанных findings. Authoritative
+  `Stage6TaskData` хранит только canonical immutable bytes, а чтение через
+  `TaskRegistry` возвращает detached `Finding`; смысл `Stage5TaskData` не изменён.
 
 ### Changed
 

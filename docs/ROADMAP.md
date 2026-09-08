@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 6 — Базовые анализаторы и формирование признаков
 Статус этапа: IN_PROGRESS
-Ближайшее действие: реализовать technical analyzer + Finding vertical slice
+Ближайшее действие: Increment 2 — dependency smoke gate и image_copy_move_correspondence
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–5 завершены; Stage 6 Increment 0 documentation prerequisite = DONE; Profile B и provenance policy приняты; production implementation Stage 6 ещё не начата
+Реализация программы: Этапы 1–5 завершены; Stage 6 Increment 0 и Increment 1 = DONE; три technical analyzers, Finding conversion и sibling Stage 6 state реализованы; image_copy_move_correspondence и production closure ещё не выполнены
 Документационная база: сформирована
 ```
 
@@ -133,12 +133,11 @@ AFTER_MVP
 
 ### 2.2. Ближайшие три результата
 
-1. technical analyzer + Finding vertical slice сохраняет нормализованные признаки
-   в отдельном sibling Stage 6 task state;
-2. dependency smoke gate подтверждает planned OpenCV/NumPy pins, после чего
+1. dependency smoke gate подтверждает planned OpenCV/NumPy pins, после чего
    реализуется `image_copy_move_correspondence`;
-3. все четыре analyzer Profile B проходят deterministic fixtures, а closure
-   benchmark фиксирует фактические resource requirements.
+2. все четыре analyzer Profile B проходят deterministic fixtures;
+3. production integration/closure increment фиксирует полный контур и фактические
+   resource requirements по результатам benchmark.
 
 ---
 
@@ -1004,8 +1003,32 @@ deterministic positive/negative/challenge fixtures и отдельной фик�
 пока применимая provenance information не заполнена и происхождение метода
 отделено от происхождения реализации.
 
-Предыдущий сквозной контур продолжает работать с тестовыми анализаторами до
-появления production implementations.
+Framework test analyzers сохраняются только для проверки общей execution
+архитектуры; production implementations подключаются отдельными trusted
+registrations.
+
+### Increment 1 — technical analyzers + Finding vertical slice — DONE
+
+Реализованы три независимых production-path technical analyzers версии `1.0.0`:
+
+- `image_metadata_consistency` использует controlled original source и не
+  интерпретирует отсутствие metadata или software tag как finding;
+- `audio_pcm_quality` потоково анализирует canonical signed 16-bit little-endian
+  PCM WAV и локализует не более 16 strongest saturation observations по
+  существующим fragments;
+- `video_sampled_frame_quality` использует только подготовленные sampled frames,
+  сравнивает decoded pixels и не требует video audio track.
+
+Private typed candidate boundary повторно валидируется deterministic Stage 6
+converter. Content-addressed `finding_id` следует §9.5 `CONTRACTS.md`; findings
+сохраняются как canonical immutable bytes в отдельном sibling `Stage6TaskData`, а
+detached reads не изменяют authoritative state. Новые runtime dependencies,
+public API, persistence, risk/completeness logic и новый `ProcessingStage` не
+добавлены. Generated fixtures и targeted Stage 5/6 regressions подтверждают
+контракт и resource/transport bounds.
+
+Ближайшее действие: Increment 2 — smoke gate planned OpenCV/NumPy pins и
+реализация `image_copy_move_correspondence`.
 
 ## Рекомендуемый минимальный принцип выбора
 
@@ -1025,14 +1048,14 @@ deterministic positive/negative/challenge fixtures и отдельной фик�
 - [ ] реализовать выбранные анализаторы как независимые модули;
 - [x] зафиксировать версии;
 - [ ] добавить тестовые fixtures;
-- [ ] реализовать преобразование candidate findings в `Finding`;
-- [ ] хранить `Finding[]` в отдельном sibling Stage 6 task state;
-- [ ] сохранять связь с анализатором и версией;
-- [ ] реализовать локализацию, где она доступна;
-- [ ] ввести correlation_group для связанных результатов;
-- [ ] не назначать critical автоматически по confidence.
+- [x] реализовать преобразование candidate findings в `Finding`;
+- [x] хранить `Finding[]` в отдельном sibling Stage 6 task state;
+- [x] сохранять связь с анализатором и версией;
+- [x] реализовать локализацию, где она доступна;
+- [x] ввести correlation_group для связанных результатов;
+- [x] не назначать critical автоматически по confidence.
 - [x] создать `REFERENCES.md` и зафиксировать правило NO PROVENANCE — NO ANALYZER;
-- [ ] актуализировать provenance после каждой фактической реализации analyzer.
+- [x] актуализировать provenance после каждой фактической реализации analyzer.
 
 ## Обязательные тесты
 

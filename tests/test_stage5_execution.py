@@ -49,6 +49,7 @@ from fakedetector.domain import (
     AnalyzerResult,
     AnalyzerStatus,
     ErrorDetail,
+    Finding,
     ImageTechnicalParameters,
     MediaType,
     ProcessingStage,
@@ -81,7 +82,13 @@ from fakedetector.lifecycle import (
     config_snapshot_fingerprint,
 )
 from fakedetector.lifecycle._stage5 import Stage5ExecutionService
-from fakedetector.lifecycle.models import Stage5TaskData, _StoredAnalyzerResult
+from fakedetector.lifecycle._stage6 import Stage6FindingService
+from fakedetector.lifecycle.models import (
+    Stage5TaskData,
+    Stage6TaskData,
+    _StoredAnalyzerResult,
+    _StoredFinding,
+)
 from fakedetector.preprocessing._errors import PreprocessingError
 from fakedetector.preprocessing._media_tools import _FFmpegPreprocessingTool
 from fakedetector.preprocessing._models import (
@@ -812,6 +819,125 @@ def _mutate_nested_result(result: AnalyzerResult) -> None:
     details = cast(list[object], result.errors[0].safe_details["values"])
     details.append({"changed": True})
     result.errors.append(result.errors[0].model_copy(deep=True))
+
+
+def _stage6_source_result() -> AnalyzerResult:
+    return AnalyzerResult(
+        analyzer_id="image_metadata_consistency",
+        analyzer_version="1.0.0",
+        media_type=MediaType.IMAGE,
+        group="metadata",
+        status=AnalyzerStatus.COMPLETED,
+        applicable=True,
+        started_at=None,
+        finished_at=None,
+        duration_ms=0,
+        score=None,
+        score_name=None,
+        summary="Metadata dimensions differ.",
+        raw_metrics={},
+        candidate_findings=[
+            {
+                "type": "image_metadata_dimension_mismatch",
+                "localization": {"type": "file"},
+                "correlation_group": "image_metadata_consistency",
+                "evidence_refs": [],
+            }
+        ],
+        warnings=[],
+        errors=[],
+    )
+
+
+def test_stage6_sibling_state_uses_canonical_bytes_and_detached_reads(tmp_path: Path) -> None:
+    root = tmp_path / "temp"
+    config = _config(root)
+    task, registry = _claimed_task(root, config)
+    _start_result_publication(task, registry)
+    result = _stage6_source_result()
+    registry.append_stage5_analyzer_result(task, result)
+    authoritative_results = registry._read_stage5_analyzer_results(task)
+    findings = Stage6FindingService().form_findings(authoritative_results)
+    expected = tuple(finding.model_dump(mode="json") for finding in findings)
+
+    registry.publish_stage6_findings(task, findings)
+
+    assert task.stage6_data is not None
+    assert [field.name for field in fields(Stage5TaskData)] == [
+        "prepared_media",
+        "analyzer_results",
+    ]
+    stored = task.stage6_data.findings[0]
+    assert isinstance(stored, _StoredFinding)
+    assert isinstance(stored.canonical_json, bytes)
+    assert not any(
+        isinstance(getattr(stored, model_field.name), Finding) for model_field in fields(stored)
+    )
+    with pytest.raises(FrozenInstanceError):
+        stored.canonical_json = b"changed"
+    with pytest.raises(TypeError, match="stored findings"):
+        Stage6TaskData(findings=cast(tuple[_StoredFinding, ...], (findings[0],)))
+
+    findings[0].description = "Changed original"
+    findings[0].evidence_refs.append("changed")
+    first_read = registry._read_stage6_findings(task)
+    assert tuple(finding.model_dump(mode="json") for finding in first_read) == expected
+    first_read[0].description = "Changed detached read"
+    first_read[0].evidence_refs.append("changed-again")
+    assert (
+        tuple(finding.model_dump(mode="json") for finding in registry._read_stage6_findings(task))
+        == expected
+    )
+
+    with pytest.raises(LifecycleStateError):
+        registry.publish_stage6_findings(task, Stage6FindingService().form_findings((result,)))
+    with pytest.raises(LifecycleStateError):
+        registry.append_stage5_analyzer_result(task, result)
+
+    registry.record_outcome(task.context.analysis_id, TaskExecutionOutcome.completed())
+    assert (
+        tuple(finding.model_dump(mode="json") for finding in registry._read_stage6_findings(task))
+        == expected
+    )
+    final = Stage4TaskProcessor(
+        config=config,
+        clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
+        registry=registry,
+    ).settle_terminal(task.context.analysis_id)
+    assert final.stage is ProcessingStage.FINISHED
+    assert (
+        tuple(finding.model_dump(mode="json") for finding in registry._read_stage6_findings(task))
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "field_value"),
+    [
+        ("source_analyzer_id", "unknown_analyzer"),
+        ("source_analyzer_version", "9.9.9"),
+        ("group", "other_group"),
+    ],
+)
+def test_stage6_publication_requires_authoritative_result_identity(
+    tmp_path: Path,
+    field_name: str,
+    field_value: str,
+) -> None:
+    root = tmp_path / "temp"
+    task, registry = _claimed_task(root, _config(root))
+    _start_result_publication(task, registry)
+    result = _stage6_source_result()
+    registry.append_stage5_analyzer_result(task, result)
+    finding = Stage6FindingService().form_findings((result,))[0]
+    mismatched = finding.model_copy(update={field_name: field_value})
+
+    with pytest.raises(LifecycleStateError):
+        registry.publish_stage6_findings(task, (mismatched,))
+
+    assert task.stage6_data is None
+    registry.publish_stage6_findings(task, (finding,))
+    assert registry._read_stage6_findings(task) == (finding,)
 
 
 @pytest.mark.parametrize("mutate_original", [True, False], ids=["original", "reader"])

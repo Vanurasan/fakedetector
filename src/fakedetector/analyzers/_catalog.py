@@ -10,11 +10,23 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fakedetector.analyzers._audio_pcm import (
+    AudioPcmQualityAnalyzer,
+    AudioPcmQualitySettings,
+)
+from fakedetector.analyzers._image_metadata import (
+    ImageMetadataConsistencyAnalyzer,
+    ImageMetadataConsistencySettings,
+)
 from fakedetector.analyzers._models import (
     Analyzer,
     AnalyzerRegistration,
     AnalyzerRequest,
     ApplicabilityResult,
+)
+from fakedetector.analyzers._video_frames import (
+    VideoSampledFrameQualityAnalyzer,
+    VideoSampledFrameQualitySettings,
 )
 from fakedetector.domain import AnalyzerResult, AnalyzerStatus, MediaType
 from fakedetector.preprocessing._requirements import PreprocessingRequirements
@@ -145,46 +157,66 @@ class _WorkerAnalyzerDefinition:
 
 def _definition(
     worker_key: str,
-    analyzer_type: type[_FakeAnalyzerBase],
+    analyzer_factory: Callable[[], Analyzer],
     *,
+    settings_model: type[BaseModel] = _FakeAnalyzerSettings,
     preprocessing_requirements: PreprocessingRequirements | None = None,
 ) -> _WorkerAnalyzerDefinition:
-    def factory() -> Analyzer:
-        return analyzer_type()
+    analyzer = analyzer_factory()
 
     return _WorkerAnalyzerDefinition(
         worker_key=worker_key,
-        analyzer_id=analyzer_type.analyzer_id,
-        analyzer_name=analyzer_type.analyzer_name,
-        analyzer_version=analyzer_type.analyzer_version,
-        group=analyzer_type.group,
-        supported_media_types=analyzer_type.supported_media_types,
-        settings_model=_FakeAnalyzerSettings,
-        factory=factory,
+        analyzer_id=analyzer.analyzer_id,
+        analyzer_name=analyzer.analyzer_name,
+        analyzer_version=analyzer.analyzer_version,
+        group=analyzer.group,
+        supported_media_types=analyzer.supported_media_types,
+        settings_model=settings_model,
+        factory=analyzer_factory,
         preprocessing_requirements=(preprocessing_requirements or PreprocessingRequirements()),
     )
 
 
+_FRAMEWORK_TEST_DEFINITIONS = (
+    _definition("framework_test.image", _FakeImageAnalyzer),
+    _definition("framework_test.image_second", _FakeImageSecondAnalyzer),
+    _definition(
+        "framework_test.audio",
+        _FakeAudioAnalyzer,
+        preprocessing_requirements=PreprocessingRequirements(audio_spectrogram=True),
+    ),
+    _definition(
+        "framework_test.video",
+        _FakeVideoAnalyzer,
+        preprocessing_requirements=PreprocessingRequirements(video_audio_track=True),
+    ),
+    _definition("framework_test.error", _FakeErrorAnalyzer),
+    _definition("framework_test.hang", _FakeHangAnalyzer),
+    _definition("framework_test.crash", _FakeCrashAnalyzer),
+    _definition("framework_test.serialization", _FakeSerializationAnalyzer),
+)
+
+_REAL_ANALYZER_DEFINITIONS = (
+    _definition(
+        "stage6.image_metadata_consistency.v1",
+        ImageMetadataConsistencyAnalyzer,
+        settings_model=ImageMetadataConsistencySettings,
+    ),
+    _definition(
+        "stage6.audio_pcm_quality.v1",
+        AudioPcmQualityAnalyzer,
+        settings_model=AudioPcmQualitySettings,
+    ),
+    _definition(
+        "stage6.video_sampled_frame_quality.v1",
+        VideoSampledFrameQualityAnalyzer,
+        settings_model=VideoSampledFrameQualitySettings,
+    ),
+)
+
 _WORKER_DEFINITIONS = {
     definition.worker_key: definition
-    for definition in (
-        _definition("framework_test.image", _FakeImageAnalyzer),
-        _definition("framework_test.image_second", _FakeImageSecondAnalyzer),
-        _definition(
-            "framework_test.audio",
-            _FakeAudioAnalyzer,
-            preprocessing_requirements=PreprocessingRequirements(audio_spectrogram=True),
-        ),
-        _definition(
-            "framework_test.video",
-            _FakeVideoAnalyzer,
-            preprocessing_requirements=PreprocessingRequirements(video_audio_track=True),
-        ),
-        _definition("framework_test.error", _FakeErrorAnalyzer),
-        _definition("framework_test.hang", _FakeHangAnalyzer),
-        _definition("framework_test.crash", _FakeCrashAnalyzer),
-        _definition("framework_test.serialization", _FakeSerializationAnalyzer),
-    )
+    for definition in (*_FRAMEWORK_TEST_DEFINITIONS, *_REAL_ANALYZER_DEFINITIONS)
 }
 
 
@@ -194,7 +226,12 @@ def _resolve_worker_definition(worker_key: str) -> _WorkerAnalyzerDefinition | N
 
 def _framework_test_registrations() -> tuple[AnalyzerRegistration, ...]:
     """Return explicit internal registrations; none are active in default config."""
-    return tuple(definition.registration() for definition in _WORKER_DEFINITIONS.values())
+    return tuple(definition.registration() for definition in _FRAMEWORK_TEST_DEFINITIONS)
+
+
+def _real_analyzer_registrations() -> tuple[AnalyzerRegistration, ...]:
+    """Return the production Stage 6 technical analyzer registrations."""
+    return tuple(definition.registration() for definition in _REAL_ANALYZER_DEFINITIONS)
 
 
 def _completed_result(

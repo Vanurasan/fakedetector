@@ -1366,7 +1366,7 @@ stdout читается ограниченными блоками и поток�
 
 ```json
 {
-  "finding_id": "finding_0004",
+  "finding_id": "finding_bda1b8994b8d3b65ffc5bdd2c8b1c155aabe0c4865007acfdd0aba11d271506d",
   "group": "multimodal",
   "type": "audio_video_desynchronization",
   "severity": "critical",
@@ -1470,6 +1470,52 @@ Analyzer identity, analyzer version и связь finding с источнико�
 преобразовании. Значения threshold могут изменяться в Stage 6 только после
 обоснования deterministic positive/negative/challenge fixtures и фиксации
 изменения. Это уточнение поведения не меняет структуру external schema `1.0`.
+
+### 9.5. Детерминированный `finding_id` Stage 6 v1
+
+Stage 6 формирует content-addressed идентификатор нормализованного наблюдаемого
+факта:
+
+```text
+finding_id = "finding_" + SHA-256(canonical identity projection).hexdigest()
+```
+
+Используется полный lowercase hexadecimal SHA-256 digest. Identity projection
+содержит только:
+
+- `source_analyzer_id`;
+- `source_analyzer_version`;
+- `group`;
+- `type`;
+- `localization`;
+- `correlation_group`;
+- `duplicate_ordinal`.
+
+В identity projection не входят `description`, `severity`, `source_score`,
+`score_impact`, `critical_override_eligible`, `evidence_refs` и `analysis_id`.
+Канонические байты вычисляются точно следующим способом:
+
+```python
+json.dumps(
+    identity_projection,
+    sort_keys=True,
+    separators=(",", ":"),
+    ensure_ascii=False,
+    allow_nan=False,
+).encode("utf-8")
+```
+
+До назначения `duplicate_ordinal` candidates нормализуются и повторно
+валидируются, затем группируются по одинаковой базовой identity projection без
+ordinal. Внутри группы они сортируются по полному каноническому private candidate
+representation; ordinal является целым числом от `1` до `N`. Обычно он равен
+`1`. Полностью идентичные candidates могут различаться ordinal, поскольку их
+взаимный порядок не несёт дополнительной семантики.
+
+Идентификатор не зависит от порядка завершения analyzer workers и от вставки
+несвязанного finding. Уникальность гарантируется в пределах одного analysis
+result. Будущая persistence может использовать composite key
+`(analysis_id, finding_id)`; `analysis_id` в hash не включается.
 
 ---
 
@@ -1904,7 +1950,7 @@ recommendation, processing или persistence facts последующих эт�
   ],
   "findings": [
     {
-      "finding_id": "finding_0001",
+      "finding_id": "finding_bda1b8994b8d3b65ffc5bdd2c8b1c155aabe0c4865007acfdd0aba11d271506d",
       "group": "multimodal",
       "type": "audio_video_desynchronization",
       "severity": "significant",

@@ -54,8 +54,8 @@ false-positive/challenge и boundary/not-applicable fixtures не являютс
 - Source: <https://github.com/python/cpython>.
 - License: PSF License; <https://docs.python.org/3.12/license.html>.
 
-Конкретные используемые модули должны быть уточнены после фактической реализации
-анализатора.
+Фактически используются `wave`, `array`, `math` и `sys` для потокового чтения и
+расчёта PCM-метрик, а также `hashlib` и `json` для content-addressed `finding_id`.
 
 ### Pillow
 
@@ -106,18 +106,30 @@ Increment 2 до реализации copy-move analyzer.
 
 - `analyzer_id`: `image_metadata_consistency`.
 - `analyzer_version`: `1.0.0`.
+- Implementation status: implemented в Stage 6 Increment 1.
 - Method: deterministic consistency checks доступных image metadata и
   подтверждённых технических параметров.
 - Method source: project-specific heuristic.
-- Implementation source: original FakeDetector implementation.
-- Implementation building block: Pillow; сведения о версии, source и license
-  приведены в разделе «Общие библиотеки и инструменты».
+- Implementation source: original FakeDetector implementation + Pillow; сведения
+  о версии Pillow, source и license приведены в разделе «Общие библиотеки и
+  инструменты».
+- Фактический источник семантики формата: CIPA DC-008-Translation-2026
+  «Exchangeable image file format for digital still cameras: Exif Version 3.1»,
+  §4.6.5.1.6, Table 7, Figures 11–14 и §4.6.6.3.1–2.
+- Официальный источник: https://www.cipa.jp/e/std/std-sec.html.
+- Роль CIPA ограничена нормативной семантикой EXIF tags
+  `PixelXDimension`, `PixelYDimension` и `Orientation`; стандарт не является
+  источником forensic heuristic FakeDetector.
 - Model/weights source: не применяется.
 - Dataset/source: не применяется; используются deterministic generated fixtures.
 - FakeDetector-specific adaptation: правила consistency, applicability,
   bounded metadata handling, candidate findings и их преобразование в `Finding`.
 - Реализуется самим FakeDetector: вся логика consistency и threshold/policy
   interpretation.
+- Фактические implementation building blocks: Pillow `Image.open()`, bounded
+  boolean presence checks, безопасное числовое чтение EXIF dimension/orientation
+  tags и bounded factual publication валидированного `Orientation` без raw
+  metadata blobs или неограниченных строковых значений.
 - Known limitations: отсутствие EXIF или иных естественно необязательных metadata
   само по себе не является finding; metadata могут быть удалены обычным export,
   пересылкой или повторным сохранением. Анализатор не заявляется научно
@@ -127,11 +139,14 @@ Increment 2 до реализации copy-move analyzer.
 
 - `analyzer_id`: `audio_pcm_quality`.
 - `analyzer_version`: `1.0.0`.
+- Implementation status: implemented в Stage 6 Increment 1.
 - Method: peak, RMS, DC offset, silence и full-scale sample ratio как стандартные
   signal metrics, объединённые в bounded техническую эвристику.
 - Method source: project-specific heuristic на основе стандартных signal metrics.
 - Implementation source: original FakeDetector implementation.
 - Implementation building block: Python standard library.
+- Фактические implementation building blocks: `wave` и chunked `readframes()`,
+  `array('h')`, `math` и явная little-endian интерпретация signed 16-bit PCM.
 - Model/weights source: не применяется.
 - Dataset/source: не применяется; используются deterministic generated fixtures.
 - FakeDetector-specific adaptation: bounded PCM processing, applicability,
@@ -148,10 +163,13 @@ Increment 2 до реализации copy-move analyzer.
 
 - `analyzer_id`: `video_sampled_frame_quality`.
 - `analyzer_version`: `1.0.0`.
+- Implementation status: implemented в Stage 6 Increment 1.
 - Method: bounded deterministic comparison подготовленных sampled frames.
 - Method source: project-specific heuristic.
 - Implementation source: original FakeDetector implementation.
-- Implementation building blocks: Pillow и Python `hashlib`.
+- Implementation building block: Pillow; точное сравнение выполняется по
+  декодированным mode, dimensions и pixel bytes двух соседних samples без
+  сравнения compressed PNG byte stream.
 - Model/weights source: не применяется.
 - Dataset/source: не применяется; используются deterministic generated fixtures.
 - FakeDetector-specific adaptation: sampling-scope interpretation, bounded frame
