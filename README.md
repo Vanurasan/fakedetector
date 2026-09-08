@@ -10,9 +10,10 @@ FakeDetector — прототип системы предварительног�
 
 ## Состояние проекта
 
-**Stage 6 — IN_PROGRESS.** Реализация Profile B, production integration и полный
-quality barrier завершены. До формального закрытия остаётся отдельный независимый
-финальный аудит Stage 6.
+**Stage 6 — DONE/CLOSED.** Реализация Profile B, интеграция в рабочий контур и
+формирование нормализованных `Finding` завершены; успешная независимая проверка
+закрытия подтвердила завершение этапа. Следующий этап — Stage 7: полнота, риск и
+рекомендации.
 
 | Stage | Status | Что реализовано или запланировано |
 |---:|---|---|
@@ -21,10 +22,10 @@ quality barrier завершены. До формального закрытия
 | 3 | DONE | Intake, validation и контролируемое владение source |
 | 4 | DONE | Lifecycle задачи, routing, scheduler, workspace и cleanup/recovery |
 | 5 | DONE | Preprocessing image/audio/video и analyzer framework |
-| 6 | IN_PROGRESS | Profile B и Finding production path реализованы; final audit pending |
-| 7 | PLANNED | Полнота анализа, риск и рекомендации |
-| 8 | PLANNED | Итоговый JSON, API и WebUI |
-| 9 | PLANNED | Надёжность, безопасность и сквозные тесты |
+| 6 | DONE | Profile B и рабочий путь Finding реализованы; этап закрыт |
+| 7 | NOT_STARTED | Полнота анализа, риск и рекомендации |
+| 8 | NOT_STARTED | Итоговый JSON, API и WebUI |
+| 9 | NOT_STARTED | Надёжность, безопасность и сквозные тесты |
 
 ## Что уже умеет система
 
@@ -86,11 +87,12 @@ uv run poe server-smoke
 uv run poe check
 ```
 
-## Quality status
+## Статус качества
 
-Stage 6 implementation barrier: **1389 passed, 2 skipped, combined coverage
-89.55%**; statement coverage 92.03%, branch coverage 79.52% и `--cov-branch`
-включён. Независимый final audit Stage 6 ещё не выполнялся.
+Финальная проверка качества Stage 6: **1438 passed, 2 skipped, совокупное
+покрытие 89.78%**; покрытие операторов 92.27%, покрытие ветвей 79.73% и
+`--cov-branch` включён. Независимая проверка закрытия завершена с решением
+`CLOSE_STAGE6_WITH_ACCEPTED_LIMITATION`.
 
 Это зафиксированный результат закрытия этапа, а не гарантированное текущее число
 тестов после будущих изменений.
