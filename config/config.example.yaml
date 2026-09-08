@@ -1,5 +1,5 @@
 # Полный пример канонической конфигурации.
-# Настройки ещё не реализованных модулей пока не используются приложением.
+# Настройки Stage 7/8 пока не используются приложением.
 # Пороги и веса risk_assessment являются проектными примерами
 # и не являются валидированной моделью оценки риска.
 # Скопируйте этот файл в config.yaml и измените под своё окружение.
@@ -77,11 +77,15 @@ analyzers:
     timeout_seconds: 120
     continue_on_error: true
   image:
-    enabled: []
+    enabled:
+      - image_metadata_consistency
+      - image_copy_move_correspondence
   audio:
-    enabled: []
+    enabled:
+      - audio_pcm_quality
   video:
-    enabled: []
+    enabled:
+      - video_sampled_frame_quality
   settings: {}
 
 risk_assessment:

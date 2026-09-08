@@ -172,6 +172,8 @@ def _config(
     continue_on_failure: bool = True,
 ) -> AppConfig:
     raw = yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+    for configured_media_type in MediaType:
+        raw["analyzers"][configured_media_type.value]["enabled"] = []
     raw["analyzers"][media_type.value]["enabled"] = enabled
     raw["analyzers"]["settings"] = settings or {}
     raw["analyzers"]["defaults"]["timeout_seconds"] = 1

@@ -113,9 +113,9 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Текущий этап: Этап 6 — Базовые анализаторы и формирование признаков
 Статус этапа: IN_PROGRESS
-Ближайшее действие: Stage 6 Increment 3 — интеграция в рабочий контур и закрытие этапа
+Ближайшее действие: Stage 6 final independent audit / closure
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–5 завершены; Stage 6 Increment 0–2 = DONE; четыре анализатора Profile B, преобразование Finding и отдельное состояние Stage 6 реализованы; интеграция в рабочий контур и закрытие этапа ещё не выполнены
+Реализация программы: Этапы 1–5 завершены; Stage 6 Increment 0–3 = DONE; implementation Profile B, production integration и full quality barrier завершены; независимый финальный аудит Stage 6 ещё не выполнен
 Документационная база: сформирована
 ```
 
@@ -133,8 +133,8 @@ AFTER_MVP
 
 ### 2.2. Ближайшие три результата
 
-1. Stage 6 Increment 3 завершает интеграцию в рабочий контур и фиксирует
-   фактические требования к ресурсам по результатам контрольного замера.
+1. Независимый финальный аудит закрывает Stage 6 без изменения реализации при
+   отсутствии findings аудита.
 2. Stage 7 формирует полноту, риск и рекомендации без псевдовероятности.
 3. Stage 8 собирает итоговый JSON и внешние границы API/WebUI.
 
@@ -1050,7 +1050,66 @@ ORB-дескрипторы и оценка аффинной модели RANSAC 
 процессе фикстуры. Наблюдение остаётся `weak` и не утверждает подделку переносом
 области изображения.
 
-Ближайшее действие: Stage 6 Increment 3 — интеграция в рабочий контур и закрытие этапа.
+### Increment 3 — production integration, benchmark и полный barrier — DONE
+
+`Stage5ExecutionService`, не меняя `TaskExecutor` и ownership terminal lifecycle,
+после orchestration сверяет возвращённый tuple с опубликованными данными, читает
+detached canonical `AnalyzerResult[]` через authoritative `TaskRegistry`, передаёт
+их `Stage6FindingService` и публикует отдельный `Stage6TaskData` в состоянии
+`RUNNING / ANALYSIS`. Пустой `Finding[]` публикуется как корректное состояние;
+ошибка candidate validation безопасно завершает задачу через существующий
+`internal_error` analysis phase. Новый `ProcessingStage`, public executor,
+schema, persistence или Stage 7 logic не добавлены.
+
+Production composition root создаёт закрытый `AnalyzerRegistry` только из четырёх
+real Profile B registrations и связывает intake, preprocessing, spawned analyzer
+workers, Finding formation, registry и bounded scheduler. Канонический example
+config включает планы в порядке:
+
+```text
+image: image_metadata_consistency → image_copy_move_correspondence
+audio: audio_pcm_quality
+video: video_sampled_frame_quality
+```
+
+Сквозные генерируемые image/audio/video tests подтвердили production composition,
+авторитетное хранение results/findings, пустой результат, `NOT_APPLICABLE`,
+изоляцию `ERROR`, безопасный malformed candidate, неизменный смысл
+`Stage5TaskData`, lifecycle `ANALYSIS` до terminalization и detached reads.
+
+Closure benchmark `uv run python scripts/benchmark_stage6_copy_move.py` выполнен
+2026-09-08 на Windows 11 `10.0.26200`, AMD64, Intel(R) Core(TM) Ultra 7 270K Plus,
+24 logical CPU, 130427.84 MiB total RAM, Python 3.12.10, OpenCV 4.14.0 и NumPy
+2.5.2. В отдельном свежем child process анализировался генерируемый по seed 6003
+feature-rich PNG 4000×3000 (12 000 000 pixels, 3 896 452 bytes) с одной
+скопированной областью 700×700; один warm-up исключён, затем измерены три запуска.
+RAM измерена Win32 `GetProcessMemoryInfo / PeakWorkingSetSize`, включая baseline
+интерпретатора и импортов дочернего процесса.
+
+| Run | Wall, s | CPU, s | Peak working set, MiB | Keypoints | Descriptors | Matches | Clusters | Candidates |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.613 | 0.578 | 161.78 | 5000 | 5000 | 104 | 1 | 2 |
+| 2 | 0.615 | 0.562 | 161.65 | 5000 | 5000 | 104 | 1 | 2 |
+| 3 | 0.622 | 0.578 | 161.66 | 5000 | 5000 | 104 | 1 | 2 |
+
+Итог: median wall `0.615 s`, max wall `0.622 s`, max peak working set
+`161.78 MiB`. Это наблюдение одной reference machine, а не универсальная
+hardware guarantee. Предварительный conservative deployment baseline x86-64 CPU,
+16 GiB RAM, без GPU подтверждён и не понижен по одному локальному замеру. Пределы
+12 MP, 5000 ORB keypoints, 4 clusters и 8 candidates не расширялись; измерение
+дало 1 cluster и 2 candidates, raw pixels/keypoints/descriptors в result не
+публикуются, Stage 5 transport bound и deterministic OpenCV one-thread/OpenCL-off
+policy не изменены.
+
+Full Stage 6 quality barrier пройден после implementation и benchmark: `uv lock
+--check`, Ruff, mypy, pre-commit, CLI/import smoke и `1389 passed, 2 skipped`;
+combined coverage `89.55%`, statement coverage `92.03%`, branch coverage `79.52%`
+при включённом `--cov-branch`. Исторические 19 formatter discrepancies остались
+тем же не затронутым Stage 6 debt, все изменённые Python-файлы format-clean.
+Stage 6 остаётся `IN_PROGRESS`: implementation завершена, но независимый
+финальный аудит и формальное closure выполняются отдельным следующим increment.
+
+Ближайшее действие: Stage 6 final independent audit / closure.
 
 ## Рекомендуемый минимальный принцип выбора
 

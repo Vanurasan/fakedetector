@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from copy import copy
 from dataclasses import FrozenInstanceError, fields
 from datetime import UTC, datetime, timedelta
@@ -139,6 +139,7 @@ class _RecordingRegistry(TaskRegistry):
     def __init__(self) -> None:
         super().__init__()
         self.stage5_events: list[str] = []
+        self.stage6_publication_stages: list[ProcessingStage] = []
 
     def publish_stage5_prepared(
         self,
@@ -159,6 +160,14 @@ class _RecordingRegistry(TaskRegistry):
     ) -> None:
         super().append_stage5_analyzer_result(task, result)
         self.stage5_events.append(f"result:{result.analyzer_id}")
+
+    def publish_stage6_findings(
+        self,
+        task: AnalysisTask,
+        findings: Sequence[Finding],
+    ) -> None:
+        self.stage6_publication_stages.append(task.context.stage)
+        super().publish_stage6_findings(task, findings)
 
 
 class _SnapshotBoundTestComponent:
@@ -397,6 +406,33 @@ class _LockProbeOrchestrator(_SnapshotBoundTestComponent):
         return ()
 
 
+class _InjectedResultOrchestrator(_SnapshotBoundTestComponent):
+    def __init__(self, results: tuple[AnalyzerResult, ...]) -> None:
+        super().__init__()
+        self._results = results
+
+    def preprocessing_requirements(self, media_type: MediaType) -> PreprocessingRequirements:
+        del media_type
+        return PreprocessingRequirements()
+
+    def execute(
+        self,
+        prepared_media: PreparedMedia,
+        validated_file: ValidatedFileDescriptor,
+        artifact_registry: WorkspaceArtifactRegistry,
+        *,
+        remaining_timeout_seconds: Callable[[], float] | None = None,
+        result_callback: Callable[[AnalyzerResult], None] | None = None,
+    ) -> tuple[AnalyzerResult, ...]:
+        del prepared_media, validated_file, artifact_registry
+        assert remaining_timeout_seconds is not None
+        assert result_callback is not None
+        for result in self._results:
+            remaining_timeout_seconds()
+            result_callback(result)
+        return self._results
+
+
 def _config(
     root: Path,
     *,
@@ -512,6 +548,7 @@ def _service(
         registry=registry,
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=orchestrator,
+        finding_service=Stage6FindingService(),
         monotonic=monotonic,
     )
 
@@ -643,6 +680,7 @@ def test_integrated_stage3_stage4_stage5_production_path(
         orchestrator=AnalyzerOrchestrator(
             AnalyzerRegistry(config, _framework_test_registrations())
         ),
+        finding_service=Stage6FindingService(),
     )
     receiver = Stage4TaskReceiver(
         config=config,
@@ -847,6 +885,125 @@ def _stage6_source_result() -> AnalyzerResult:
         warnings=[],
         errors=[],
     )
+
+
+def _stage6_error_result() -> AnalyzerResult:
+    return AnalyzerResult(
+        analyzer_id="image_copy_move_correspondence",
+        analyzer_version="1.0.0",
+        media_type=MediaType.IMAGE,
+        group="content",
+        status=AnalyzerStatus.ERROR,
+        applicable=True,
+        started_at=None,
+        finished_at=None,
+        duration_ms=1,
+        score=None,
+        score_name=None,
+        summary="Analyzer failed safely.",
+        raw_metrics={},
+        candidate_findings=[],
+        warnings=[],
+        errors=[
+            ErrorDetail(
+                code="analyzer_error",
+                category="analyzer",
+                message="Analyzer failed safely.",
+                retryable=True,
+                analyzer_id="image_copy_move_correspondence",
+            )
+        ],
+    )
+
+
+def test_stage5_execution_forms_and_publishes_findings_from_authoritative_results(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "temp"
+    config = _config(root)
+    registry = _RecordingRegistry()
+    task, _ = _claimed_task(root, config, registry=registry)
+    successful = _stage6_source_result()
+    failed = _stage6_error_result()
+    orchestrator = _InjectedResultOrchestrator((successful, failed))
+    orchestrator._bind_config(config)
+    preprocessing = _RecordingPreprocessing(create_artifact=True)
+    preprocessing._bind_config(config)
+    service = Stage5ExecutionService(
+        config=config,
+        registry=registry,
+        preprocessing=cast(PreprocessingDispatcher, preprocessing),
+        orchestrator=cast(AnalyzerOrchestrator, orchestrator),
+        finding_service=Stage6FindingService(),
+        monotonic=_ManualMonotonic(),
+    )
+
+    outcome = service.execute(task)
+
+    assert outcome == TaskExecutionOutcome.completed()
+    assert registry._read_stage5_analyzer_results(task) == (successful, failed)
+    assert registry.stage6_publication_stages == [ProcessingStage.ANALYSIS]
+    findings = registry._read_stage6_findings(task)
+    assert len(findings) == 1
+    assert findings[0].source_analyzer_id == successful.analyzer_id
+    assert all(finding.source_analyzer_id != failed.analyzer_id for finding in findings)
+    assert task.stage5_data is not None
+    assert [field.name for field in fields(Stage5TaskData)] == [
+        "prepared_media",
+        "analyzer_results",
+    ]
+    _cleanup_task(task)
+
+
+def test_malformed_trusted_candidate_causes_safe_analysis_failure(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "temp"
+    config = _config(root)
+    registry = _RecordingRegistry()
+    task, _ = _claimed_task(root, config, registry=registry)
+    malformed = _stage6_source_result()
+    malformed.candidate_findings[0] = {
+        "type": "image_metadata_dimension_mismatch",
+        "localization": {
+            "type": "bounding_box",
+            "x": -1,
+            "y": 0,
+            "width": 1,
+            "height": 1,
+            "coordinate_space": "normalized",
+        },
+        "correlation_group": "private payload must not escape",
+        "evidence_refs": [],
+    }
+    orchestrator = _InjectedResultOrchestrator((malformed,))
+    orchestrator._bind_config(config)
+    preprocessing = _RecordingPreprocessing(create_artifact=True)
+    preprocessing._bind_config(config)
+    service = Stage5ExecutionService(
+        config=config,
+        registry=registry,
+        preprocessing=cast(PreprocessingDispatcher, preprocessing),
+        orchestrator=cast(AnalyzerOrchestrator, orchestrator),
+        finding_service=Stage6FindingService(),
+        monotonic=_ManualMonotonic(),
+    )
+
+    final = Stage4TaskProcessor(
+        config=config,
+        clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
+        registry=registry,
+    ).execute_claimed(task, service)
+
+    assert final.status is AnalysisStatus.FAILED
+    assert final.stage is ProcessingStage.FINISHED
+    assert len(final.errors) == 1
+    assert final.errors[0].code == "internal_error"
+    assert final.errors[0].category == "internal"
+    assert task.errors[0].safe_details == {"phase": "analysis"}
+    assert "private payload" not in repr(final)
+    assert task.stage6_data is None
+    assert task.accepted_source.is_released
 
 
 def test_stage6_sibling_state_uses_canonical_bytes_and_detached_reads(tmp_path: Path) -> None:
@@ -1340,6 +1497,7 @@ def test_equal_distinct_configs_share_one_stage5_snapshot_identity(
         orchestrator=AnalyzerOrchestrator(
             AnalyzerRegistry(registry_config, _framework_test_registrations())
         ),
+        finding_service=Stage6FindingService(),
     )
 
     assert service._config_snapshot.snapshot_id == config_snapshot_fingerprint(config)
@@ -1360,6 +1518,7 @@ def test_stage5_constructor_rejects_mixed_dispatcher_snapshot(
             orchestrator=AnalyzerOrchestrator(
                 AnalyzerRegistry(config, _framework_test_registrations())
             ),
+            finding_service=Stage6FindingService(),
         )
 
 
@@ -1378,6 +1537,7 @@ def test_stage5_constructor_rejects_mixed_analyzer_snapshot(
             orchestrator=AnalyzerOrchestrator(
                 AnalyzerRegistry(different, _framework_test_registrations())
             ),
+            finding_service=Stage6FindingService(),
         )
 
 
@@ -1955,6 +2115,7 @@ def test_stage5_runs_filesystem_and_analyzer_work_without_registry_lock(
         registry=registry,
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=cast(AnalyzerOrchestrator, orchestrator),
+        finding_service=Stage6FindingService(),
         monotonic=_ManualMonotonic(),
     )
 

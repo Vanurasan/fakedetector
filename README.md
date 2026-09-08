@@ -10,10 +10,9 @@ FakeDetector — прототип системы предварительног�
 
 ## Состояние проекта
 
-**Stage 5 — DONE.** Реализованы предварительная обработка всех поддерживаемых
-типов медиа и каркас выполнения анализаторов.
-
-**Следующий этап: Stage 6 — реальные MVP analyzers.** Он ещё не начат.
+**Stage 6 — IN_PROGRESS.** Реализация Profile B, production integration и полный
+quality barrier завершены. До формального закрытия остаётся отдельный независимый
+финальный аудит Stage 6.
 
 | Stage | Status | Что реализовано или запланировано |
 |---:|---|---|
@@ -22,7 +21,7 @@ FakeDetector — прототип системы предварительног�
 | 3 | DONE | Intake, validation и контролируемое владение source |
 | 4 | DONE | Lifecycle задачи, routing, scheduler, workspace и cleanup/recovery |
 | 5 | DONE | Preprocessing image/audio/video и analyzer framework |
-| 6 | NEXT | Базовые реальные анализаторы и формирование признаков |
+| 6 | IN_PROGRESS | Profile B и Finding production path реализованы; final audit pending |
 | 7 | PLANNED | Полнота анализа, риск и рекомендации |
 | 8 | PLANNED | Итоговый JSON, API и WebUI |
 | 9 | PLANNED | Надёжность, безопасность и сквозные тесты |
@@ -44,24 +43,25 @@ FakeDetector — прототип системы предварительног�
   `AnalyzerResult`.
 - Применять детерминированную политику выполнения и хранить внутреннее состояние
   Stage 5 в неизменяемом виде.
+- Выполнять четыре CPU-only анализатора Profile B для image/audio/video и
+  преобразовывать authoritative `AnalyzerResult` в нормализованные weak `Finding`
+  с отдельным immutable Stage 6 task state.
 
 ## Что пока не реализовано
 
-- Реальные MVP/production analyzers: Stage 5 проверен только внутренними
-  fake/test analyzers без forensic-возможностей.
-- Формирование `Finding`, расчёт полноты и риска, а также рекомендации.
+- Расчёт полноты и риска, а также рекомендации.
 - Сборка и persistence итогового результата, публичный upload API и Web UI.
 - Production deployment и эксплуатационный hardening.
 
 ## Общая схема pipeline
 
 ```text
-РЕАЛИЗОВАНО — STAGES 1–5
-Input → Validation → Task lifecycle → Preprocessing → Analyzer framework
+РЕАЛИЗОВАНО — STAGES 1–6
+Input → Validation → Task lifecycle → Preprocessing
+→ Profile B analyzers → Finding formation
 
 ДАЛЕЕ
-Real analyzers (Stage 6)
-→ Risk / completeness / recommendation (Stage 7)
+Risk / completeness / recommendation (Stage 7)
 → Result / persistence / API / Web UI (Stage 8)
 → Hardening и end-to-end verification (Stage 9)
 ```
@@ -88,9 +88,9 @@ uv run poe check
 
 ## Quality status
 
-Stage 5 прошёл полный набор проверок, итоговый аудит закрытия и Architecture
-Truth Review. Контрольная точка на момент закрытия Stage 5: **1313 passed, 2
-skipped, coverage 89.76%**; branch coverage включён.
+Stage 6 implementation barrier: **1389 passed, 2 skipped, combined coverage
+89.55%**; statement coverage 92.03%, branch coverage 79.52% и `--cov-branch`
+включён. Независимый final audit Stage 6 ещё не выполнялся.
 
 Это зафиксированный результат закрытия этапа, а не гарантированное текущее число
 тестов после будущих изменений.

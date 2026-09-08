@@ -344,6 +344,32 @@ YYYY-MM-DD
 
 ### Added
 
+- **[Stage 6/Increment 3] Finding formation подключена к production lifecycle.**
+  После analyzer orchestration execution service сверяет публикацию, читает
+  detached canonical `AnalyzerResult[]` из authoritative `TaskRegistry`, формирует
+  findings и публикует отдельный `Stage6TaskData` до normal terminalization.
+  Пустой `Finding[]` является успешным опубликованным состоянием, а malformed
+  trusted candidate безопасно даёт task-level `internal_error` без раскрытия
+  payload, exception или пути. `TaskExecutor`, `Stage5TaskData`, cleanup ownership,
+  public schema и набор `ProcessingStage` не изменены.
+- **[Stage 6/Production composition] Profile B активирован в рабочей сборке.**
+  Production composition использует только четыре explicit trusted registrations;
+  canonical config включает `image_metadata_consistency` и
+  `image_copy_move_correspondence` для image, `audio_pcm_quality` для audio и
+  `video_sampled_frame_quality` для video в детерминированном порядке. Generated
+  end-to-end image/audio/video tests подтверждают intake, preprocessing, spawned
+  workers, authoritative results, Finding formation, sibling state и terminal
+  detached reads; framework analyzers остаются только тестовыми.
+- **[Stage 6/Benchmark] Выполнен воспроизводимый closure benchmark 12 MP.** На
+  Windows 11 / AMD64 / Intel(R) Core(TM) Ultra 7 270K Plus / 24 logical CPU /
+  130427.84 MiB RAM, Python 3.12.10, OpenCV 4.14.0 и NumPy 2.5.2 три изолированных
+  запуска после warm-up дали wall `0.613/0.615/0.622 s`, CPU
+  `0.578/0.562/0.578 s`, max Win32 PeakWorkingSetSize `161.78 MiB`, по 5000
+  keypoints/descriptors, 104 matches, 1 accepted cluster и 2 candidates.
+  Conservative baseline x86-64 CPU / 16 GiB RAM / no GPU подтверждён как
+  эксплуатационный ориентир одной measured machine, не как универсальная гарантия.
+  Utility: `uv run python scripts/benchmark_stage6_copy_move.py`.
+
 - **[Stage 6/Increment 2] Реализован `image_copy_move_correspondence` `1.0.0`.**
   Анализатор использует только существующее нормализованное изображение RGB/RGBA
   в PNG, а OpenCV ORB и RANSAC — как компоненты ограниченной проектной эвристики.
@@ -365,6 +391,16 @@ YYYY-MM-DD
   применимости по размеру, ограничения настроек и ресурсов, проверка ложного
   срабатывания, повторяемость идентичности и настоящий транспорт через порождённый
   рабочий процесс закрепляют семантику слабого наблюдения без утверждения о подделке.
+
+### Changed
+
+- **[Stage 6/Status] Increment 3 и полный implementation barrier завершены.**
+  Реализация Stage 6 complete, но этап остаётся `IN_PROGRESS` до отдельного
+  independent final audit / closure; audit PASS этой записью не утверждается.
+  Финальный barrier: `1389 passed, 2 skipped`, combined coverage `89.55%`,
+  statement coverage `92.03%`, branch coverage `79.52%`; uv lock, Ruff, mypy,
+  pre-commit и CLI/import smoke прошли. Состав исторических 19 formatter
+  discrepancies не изменён, новые и затронутые файлы format-clean.
 
 ### 2026-09-07
 
