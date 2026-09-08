@@ -20,8 +20,10 @@ from fakedetector.analyzers._catalog import (
 from fakedetector.analyzers._image_copy_move import (
     ImageCopyMoveCorrespondenceAnalyzer,
     ImageCopyMoveCorrespondenceSettings,
+    _Correspondence,
     _duplicate_pair,
     _FeatureSet,
+    _geometric_region_pairs,
     _PixelBox,
     _RegionPair,
     _self_correspondences,
@@ -88,6 +90,13 @@ def _repeating_ui_pixels() -> np.ndarray:
             cv2.LINE_AA,
         )
     return canvas
+
+
+def _high_tie_repeating_pixels() -> tuple[np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(42)
+    tile = rng.integers(0, 256, size=(32, 32), dtype=np.uint8)
+    grayscale = np.tile(tile, (32, 32))
+    return np.repeat(grayscale[:, :, np.newaxis], 3, axis=2), grayscale
 
 
 def _request(
@@ -363,6 +372,76 @@ def test_close_duplicate_region_pairs_are_suppressed_by_both_regions() -> None:
     assert not _duplicate_pair(different_second_region, original)
 
 
+def test_duplicate_region_pair_suppression_is_invariant_to_pair_orientation() -> None:
+    existing = _RegionPair(
+        first=_PixelBox(10, 20, 40, 30),
+        second=_PixelBox(11, 120, 40, 30),
+    )
+    cross_order_duplicate = _RegionPair(
+        first=_PixelBox(9, 122, 40, 30),
+        second=_PixelBox(12, 22, 40, 30),
+    )
+
+    assert _duplicate_pair(cross_order_duplicate, existing)
+    assert _duplicate_pair(existing, cross_order_duplicate)
+
+
+def test_geometric_clustering_suppresses_one_cross_order_unordered_pair() -> None:
+    offsets = tuple((x, y) for y in (0.0, 15.0, 30.0) for x in (0.0, 13.0, 27.0, 40.0))
+    existing = tuple(
+        _Correspondence(
+            first=(10.0 + x, 20.0 + y),
+            second=(11.0 + x, 120.0 + y),
+            distance=1.0,
+        )
+        for x, y in offsets
+    )
+    cross_order_duplicate = tuple(
+        _Correspondence(
+            first=(9.0 + x, 122.0 + y),
+            second=(12.0 + x, 22.0 + y),
+            distance=1.0,
+        )
+        for x, y in offsets
+    )
+    settings = ImageCopyMoveCorrespondenceSettings()
+
+    first_run = _geometric_region_pairs(existing + cross_order_duplicate, settings)
+    second_run = _geometric_region_pairs(existing + cross_order_duplicate, settings)
+
+    assert first_run == second_run
+    assert first_run[1].geometric_cluster_count == 2
+    assert len(first_run[0]) == 1
+
+
+def test_geometric_clustering_preserves_legitimate_separate_region_pairs() -> None:
+    offsets = tuple((x, y) for y in (0.0, 15.0, 30.0) for x in (0.0, 13.0, 27.0, 40.0))
+    first_pair = tuple(
+        _Correspondence(
+            first=(10.0 + x, 20.0 + y),
+            second=(11.0 + x, 120.0 + y),
+            distance=1.0,
+        )
+        for x, y in offsets
+    )
+    separate_pair = tuple(
+        _Correspondence(
+            first=(200.0 + x, 20.0 + y),
+            second=(300.0 + x, 120.0 + y),
+            distance=1.0,
+        )
+        for x, y in offsets
+    )
+
+    pairs, metrics = _geometric_region_pairs(
+        first_pair + separate_pair,
+        ImageCopyMoveCorrespondenceSettings(),
+    )
+
+    assert metrics.geometric_cluster_count == 2
+    assert len(pairs) == 2
+
+
 def test_fully_transparent_rgb_values_do_not_create_features(tmp_path: Path) -> None:
     path = tmp_path / "transparent.png"
     rng = np.random.default_rng(723)
@@ -421,6 +500,66 @@ def test_copy_move_output_is_bounded_and_contains_no_feature_payload(tmp_path: P
     payload = result.model_dump(mode="json", warnings="error")
     forbidden = {"descriptors", "keypoints", "matches", "pixels"}
     assert forbidden.isdisjoint(cast(dict[str, object], payload["raw_metrics"]))
+
+
+def test_orb_tied_response_overflow_is_capped_before_matching_and_repeatable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "high-tie-repeating.png"
+    pixels, grayscale = _high_tie_repeating_pixels()
+    _save_array(path, pixels)
+    settings = ImageCopyMoveCorrespondenceSettings()
+    raw_keypoints, raw_descriptors = cv2.ORB_create(
+        nfeatures=settings.max_keypoints
+    ).detectAndCompute(grayscale, None)
+    assert len(raw_keypoints) > settings.max_keypoints
+    assert raw_descriptors is not None
+    assert len(raw_descriptors) > settings.max_keypoints
+
+    descriptor_counts: list[tuple[int, int]] = []
+    original_matcher = cv2.BFMatcher
+
+    class RecordingMatcher:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self._delegate = original_matcher(*args, **kwargs)
+
+        def __getattr__(self, name: str) -> object:
+            if name == "knnMatch":
+                return self._knn_match
+            return getattr(self._delegate, name)
+
+        def _knn_match(
+            self,
+            query_descriptors: np.ndarray,
+            train_descriptors: np.ndarray,
+            *,
+            k: int,
+        ) -> object:
+            descriptor_counts.append((len(query_descriptors), len(train_descriptors)))
+            return self._delegate.knnMatch(query_descriptors, train_descriptors, k=k)
+
+    monkeypatch.setattr(cv2, "BFMatcher", RecordingMatcher)
+
+    results = [_analyze(path, settings=settings) for _ in range(2)]
+
+    assert results[1] == results[0]
+    assert all(result.status is AnalyzerStatus.COMPLETED for result in results)
+    assert all(
+        cast(int, result.raw_metrics["keypoint_count"]) <= settings.max_keypoints
+        for result in results
+    )
+    assert all(
+        cast(int, result.raw_metrics["descriptor_count"]) <= settings.max_keypoints
+        for result in results
+    )
+    assert all(result.raw_metrics["analysis_capped"] is True for result in results)
+    assert descriptor_counts == [(settings.max_keypoints, settings.max_keypoints)] * 2
+    assert all(len(result.candidate_findings) <= 8 for result in results)
+    assert all(
+        len(_serialize_stage5_analyzer_result(result)) <= _MAX_STAGE5_ANALYZER_RESULT_BYTES
+        for result in results
+    )
 
 
 def test_positive_output_and_finding_identity_are_repeatable(tmp_path: Path) -> None:

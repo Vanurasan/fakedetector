@@ -121,15 +121,28 @@ def _save_image(
     *,
     size: tuple[int, int] = (8, 6),
     embedded_size: tuple[int, int] | None = None,
+    nested_embedded_size: tuple[int, int] | None = None,
+    fallback_size: tuple[int, int] | None = None,
     orientation: int | None = None,
     software: str | None = None,
 ) -> None:
     image = Image.new("RGB", size, (20, 40, 60))
     kwargs: dict[str, object] = {}
-    if embedded_size is not None or orientation is not None or software is not None:
+    if (
+        embedded_size is not None
+        or nested_embedded_size is not None
+        or fallback_size is not None
+        or orientation is not None
+        or software is not None
+    ):
         exif = Image.Exif()
         if embedded_size is not None:
             exif[0xA002], exif[0xA003] = embedded_size
+        if nested_embedded_size is not None:
+            nested = exif.get_ifd(0x8769)
+            nested[0xA002], nested[0xA003] = nested_embedded_size
+        if fallback_size is not None:
+            exif[0x0100], exif[0x0101] = fallback_size
         if orientation is not None:
             exif[0x0112] = orientation
         if software is not None:
@@ -231,6 +244,73 @@ def test_image_analyzer_emits_only_confirmed_dimension_mismatch(tmp_path: Path) 
             "evidence_refs": [],
         }
     ]
+
+
+def test_image_analyzer_uses_nested_primary_dimensions_when_fallback_agrees(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "primary-and-fallback-agree.jpg"
+    _save_image(source, nested_embedded_size=(8, 6), fallback_size=(8, 6))
+
+    result = _image_result(source)
+
+    assert result.raw_metrics["embedded_pixel_width"] == 8
+    assert result.raw_metrics["embedded_pixel_height"] == 6
+    assert result.raw_metrics["embedded_dimensions_consistent"] is True
+    assert result.candidate_findings == []
+
+
+def test_image_analyzer_primary_conflict_outranks_agreeing_fallback(tmp_path: Path) -> None:
+    source = tmp_path / "primary-conflicts.jpg"
+    _save_image(source, nested_embedded_size=(9, 6), fallback_size=(8, 6))
+
+    result = _image_result(source)
+
+    assert result.raw_metrics["embedded_pixel_width"] == 9
+    assert result.raw_metrics["embedded_pixel_height"] == 6
+    assert result.raw_metrics["embedded_dimensions_consistent"] is False
+    assert result.candidate_findings[0]["type"] == "image_metadata_dimension_mismatch"
+
+
+def test_image_analyzer_primary_agreement_outranks_conflicting_fallback(tmp_path: Path) -> None:
+    source = tmp_path / "fallback-conflicts.jpg"
+    _save_image(source, nested_embedded_size=(8, 6), fallback_size=(9, 6))
+
+    result = _image_result(source)
+
+    assert result.raw_metrics["embedded_pixel_width"] == 8
+    assert result.raw_metrics["embedded_pixel_height"] == 6
+    assert result.raw_metrics["embedded_dimensions_consistent"] is True
+    assert result.candidate_findings == []
+
+
+def test_image_analyzer_uses_fallback_dimensions_only_when_primary_is_absent(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "fallback-only.jpg"
+    _save_image(source, fallback_size=(8, 6))
+
+    result = _image_result(source)
+
+    assert result.raw_metrics["embedded_pixel_width"] == 8
+    assert result.raw_metrics["embedded_pixel_height"] == 6
+    assert result.raw_metrics["embedded_dimensions_consistent"] is True
+    assert result.candidate_findings == []
+
+
+def test_image_analyzer_does_not_hide_invalid_primary_with_valid_fallback(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "invalid-primary.jpg"
+    _save_image(source, nested_embedded_size=(0, 6), fallback_size=(8, 6))
+
+    result = _image_result(source)
+
+    assert result.raw_metrics["embedded_pixel_width"] is None
+    assert result.raw_metrics["embedded_pixel_height"] == 6
+    assert result.raw_metrics["embedded_dimensions_available"] is False
+    assert result.raw_metrics["embedded_dimensions_consistent"] is None
+    assert result.candidate_findings == []
 
 
 def test_image_software_and_long_xmp_values_do_not_leak_or_form_findings(

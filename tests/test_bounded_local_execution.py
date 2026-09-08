@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
+import sys
 from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from threading import Barrier, Event, Lock, Thread, get_ident
+from threading import enumerate as enumerate_threads
+from types import FrameType
 
 import pytest
 
+import fakedetector.lifecycle.scheduler as scheduler_module
+from fakedetector.app import create_app
 from fakedetector.config.models import AppConfig
 from fakedetector.core import AuthoritativeLifecycleClock, Clock, UtcClock
 from fakedetector.domain import (
@@ -249,6 +255,60 @@ class CommitGateScheduler(BoundedLocalScheduler):
         self.commit_entered.set()
         assert self.allow_commit.wait(5)
         super().commit(analysis_id)
+
+
+def install_scheduler_start_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: BaseException,
+    *,
+    start_before_failure: bool = False,
+    joined: list[Thread] | None = None,
+) -> list[Thread]:
+    real_thread = Thread
+    created: list[Thread] = []
+    start_count = 0
+
+    def thread_factory(*args: object, **kwargs: object) -> Thread:
+        thread = real_thread(*args, **kwargs)
+        real_start = thread.start
+
+        def controlled_start() -> None:
+            nonlocal start_count
+            start_count += 1
+            if start_count == 2:
+                if start_before_failure:
+                    real_start()
+                    assert thread.ident is not None
+                raise failure
+            real_start()
+
+        real_join = thread.join
+
+        def controlled_join(timeout: float | None = None) -> None:
+            if joined is not None:
+                joined.append(thread)
+            real_join(timeout)
+
+        thread.start = controlled_start
+        thread.join = controlled_join
+        created.append(thread)
+        return thread
+
+    monkeypatch.setattr(scheduler_module, "Thread", thread_factory)
+    return created
+
+
+def stop_scheduler_test_threads(
+    scheduler: BoundedLocalScheduler,
+    created: list[Thread],
+) -> None:
+    if any(thread.is_alive() for thread in created):
+        with scheduler._condition:
+            scheduler._state = scheduler_module._SchedulerState.STOPPED
+            scheduler._condition.notify_all()
+        for thread in created:
+            if thread.ident is not None:
+                thread.join(5)
 
 
 def make_config(
@@ -877,6 +937,194 @@ def test_scheduler_lifecycle_operations_are_deterministic_and_unavailable_before
         scheduler.shutdown()
     with pytest.raises(SchedulerStateError):
         scheduler.start()
+
+
+def test_scheduler_ordinary_partial_start_failure_joins_started_threads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _config, _registry, scheduler, _receiver = make_runtime(
+        tmp_path / "temp",
+        RecordingExecutor(),
+    )
+    joined: list[Thread] = []
+    created = install_scheduler_start_failure(
+        monkeypatch,
+        RuntimeError("private startup"),
+        joined=joined,
+    )
+
+    try:
+        with pytest.raises(SchedulerStateError):
+            scheduler.start()
+
+        assert created[0].ident is not None
+        assert created[0] in joined
+        assert created[1] not in joined
+        assert all(not thread.is_alive() for thread in created)
+        assert scheduler.is_stopped
+        assert scheduler._threads == []
+        assert not any(thread.name.startswith("stage4-") for thread in enumerate_threads())
+    finally:
+        stop_scheduler_test_threads(scheduler, created)
+
+
+def test_scheduler_interrupted_partial_start_preserves_exception_and_joins_threads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _config, _registry, scheduler, _receiver = make_runtime(
+        tmp_path / "temp",
+        RecordingExecutor(),
+    )
+    interruption = KeyboardInterrupt("scheduler startup interrupted")
+    joined: list[Thread] = []
+    created = install_scheduler_start_failure(
+        monkeypatch,
+        interruption,
+        joined=joined,
+    )
+
+    try:
+        with pytest.raises(KeyboardInterrupt) as captured:
+            scheduler.start()
+
+        assert captured.value is interruption
+        assert created[0].ident is not None
+        assert created[0] in joined
+        assert created[1] not in joined
+        assert all(not thread.is_alive() for thread in created)
+        assert scheduler.is_stopped
+        assert scheduler._threads == []
+        assert not any(thread.name.startswith("stage4-") for thread in enumerate_threads())
+    finally:
+        stop_scheduler_test_threads(scheduler, created)
+
+
+def test_scheduler_started_then_interrupted_thread_is_explicitly_joined(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _config, _registry, scheduler, _receiver = make_runtime(
+        tmp_path / "temp",
+        RecordingExecutor(),
+    )
+    interruption = KeyboardInterrupt("scheduler startup interrupted after start")
+    joined: list[Thread] = []
+    created = install_scheduler_start_failure(
+        monkeypatch,
+        interruption,
+        start_before_failure=True,
+        joined=joined,
+    )
+
+    try:
+        with pytest.raises(KeyboardInterrupt) as captured:
+            scheduler.start()
+
+        assert captured.value is interruption
+        assert created[1].ident is not None
+        assert created[1] in joined
+        assert all(thread in joined for thread in created if thread.ident is not None)
+        assert all(not thread.is_alive() for thread in created)
+        assert scheduler.is_stopped
+        assert scheduler._threads == []
+        assert not any(thread.name.startswith("stage4-") for thread in enumerate_threads())
+    finally:
+        stop_scheduler_test_threads(scheduler, created)
+
+
+def test_scheduler_interruption_after_start_return_joins_preowned_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _config, _registry, scheduler, _receiver = make_runtime(
+        tmp_path / "temp",
+        RecordingExecutor(),
+    )
+    interruption = KeyboardInterrupt("scheduler interrupted after start returned")
+    real_thread = Thread
+    created: list[Thread] = []
+    joined: list[Thread] = []
+    start_returned = False
+
+    def thread_factory(*args: object, **kwargs: object) -> Thread:
+        thread = real_thread(*args, **kwargs)
+        real_start = thread.start
+        real_join = thread.join
+
+        def controlled_start() -> None:
+            nonlocal start_returned
+            real_start()
+            start_returned = True
+
+        def controlled_join(timeout: float | None = None) -> None:
+            joined.append(thread)
+            real_join(timeout)
+
+        thread.start = controlled_start
+        thread.join = controlled_join
+        created.append(thread)
+        return thread
+
+    def interrupt_scheduler_after_return(
+        frame: FrameType,
+        event: str,
+        _arg: object,
+    ) -> Callable[..., object] | None:
+        if (
+            start_returned
+            and event == "line"
+            and frame.f_code is BoundedLocalScheduler.start.__code__
+        ):
+            raise interruption
+        return interrupt_scheduler_after_return
+
+    monkeypatch.setattr(scheduler_module, "Thread", thread_factory)
+    previous_trace = sys.gettrace()
+    sys.settrace(interrupt_scheduler_after_return)
+    try:
+        with pytest.raises(KeyboardInterrupt) as captured:
+            scheduler.start()
+
+        assert start_returned
+        assert captured.value is interruption
+        assert created[0].ident is not None
+        assert created[0] in joined
+        assert all(thread not in joined for thread in created[1:])
+        assert all(not thread.is_alive() for thread in created)
+        assert scheduler.is_stopped
+        assert scheduler._threads == []
+        assert not any(thread.name.startswith("stage4-") for thread in enumerate_threads())
+    finally:
+        sys.settrace(previous_trace)
+        stop_scheduler_test_threads(scheduler, created)
+
+
+def test_production_lifespan_interrupted_start_leaves_no_partial_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    interruption = KeyboardInterrupt("production scheduler startup interrupted")
+    created = install_scheduler_start_failure(monkeypatch, interruption)
+    app = create_app(make_config(tmp_path / "temp"))
+    scheduler = app.state.runtime.scheduler
+
+    async def run_lifespan() -> None:
+        async with app.router.lifespan_context(app):
+            raise AssertionError("lifespan body must not run after failed startup")
+
+    try:
+        with pytest.raises(KeyboardInterrupt) as captured:
+            asyncio.run(run_lifespan())
+
+        assert captured.value is interruption
+        assert scheduler.is_stopped
+        assert scheduler._threads == []
+        assert all(not thread.is_alive() for thread in created)
+        assert not any(thread.name.startswith("stage4-") for thread in enumerate_threads())
+    finally:
+        stop_scheduler_test_threads(scheduler, created)
 
 
 def test_worker_base_exception_is_cleaned_and_reraised_at_controlled_shutdown(

@@ -147,16 +147,16 @@ class ImageMetadataConsistencyAnalyzer:
 
 
 def _exif_value(exif: Image.Exif, *tags: int) -> object:
-    for tag in tags:
-        value = exif.get(tag)
-        if value is not None:
-            return value
+    nested: dict[int, object] | None = None
     with suppress(AttributeError, KeyError, TypeError, ValueError):
         nested = exif.get_ifd(0x8769)
-        for tag in tags:
-            value = nested.get(tag)
-            if value is not None:
-                return value
+    for tag in tags:
+        if tag in exif:
+            return exif.get(tag)
+        if nested is None:
+            return None
+        if tag in nested:
+            return nested.get(tag)
     return None
 
 

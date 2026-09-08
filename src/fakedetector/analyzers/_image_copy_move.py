@@ -144,7 +144,11 @@ class ImageCopyMoveCorrespondenceAnalyzer:
         cv2.ocl.setUseOpenCL(False)
         orb = cv2.ORB.create(nfeatures=settings.max_keypoints)
         keypoints, descriptors = orb.detectAndCompute(grayscale, mask)
-        feature_set = _ordered_features(keypoints, descriptors)
+        feature_set = _ordered_features(
+            keypoints,
+            descriptors,
+            max_features=settings.max_keypoints,
+        )
         keypoint_count = len(feature_set.points)
         descriptor_count = len(feature_set.descriptors)
         spatial_separation = max(
@@ -261,6 +265,8 @@ def _decode_normalized(
 def _ordered_features(
     keypoints: Sequence[cv2.KeyPoint],
     descriptors: object,
+    *,
+    max_features: int,
 ) -> _FeatureSet:
     if descriptors is None or not keypoints:
         return _FeatureSet(
@@ -284,7 +290,7 @@ def _ordered_features(
             keypoints[index].class_id,
             descriptor_array[index].tobytes(),
         ),
-    )
+    )[:max_features]
     return _FeatureSet(
         points=np.asarray([keypoints[index].pt for index in order], dtype=np.float32),
         descriptors=np.ascontiguousarray(descriptor_array[order], dtype=np.uint8),
@@ -430,10 +436,15 @@ def _bounding_box(points: tuple[tuple[float, float], ...]) -> _PixelBox | None:
 
 
 def _duplicate_pair(candidate: _RegionPair, existing: _RegionPair) -> bool:
-    return (
+    direct = (
         _intersection_over_union(candidate.first, existing.first) >= _DUPLICATE_REGION_IOU
         and _intersection_over_union(candidate.second, existing.second) >= _DUPLICATE_REGION_IOU
     )
+    cross = (
+        _intersection_over_union(candidate.first, existing.second) >= _DUPLICATE_REGION_IOU
+        and _intersection_over_union(candidate.second, existing.first) >= _DUPLICATE_REGION_IOU
+    )
+    return direct or cross
 
 
 def _intersection_over_union(first: _PixelBox, second: _PixelBox) -> float:
