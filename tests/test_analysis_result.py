@@ -154,7 +154,7 @@ def finding_data() -> dict[str, Any]:
         "description": "Выявлена аномалия метаданных.",
         "localization": {"type": "file"},
         "source_score": 4.2,
-        "score_impact": 25.0,
+        "score_impact": None,
         "critical_override_eligible": False,
         "correlation_group": None,
         "evidence_refs": [],
@@ -298,6 +298,40 @@ def test_analysis_result_accepts_partial_result_with_partial_completeness() -> N
 
     assert result.status is AnalysisStatus.PARTIAL
     assert result.completeness.status.value == "partial"
+
+
+def test_analysis_result_accepts_partial_result_with_insufficient_completeness() -> None:
+    data = completed_result_data()
+    data.update(
+        {
+            "status": "partial",
+            "completeness": {
+                **completeness_data("insufficient"),
+                "planned_analyzers": 2,
+                "applicable_analyzers": 2,
+                "completed_analyzers": 0,
+                "failed_analyzers": 2,
+                "coverage_ratio": 0.0,
+                "missing_capabilities": ["analyzer_a", "analyzer_b"],
+                "explanation": "Полнота недостаточна для риск-оценки.",
+            },
+            "risk_assessment": {
+                **risk_data(None),
+                "score": None,
+                "summary": "Риск-оценка не сформирована.",
+                "limitations": ["Применимые анализаторы не завершены."],
+            },
+            "warnings": ["Анализ принятого файла не дал достаточного покрытия."],
+        }
+    )
+
+    result = AnalysisResult.model_validate(data)
+
+    assert result.status is AnalysisStatus.PARTIAL
+    assert result.completeness.status.value == "insufficient"
+    assert result.risk_assessment.score is None
+    assert result.risk_assessment.score_based_level is None
+    assert result.risk_assessment.final_level is None
 
 
 @pytest.mark.parametrize(
@@ -620,16 +654,55 @@ def test_insufficient_completeness_rejects_final_level() -> None:
         )
 
 
-def test_insufficient_completeness_accepts_absent_final_level() -> None:
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("score", 1.0),
+        ("score_based_level", "low"),
+        ("final_level", "low"),
+    ],
+)
+def test_partial_insufficient_result_rejects_risk_values(
+    field: str,
+    value: float | str,
+) -> None:
+    risk = {
+        **risk_data(None),
+        "score": None,
+        "score_based_level": None,
+        "final_level": None,
+        field: value,
+    }
+
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate(
+            {
+                **completed_result_data(),
+                "status": "partial",
+                "completeness": completeness_data("insufficient"),
+                "risk_assessment": risk,
+            }
+        )
+
+
+def test_insufficient_completeness_accepts_absent_risk_values() -> None:
+    risk = {
+        **risk_data(None),
+        "score": None,
+        "score_based_level": None,
+        "final_level": None,
+    }
     result = AnalysisResult.model_validate(
         {
             **completed_result_data(),
             "status": "running",
             "completeness": completeness_data("insufficient"),
-            "risk_assessment": risk_data(None),
+            "risk_assessment": risk,
         }
     )
 
+    assert result.risk_assessment.score is None
+    assert result.risk_assessment.score_based_level is None
     assert result.risk_assessment.final_level is None
 
 
