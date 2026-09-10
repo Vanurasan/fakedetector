@@ -88,6 +88,7 @@ from fakedetector.lifecycle import (
 )
 from fakedetector.lifecycle._stage5 import Stage5ExecutionService
 from fakedetector.lifecycle._stage6 import Stage6FindingService
+from fakedetector.lifecycle._stage7 import Stage7AssessmentService
 from fakedetector.lifecycle.models import (
     Stage5TaskData,
     Stage6TaskData,
@@ -555,6 +556,7 @@ def _service(
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=orchestrator,
         finding_service=Stage6FindingService(),
+        assessment_service=Stage7AssessmentService(config.risk_assessment),
         monotonic=monotonic,
     )
 
@@ -687,6 +689,7 @@ def test_integrated_stage3_stage4_stage5_production_path(
             AnalyzerRegistry(config, _framework_test_registrations())
         ),
         finding_service=Stage6FindingService(),
+        assessment_service=Stage7AssessmentService(config.risk_assessment),
     )
     receiver = Stage4TaskReceiver(
         config=config,
@@ -977,7 +980,10 @@ def test_stage5_execution_forms_and_publishes_findings_from_authoritative_result
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "temp"
-    config = _config(root)
+    config = _config(
+        root,
+        enabled=["image_metadata_consistency", "image_copy_move_correspondence"],
+    )
     registry = _RecordingRegistry()
     task, _ = _claimed_task(root, config, registry=registry)
     successful = _stage6_source_result()
@@ -992,12 +998,13 @@ def test_stage5_execution_forms_and_publishes_findings_from_authoritative_result
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=cast(AnalyzerOrchestrator, orchestrator),
         finding_service=Stage6FindingService(),
+        assessment_service=Stage7AssessmentService(config.risk_assessment),
         monotonic=_ManualMonotonic(),
     )
 
     outcome = service.execute(task)
 
-    assert outcome == TaskExecutionOutcome.completed()
+    assert outcome == TaskExecutionOutcome.partial()
     assert registry._read_stage5_analyzer_results(task) == (successful, failed)
     assert registry.stage6_publication_stages == [ProcessingStage.ANALYSIS]
     findings = registry._read_stage6_findings(task)
@@ -1009,6 +1016,11 @@ def test_stage5_execution_forms_and_publishes_findings_from_authoritative_result
         "prepared_media",
         "analyzer_results",
     ]
+    assessment = registry._read_stage7_assessment(task)
+    assert assessment is not None
+    assert assessment[0].status is CompletenessStatus.PARTIAL
+    assert assessment[1].score == 5
+    assert assessment[2].additional_actions == ["retry_analysis"]
     _cleanup_task(task)
 
 
@@ -1043,6 +1055,7 @@ def test_malformed_trusted_candidate_causes_safe_analysis_failure(
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=cast(AnalyzerOrchestrator, orchestrator),
         finding_service=Stage6FindingService(),
+        assessment_service=Stage7AssessmentService(config.risk_assessment),
         monotonic=_ManualMonotonic(),
     )
 
@@ -1657,7 +1670,7 @@ def test_registry_rejects_stale_and_foreign_stage5_capabilities(tmp_path: Path) 
     ],
 )
 @pytest.mark.parametrize("continue_on_failure", [True, False])
-def test_individual_analyzer_failures_remain_results_and_execution_completes(
+def test_individual_analyzer_failures_remain_results_and_execution_is_partial(
     tmp_path: Path,
     first_analyzer: str,
     first_kind: _WorkerRunKind,
@@ -1682,7 +1695,7 @@ def test_individual_analyzer_failures_remain_results_and_execution_completes(
         monotonic=_ManualMonotonic(),
     ).execute(task)
 
-    assert outcome == TaskExecutionOutcome.completed()
+    assert outcome == TaskExecutionOutcome.partial()
     assert task.stage5_data is not None
     results = registry._read_stage5_analyzer_results(task)
     assert [result.status for result in results] == [
@@ -1701,6 +1714,15 @@ def test_individual_analyzer_failures_remain_results_and_execution_completes(
     assert [stored.canonical_json for stored in task.stage5_data.analyzer_results] == [
         _serialize_stage5_analyzer_result(result) for result in results
     ]
+    assessment = registry._read_stage7_assessment(task)
+    assert assessment is not None
+    assert assessment[0].status is (
+        CompletenessStatus.PARTIAL
+        if continue_on_failure
+        else CompletenessStatus.INSUFFICIENT
+    )
+    assert assessment[0].coverage_ratio == (0.5 if continue_on_failure else 0.0)
+    assert assessment[2].additional_actions == ["retry_analysis"]
     _cleanup_task(task)
 
 
@@ -1830,6 +1852,7 @@ def test_equal_distinct_configs_share_one_stage5_snapshot_identity(
             AnalyzerRegistry(registry_config, _framework_test_registrations())
         ),
         finding_service=Stage6FindingService(),
+        assessment_service=Stage7AssessmentService(config.risk_assessment),
     )
 
     assert service._config_snapshot.snapshot_id == config_snapshot_fingerprint(config)
@@ -1851,6 +1874,7 @@ def test_stage5_constructor_rejects_mixed_dispatcher_snapshot(
                 AnalyzerRegistry(config, _framework_test_registrations())
             ),
             finding_service=Stage6FindingService(),
+            assessment_service=Stage7AssessmentService(config.risk_assessment),
         )
 
 
@@ -1870,6 +1894,25 @@ def test_stage5_constructor_rejects_mixed_analyzer_snapshot(
                 AnalyzerRegistry(different, _framework_test_registrations())
             ),
             finding_service=Stage6FindingService(),
+            assessment_service=Stage7AssessmentService(config.risk_assessment),
+        )
+
+
+def test_stage5_constructor_rejects_mixed_stage7_policy(tmp_path: Path) -> None:
+    config = _config(tmp_path / "temp")
+    different = config.model_copy(deep=True)
+    different.risk_assessment.thresholds.low_max += 1
+
+    with pytest.raises(ValueError, match="different risk configuration"):
+        Stage5ExecutionService(
+            config=config,
+            registry=TaskRegistry(),
+            preprocessing=PreprocessingDispatcher(config),
+            orchestrator=AnalyzerOrchestrator(
+                AnalyzerRegistry(config, _framework_test_registrations())
+            ),
+            finding_service=Stage6FindingService(),
+            assessment_service=Stage7AssessmentService(different.risk_assessment),
         )
 
 
@@ -2448,12 +2491,16 @@ def test_stage5_runs_filesystem_and_analyzer_work_without_registry_lock(
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=cast(AnalyzerOrchestrator, orchestrator),
         finding_service=Stage6FindingService(),
+        assessment_service=Stage7AssessmentService(config.risk_assessment),
         monotonic=_ManualMonotonic(),
     )
 
     outcome = service.execute(task)
 
-    assert outcome == TaskExecutionOutcome.completed()
+    assert outcome == TaskExecutionOutcome.partial()
+    assessment = registry._read_stage7_assessment(task)
+    assert assessment is not None
+    assert assessment[0].status is CompletenessStatus.INSUFFICIENT
     assert not task.accepted_source.is_released
     assert any(path.is_file() for path in task.artifacts.cleanup_obligations())
     _cleanup_task(task)

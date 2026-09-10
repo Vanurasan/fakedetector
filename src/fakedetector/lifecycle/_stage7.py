@@ -368,6 +368,56 @@ class RecommendationService:
             raise Stage7AssessmentError("invalid_recommendation_input") from None
 
 
+class Stage7AssessmentService:
+    """Compose the pure Stage 7 policy over one validated immutable config."""
+
+    def __init__(self, config: RiskAssessmentConfig) -> None:
+        try:
+            if not isinstance(config, RiskAssessmentConfig):
+                raise TypeError("RiskAssessmentConfig is required")
+            self._config = RiskAssessmentConfig.model_validate(
+                config.model_dump(mode="python", warnings="error")
+            )
+        except (
+            AttributeError,
+            PydanticSerializationError,
+            TypeError,
+            ValidationError,
+            ValueError,
+        ):
+            raise Stage7AssessmentError("invalid_configuration") from None
+        self._completeness = CompletenessAssessmentService(self._config.completeness)
+        self._risk = RiskAssessmentService(self._config)
+        self._recommendation = RecommendationService()
+
+    def _uses_config(self, config: RiskAssessmentConfig) -> bool:
+        try:
+            candidate = RiskAssessmentConfig.model_validate(
+                config.model_dump(mode="python", warnings="error")
+            )
+        except (
+            AttributeError,
+            PydanticSerializationError,
+            TypeError,
+            ValidationError,
+            ValueError,
+        ):
+            return False
+        return candidate == self._config
+
+    def assess(
+        self,
+        planned_analyzer_ids: Sequence[str],
+        analyzer_results: Sequence[AnalyzerResult],
+        findings: Sequence[Finding],
+    ) -> tuple[AnalysisCompleteness, RiskAssessment, Recommendation]:
+        """Return one deterministic completeness, risk, and recommendation tuple."""
+        completeness = self._completeness.assess(planned_analyzer_ids, analyzer_results)
+        risk_assessment = self._risk.assess(completeness, analyzer_results, findings)
+        recommendation = self._recommendation.recommend(completeness, risk_assessment)
+        return completeness, risk_assessment, recommendation
+
+
 def _validated_results(
     analyzer_results: Sequence[AnalyzerResult],
     *,

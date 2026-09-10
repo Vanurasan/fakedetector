@@ -912,7 +912,7 @@ FINISHED publication. Concrete preprocessors и analyzers lifecycle самост
 риск, `AnalysisResult`, persistence, HTTP/WebUI analysis, SQLite, broker, durable
 recovery или реальные forensic analyzers.
 
-Stage 7 Increment 2 добавляет отдельный предназначенный только для внутреннего
+Stage 7 хранит отдельный предназначенный только для внутреннего
 использования `Stage7TaskData` для канонических неизменяемых
 `AnalysisCompleteness`, `RiskAssessment` и `Recommendation`. Авторитетный
 `TaskRegistry` разрешает однократную публикацию только после `Stage6TaskData` в
@@ -921,9 +921,14 @@ Stage 7 Increment 2 добавляет отдельный предназначе
 их в `TaskSnapshot` или постоянное хранение. Участок жизненного цикла допускает
 `RISK_ASSESSMENT → COMPLETED | PARTIAL | FAILED / CLEANUP` и проводит `PARTIAL`
 через тот же механизм терминального завершения и владения очисткой Stage 4 до
-`FINISHED`. Фактический вызов чистого сервиса Stage 7 из исполнителя рабочего
-контура принадлежит Increment 3; до него существующий путь завершения Stage 5
-сохраняется.
+`FINISHED`. Рабочий `Stage5ExecutionService` после публикации Stage 6 получает
+независимо восстановленные авторитетные `AnalyzerResult[]` и `Finding[]`,
+использует активный план анализаторов того же неизменяемого снимка конфигурации,
+вызывает чистый `Stage7AssessmentService` и публикует Stage 7 до возврата
+основного результата выполнения.
+`complete` возвращает `TaskExecutionOutcome.completed()`, а `partial` и
+`insufficient` — `TaskExecutionOutcome.partial()`; внутренний сбой Stage 7
+возвращает безопасный `failed` и передаёт очистку существующему владельцу Stage 4.
 
 Логический запрет: специализированные анализаторы не должны запускаться до успешного прохождения первичной проверки.
 
