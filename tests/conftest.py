@@ -5,9 +5,11 @@ from __future__ import annotations
 import shutil
 import subprocess
 from collections.abc import Callable, Iterator
+from io import BytesIO
 from multiprocessing.process import BaseProcess
 from pathlib import Path
 
+import numpy as np
 import pytest
 from PIL import Image
 
@@ -16,6 +18,20 @@ from fakedetector.analyzers._worker import _MultiprocessingSpawnBackend
 
 class _ProbeInterruption(BaseException):
     pass
+
+
+@pytest.fixture(scope="session")
+def copy_move_png_bytes() -> bytes:
+    """Generate the deterministic Stage 6 copy-move correspondence image."""
+    rng = np.random.default_rng(217)
+    canvas = np.full((512, 512, 3), 24, dtype=np.uint8)
+    patch = rng.integers(0, 256, size=(112, 112, 3), dtype=np.uint8)
+    canvas[64:176, 48:160] = patch
+    canvas[300:412, 320:432] = patch
+    output = BytesIO()
+    with Image.fromarray(canvas) as image:
+        image.save(output, format="PNG")
+    return output.getvalue()
 
 
 @pytest.fixture(params=[KeyboardInterrupt, SystemExit, _ProbeInterruption])

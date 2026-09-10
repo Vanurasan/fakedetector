@@ -1586,6 +1586,10 @@ def test_fifo_run_next_is_deterministic_for_two_confirmed_tasks(
 
 
 def test_execution_outcome_rejects_non_terminal_and_inconsistent_values() -> None:
+    partial = TaskExecutionOutcome.partial()
+    assert partial == TaskExecutionOutcome(status=AnalysisStatus.PARTIAL)
+    assert partial.errors == ()
+    assert partial._cleanup_safety_barrier is None
     with pytest.raises(ValueError):
         TaskExecutionOutcome(status=AnalysisStatus.RUNNING)
     with pytest.raises(ValueError):
@@ -1616,5 +1620,10 @@ def test_failed_execution_outcome_keeps_cleanup_barrier_private_and_nonsemantic(
     with pytest.raises(ValueError):
         TaskExecutionOutcome(
             status=AnalysisStatus.COMPLETED,
+            _cleanup_safety_barrier=first_barrier,
+        )
+    with pytest.raises(ValueError):
+        TaskExecutionOutcome(
+            status=AnalysisStatus.PARTIAL,
             _cleanup_safety_barrier=first_barrier,
         )

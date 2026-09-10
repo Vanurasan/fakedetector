@@ -176,7 +176,7 @@ failed
 | `queued` | Задача зарегистрирована и ожидает обработки |
 | `running` | Выполняется один из этапов обработки |
 | `completed` | Анализ завершён, обязательная полнота достигнута |
-| `partial` | Получен пригодный результат, но часть применимых проверок не выполнена |
+| `partial` | Принятый файл проанализирован с неполным результатом анализаторов; риск может отсутствовать при `insufficient` |
 | `rejected` | Файл отклонён до специализированного анализа |
 | `failed` | Системная ошибка не позволила получить пригодный результат |
 
@@ -276,7 +276,8 @@ queued
   после подтверждённого принятия задачи Stage 4; отсутствие внутреннего
   executor/route binding для уже подтверждённого Stage 3 канонического
   `MediaType` не является таким решением;
-- `partial` возникает, когда результат пригоден, но покрытие снижено;
+- `partial` возникает для принятой задачи с неполным результатом анализаторов; при
+  `insufficient` пригодная риск-оценка может отсутствовать;
 - `failed` возникает при системной ошибке, не позволяющей сформировать пригодную оценку;
 - терминальный статус не возвращается в `queued` или `running` без создания новой задачи повторного анализа.
 
@@ -322,6 +323,29 @@ preprocessor и analyzer их не выполняют. `Stage4TaskProcessor` с�
 ownership execution claim, primary outcome, terminal settlement, cleanup и
 FINISHED publication. Canonical `Stage5ExecutionService` реализует существующий
 port `TaskExecutor.execute(task) -> TaskExecutionOutcome`, не меняя его signature.
+
+Stage 7 Increment 2 добавляет следующий участок жизненного цикла, предназначенный
+только для внутреннего использования:
+
+```text
+RUNNING / ANALYSIS + опубликованный Stage6TaskData
+→ RUNNING / RISK_ASSESSMENT
+→ COMPLETED | PARTIAL | FAILED / CLEANUP
+→ тот же основной статус / FINISHED
+```
+
+Переход в `RISK_ASSESSMENT` требует опубликованный `Stage6TaskData`.
+`COMPLETED` и `PARTIAL` из `RISK_ASSESSMENT` требуют опубликованный
+`Stage7TaskData`; настоящий внутренний сбой может завершиться `FAILED` без него.
+`TaskExecutionOutcome` допускает `COMPLETED`, пригодный `PARTIAL` без искусственного
+`ErrorDetail` и барьера безопасности очистки либо `FAILED` с обязательной безопасной
+основной ошибкой. Рабочий исполнитель после Stage 6 читает независимо
+восстановленные авторитетные `AnalyzerResult[]` и `Finding[]`, передаёт их чистому
+`Stage7AssessmentService` вместе с активным планом анализаторов того же снимка
+конфигурации и публикует `Stage7TaskData` до возврата основного результата
+выполнения. `complete` соответствует `COMPLETED`, а `partial` и `insufficient` —
+`PARTIAL`; `not_assessed` на этом пути является внутренним сбоем, а не пригодным
+результатом.
 
 ### 3.2. Внутренний контекст задачи `AnalysisContext`
 
@@ -397,6 +421,18 @@ Stage 6 хранит нормализованные `Finding[]` в отдель�
 сохраняет связь каждого finding с `source_analyzer_id` и
 `source_analyzer_version` и не вводит промежуточный `AnalysisResult`, persistence
 или public schema.
+
+Stage 7 хранит `AnalysisCompleteness`, `RiskAssessment` и `Recommendation` в
+отдельном `Stage7TaskData`. Каждое значение сохраняется как канонические
+JSON-байты UTF-8, повторно провалидированные перед единственной атомарной
+публикацией в `RUNNING / RISK_ASSESSMENT`. Публикация требует тот же объект
+авторитетной задачи, существующие `Stage5TaskData` и `Stage6TaskData` и
+отсутствующее прежнее состояние Stage 7. Внутреннее чтение через
+`TaskRegistry._read_stage7_assessment(task)` повторно выполняет
+`model_validate_json` и возвращает новые независимо восстановленные
+провалидированные значения Pydantic, в том числе после `FINISHED`.
+`Stage7TaskData` не входит в `TaskSnapshot`, публичную схему, постоянное хранение
+или `AnalysisResult`.
 
 До visible terminal publication aggregate может содержать минимальный
 internal-only `TerminalSettlement`. Он не входит в `TaskSnapshot`, external JSON,
@@ -1526,30 +1562,73 @@ result. Будущая persistence может использовать composite
 ```json
 {
   "status": "partial",
-  "planned_analyzers": 5,
+  "planned_analyzers": 4,
   "applicable_analyzers": 4,
   "completed_analyzers": 3,
   "failed_analyzers": 1,
   "timed_out_analyzers": 0,
-  "skipped_analyzers": 1,
+  "skipped_analyzers": 0,
   "not_applicable_analyzers": 0,
   "coverage_ratio": 0.75,
-  "missing_capabilities": ["synthetic_speech_detection"],
-  "explanation": "Один применимый аудиоанализатор завершился ошибкой."
+  "missing_capabilities": ["synthetic_speech_analyzer"],
+  "explanation": "Выполнено 3/4 применимых анализаторов при planned=4; coverage_ratio=0.75; error=[synthetic_speech_analyzer]; timeout=[]; skipped=[]; not_applicable=[]. Статус partial: покрытие достаточно для ограниченной оценки, но анализ неполон."
 }
 ```
 
 ### 10.2. Правила
 
-- `coverage_ratio` рассчитывается только по утверждённому алгоритму;
-- до утверждения взвешенной модели допускается простое отношение успешно завершённых применимых анализаторов к числу применимых анализаторов;
-- простой коэффициент имеет статус **CONDITIONAL** и должен сопровождаться версией алгоритма;
-- `complete` означает выполнение всех обязательных применимых проверок активного профиля;
-- `partial` означает, что оценка возможна, но покрытие снижено;
-- `insufficient` означает, что надёжная риск-оценка не формируется;
-- `not_assessed` используется для отклонённого файла или системного сбоя до анализа.
+Алгоритм полноты v1 использует `minimum_for_assessment=0.5` и точный активный
+рабочий план для типа медиа:
 
-При `insufficient` поле `risk_assessment.final_level` должно быть `null`, если иное не утверждено отдельной политикой.
+- `planned_analyzers` — число идентификаторов анализаторов активного плана;
+- `completed_analyzers` — число результатов `completed`;
+- `failed_analyzers` — число результатов `error`;
+- `timed_out_analyzers` — число результатов `timeout`;
+- `skipped_analyzers` — число результатов `skipped`;
+- `not_applicable_analyzers` — число результатов `not_applicable`;
+- `applicable_analyzers = planned_analyzers - not_applicable_analyzers`;
+- одновременно `applicable_analyzers = completed + error + timeout + skipped`;
+- при `applicable_analyzers > 0` значение `coverage_ratio` равно
+  `completed_analyzers / applicable_analyzers`, иначе равно `0.0`;
+- искусственное округление `coverage_ratio` запрещено.
+
+Статус `insufficient` применяется, если выполняется хотя бы одно условие:
+
+- `planned_analyzers == 0`;
+- `applicable_analyzers == 0`;
+- `completed_analyzers == 0`;
+- `coverage_ratio < minimum_for_assessment`.
+
+Статус `complete` применяется, если `completed_analyzers > 0`, все применимые
+анализаторы завершены и отсутствуют `error`, `timeout` и `skipped`. Во всех
+остальных случаях с `completed_analyzers > 0` и
+`coverage_ratio >= minimum_for_assessment` применяется `partial`. Равенство
+порогу `0.5` даёт `partial`, если условия `complete` не выполнены.
+
+При `insufficient` поля `RiskAssessment.score`, `score_based_level` и
+`final_level` равны `null`. `not_assessed` не является результатом рабочей оценки
+Stage 7 для принятой задачи и сохраняется для отклонения или сбоя до Stage 7 и
+будущего формирования терминального результата.
+
+### 10.3. `missing_capabilities`
+
+Для MVP ключ возможности равен `analyzer_id`. В список включаются идентификаторы
+анализаторов активного плана со статусами `error`, `timeout`, `skipped` и
+`not_applicable`. Порядок совпадает с порядком активного плана; дубликаты
+запрещены.
+
+Список описывает пробелы относительно текущего активного профиля и не является
+исчерпывающим перечнем всех теоретически возможных возможностей экспертного
+анализа.
+
+### 10.4. Версионирование
+
+Алгоритм полноты v1 входит в единый пакет правил Stage 7
+`score_model_v1@0.1.0`. Новое публичное поле `algorithm_version` не добавляется.
+Существующий `config_snapshot_id` продолжает идентифицировать точную
+конфигурацию конкретного выполнения.
+
+**Статус политики полноты v1: FIXED.**
 
 ---
 
@@ -1561,16 +1640,20 @@ result. Будущая persistence может использовать composite
 {
   "model_id": "score_model_v1",
   "model_version": "0.1.0",
-  "score": 60,
+  "score": 25,
   "score_based_level": "medium",
   "critical_override_applied": false,
   "critical_finding_ids": [],
   "final_level": "medium",
   "probability": null,
   "probability_method": null,
-  "summary": "Выявлены значимые признаки возможной модификации.",
-  "explanation": "Итог сформирован по совокупности двух независимых признаков.",
-  "limitations": ["Анализ синтетической речи не выполнен."]
+  "summary": "Выявлены технические признаки, требующие дополнительной проверки.",
+  "explanation": "Полнота: status=partial. Finding finding_0001: type=test_signal, severity=significant, source=test_analyzer@1.0.0. Scoring bucket: representative=finding_0001, contribution=25, подавленные повторные вклады=[]. Score=25; thresholds: low=0..5, medium=6..29, high>=30. Critical override: applied=false.",
+  "limitations": [
+    "Модель score является внутренней детерминированной эвристикой проекта, а не статистической моделью.",
+    "Поле probability не рассчитывается и остаётся null.",
+    "Оценка покрывает только текущий активный профиль анализаторов."
+  ]
 }
 ```
 
@@ -1593,14 +1676,84 @@ result. Будущая persistence может использовать composite
 
 ### 11.3. Обязательные ограничения
 
-- `probability` по умолчанию равна `null`;
+- `model_id=score_model_v1`, `model_version=0.1.0` для набора правил v1;
+- вклады по `severity`: `weak=5`, `significant=25`, `critical=25` до
+  `critical_override`;
+- `0..5 → low`, `6..29 → medium`, `30 и выше → high`;
+- `score` рассчитывается только при полноте `complete` или `partial`;
+- при полноте `insufficient` поля `score`, `score_based_level` и `final_level`
+  равны `null`;
+- `probability=null` и `probability_method=null` во всех результатах Stage 7 v1;
 - запрещено копировать максимальный `AnalyzerResult.score` в `probability`;
+- `source_score` и `confidence` не участвуют в `score` v1;
+- каждый `Finding` до подсчёта баллов должен иметь ровно один связанный
+  `AnalyzerResult` с совпадающими `analyzer_id`/`source_analyzer_id`,
+  `analyzer_version`/`source_analyzer_version` и `group`, а также со
+  `status=completed` и `applicable=true`; противоречие отклоняется как
+  `invalid_risk_input`;
 - при `critical_override_applied=true` массив `critical_finding_ids` не пуст;
-- при недостаточной полноте `final_level` не должен ложно принимать `low`;
-- коррелирующие признаки не суммируются повторно без заданного правила;
-- веса и пороги имеют отдельную версию.
+- модель `score` является детерминированной эвристикой проекта, а не
+  статистической моделью или `probability`.
 
-Конкретные веса, пороги, корреляция и разрешённые critical-признаки имеют статус **OPEN** до отдельного решения.
+### 11.4. Политика корреляции v1
+
+`Finding` с `correlation_group=null` создаёт отдельную группу подсчёта баллов.
+Одинаковые непустые значения `correlation_group` объединяют объекты `Finding` в
+одну такую группу. Её вклад равен максимальному вкладу по `severity`. При
+равенстве представителем становится `Finding` с минимальным `finding_id`.
+
+Остальные `Finding` сохраняются в результате и `explanation`, но повторно
+`score` не увеличивают. `Finding.score_impact` остаётся `null`: полный вклад
+группы не назначается одной из равноправных локализаций.
+
+### 11.5. `critical_override` v1
+
+Рабочее значение по умолчанию — `enabled=false`. Доверенный каталог
+critical-правил текущего Profile B пуст. Ни один текущий `Finding` Stage 6 не
+повышается до `critical` и не получает `critical_override_eligible=true`.
+
+Общий механизм `critical_override` применяется только при одновременном
+выполнении условий:
+
+- полнота равна `complete` или `partial`;
+- конфигурация задаёт `critical_override.enabled=true`;
+- `Finding.type` входит в настроенный список разрешённых типов;
+- доверенное точное правило содержит тот же `Finding.type`, `source_analyzer_id` и
+  `source_analyzer_version`;
+- `Finding` имеет `severity=critical` и `critical_override_eligible=true`;
+- связанный `AnalyzerResult` имеет `status=completed`, `applicable=true` и точно
+  совпадающие идентификатор и версию анализатора;
+- `Finding` присутствует в авторитетном входе Stage 7.
+
+Идентификаторы `finding_id`, удовлетворившие условиям, хранятся
+детерминированно. При срабатывании значения `critical_override_applied=true` и
+`final_level=high`. При `insufficient` механизм не применяется. Общий механизм
+разрешено проверять только тестовым доверенным правилом; фиктивная рабочая
+возможность не добавляется.
+
+### 11.6. `explanation` и `limitations`
+
+`explanation` детерминированно перечисляет `finding_id`, `Finding.type`,
+`severity`, исходный анализатор и его версию, группы подсчёта баллов,
+`correlation_group`, представителя, подавленные повторные вклады, `score`,
+`thresholds`, факт `critical_override` и статус полноты.
+
+`limitations` формируется в стабильном порядке и отражает:
+
+1. модель `score` как внутреннюю детерминированную эвристику проекта, а не
+   статистическую модель;
+2. отсутствие расчёта `probability`;
+3. охват только активного профиля;
+4. `missing_capabilities`, если они есть;
+5. анализаторы со статусами `error`/`timeout`/`skipped`, если они есть;
+6. неполноту и `not_applicable`, если они есть;
+7. при пустом `Finding[]` — отсутствие найденных признаков доступными методами,
+   которое не является доказательством подлинности.
+
+Формулировки не должны утверждать подделку, подлинность или экспертный вывод
+сильнее фактических наблюдений.
+
+**Статус политик риска, корреляции и `critical_override` v1: FIXED.**
 
 ---
 
@@ -1633,6 +1786,25 @@ send_to_incident_response
 ```
 
 Автоматическое удаление письма, блокировка пользователя и автоматическое подтверждение бизнес-операции не входят в контракт ядра MVP.
+
+### 12.3. Политика `Recommendation` v1
+
+| Полнота | Риск | `primary_action` | `additional_actions` | `requires_manual_review` |
+|---|---|---|---|---:|
+| `complete` | `low` | `no_additional_action` | `[]` | `false` |
+| `complete` | `medium` | `manual_review` | `[verify_source_via_independent_channel]` | `true` |
+| `complete` | `high` | `escalate_to_security` | `[manual_review, verify_source_via_independent_channel, send_to_incident_response]` | `true` |
+| `partial` | `low` | `manual_review` | `[retry_analysis]` | `true` |
+| `partial` | `medium` | `manual_review` | `[verify_source_via_independent_channel, retry_analysis]` | `true` |
+| `partial` | `high` | `escalate_to_security` | `[manual_review, verify_source_via_independent_channel, retry_analysis]` | `true` |
+| `insufficient` | `null` | `manual_review` | `[retry_analysis]` | `true` |
+
+`not_assessed` не образует рабочую ветвь Stage 7 для принятой задачи.
+Человекочитаемый `text` формируется детерминированными русскими шаблонами, не
+утверждает подлинность или подделку и не запускает перечисленные действия
+автоматически.
+
+**Статус политики `Recommendation` v1: FIXED.**
 
 ---
 
@@ -1798,9 +1970,10 @@ Late janitor cleanup quarantined resource не меняет historical `finished
 
 - файл принят;
 - `file` является `ValidatedFileDescriptor`;
-- получена пригодная, но ограниченная оценка;
-- полнота равна `partial`;
-- `risk_assessment.final_level` не равен `null`;
+- результат анализа ограничен сбоями или неполнотой;
+- полнота равна `partial` с ненулевым `risk_assessment.final_level` либо
+  `insufficient` с `risk_assessment.score=null`,
+  `risk_assessment.score_based_level=null` и `risk_assessment.final_level=null`;
 - ограниченность результата явно отражена на верхнем уровне итогового
   `AnalysisResult`: top-level `warnings` достаточно только если хотя бы один
   warning содержит непустой после `.strip()` текст; также достаточно непустого
@@ -1808,6 +1981,15 @@ Late janitor cleanup quarantined resource не меняет historical `finished
   одного непустого после `.strip()` элемента `risk_assessment.limitations`;
 - предупреждения и ошибки только внутри отдельных `AnalyzerResult` сами по себе
   не удовлетворяют этому правилу.
+
+Комбинация `status=partial`, `completeness.status=insufficient` и
+нулевые `risk_assessment.score`, `risk_assessment.score_based_level` и
+`risk_assessment.final_level` являются утверждённым уточнением контракта до
+публикации внешнего API для схемы `1.0`: принятый файл может дать фактический
+результат анализаторов, которого недостаточно для риск-оценки. Это уточнение не
+повышает внешнюю `schema_version`. Обычный ограниченный анализ с
+`completeness.status=partial` и ненулевым риском остаётся допустимым. Семантика
+`rejected` и `failed` не меняется.
 
 #### `rejected`
 
@@ -1855,7 +2037,9 @@ recommendation, processing или persistence facts последующих эт�
 
 ### 14.5. Полный пример
 
-Полный пример является **EXAMPLE** и не утверждает конкретные анализаторы, веса и пороги.
+Полный пример является **EXAMPLE** в части конкретных анализаторов и `Finding`;
+поля полноты, риска и рекомендаций соответствуют зафиксированной политике
+Stage 7 v1.
 
 ```json
 {
@@ -1963,7 +2147,7 @@ recommendation, processing или persistence facts последующих эт�
         "end_seconds": 19.5
       },
       "source_score": 0.94,
-      "score_impact": 25,
+      "score_impact": null,
       "critical_override_eligible": false,
       "correlation_group": "face_sync_segment_1",
       "evidence_refs": []
@@ -1979,8 +2163,8 @@ recommendation, processing или persistence facts последующих эт�
     "skipped_analyzers": 0,
     "not_applicable_analyzers": 0,
     "coverage_ratio": 0.5,
-    "missing_capabilities": ["synthetic_speech_detection"],
-    "explanation": "Один применимый анализатор завершился ошибкой."
+    "missing_capabilities": ["synthetic_speech_analyzer"],
+    "explanation": "Выполнено 1/2 применимых анализаторов при planned=2; coverage_ratio=0.5; error=[synthetic_speech_analyzer]; timeout=[]; skipped=[]; not_applicable=[]. Статус partial: покрытие достаточно для ограниченной оценки, но анализ неполон."
   },
   "risk_assessment": {
     "model_id": "score_model_v1",
@@ -1992,14 +2176,21 @@ recommendation, processing или persistence facts последующих эт�
     "final_level": "medium",
     "probability": null,
     "probability_method": null,
-    "summary": "Выявлен значимый мультимодальный признак.",
-    "explanation": "Оценка ограничена из-за сбоя аудиоанализатора.",
-    "limitations": ["Анализ синтетической речи не выполнен."]
+    "summary": "Выявлены технические признаки, требующие дополнительной проверки.",
+    "explanation": "Полнота: status=partial. Finding finding_bda1b8994b8d3b65ffc5bdd2c8b1c155aabe0c4865007acfdd0aba11d271506d: type=audio_video_desynchronization, severity=significant, source=audio_video_sync_analyzer@1.0.0. Scoring bucket: representative=finding_bda1b8994b8d3b65ffc5bdd2c8b1c155aabe0c4865007acfdd0aba11d271506d, contribution=25, подавленные повторные вклады=[]. Score=25; thresholds: low=0..5, medium=6..29, high>=30. Critical override: applied=false; completeness=partial.",
+    "limitations": [
+      "Модель score является внутренней детерминированной эвристикой проекта, а не статистической моделью.",
+      "Поле probability не рассчитывается и остаётся null.",
+      "Оценка покрывает только текущий активный профиль анализаторов.",
+      "Пробелы текущего активного профиля: synthetic_speech_analyzer.",
+      "Не выполнены анализаторы: error=[synthetic_speech_analyzer]; timeout=[]; skipped=[].",
+      "Ограничение полноты: status=partial; not_applicable=[]."
+    ]
   },
   "recommendation": {
     "primary_action": "manual_review",
-    "additional_actions": ["verify_source_via_independent_channel"],
-    "text": "Рекомендуется ручная проверка и подтверждение источника по независимому каналу.",
+    "additional_actions": ["verify_source_via_independent_channel", "retry_analysis"],
+    "text": "Анализ выполнен частично: рекомендуется ручная проверка, подтверждение источника по независимому каналу и повторный анализ.",
     "requires_manual_review": true
   },
   "cleanup": {
@@ -2263,7 +2454,16 @@ Stage 4 не вводятся.
 - `critical_override.allowed_finding_types`;
 - `completeness.minimum_for_assessment`.
 
-Пороговые значения и веса в примере не являются валидированными.
+Для Stage 7 v1 зафиксированы значения по умолчанию: `model_id=score_model_v1`,
+`model_version=0.1.0`, `low_max=5`, `medium_max=29`, `weak=5`,
+`significant=25`, `critical=25`, `minimum_for_assessment=0.5`,
+`critical_override.enabled=false`, `allowed_finding_types=[]`.
+
+`model_id` и `model_version` должны быть непустыми; `low_max < medium_max`;
+`weak > 0`; `significant > weak`; значения `allowed_finding_types` непусты и
+уникальны; `minimum_for_assessment` находится в диапазоне `0..1` включительно.
+Эти значения являются версионируемой внутренней проектной политикой и не
+заявляются статистически валидированной моделью.
 
 #### `result`
 
@@ -2277,6 +2477,11 @@ Stage 4 не вводятся.
 - `continue_if_analyzer_fails`;
 - `mark_partial_on_analyzer_failure`;
 - `hide_internal_error_details`.
+
+В схеме `1.0` действующая политика требует
+`error_handling.mark_partial_on_analyzer_failure=true`. Значение
+`false` отклоняется при валидации конфигурации, поскольку альтернативная
+семантика статуса не определена. Поле сохраняется без переработки контракта.
 
 #### `logging`
 
@@ -2292,7 +2497,8 @@ Stage 4 не вводятся.
 ### 16.3. Пример минимальной конфигурации
 
 Значения являются **EXAMPLE**, кроме `allowed_formats`, который для MVP обязан
-соответствовать нормативному allowlist раздела 6.3.
+соответствовать нормативному списку разрешённых значений раздела 6.3, и
+зафиксированных значений Stage 7 v1 по умолчанию из раздела 16.2.
 
 ```yaml
 schema_version: "1.0"
@@ -2378,11 +2584,12 @@ risk_assessment:
   model_id: "score_model_v1"
   model_version: "0.1.0"
   thresholds:
-    low_max: 29
-    medium_max: 60
+    low_max: 5
+    medium_max: 29
   severity_scores:
     weak: 5
     significant: 25
+    critical: 25
   critical_override:
     enabled: false
     allowed_finding_types: []
@@ -2709,15 +2916,16 @@ JSONL whitelist и обязательные поля события остают
 3. механизм аутентификации WebUI;
 4. срок жизни и управление API-токенами после MVP;
 5. точный набор обязательных анализаторов профиля;
-6. алгоритм полноты и минимальное покрытие;
-7. веса, пороги и корреляция признаков;
-8. разрешённые critical-признаки;
-9. итоговая JSON Schema как отдельный машинный файл;
-10. срок хранения результатов;
-11. операции отмены, удаления и повторного анализа;
-12. история анализов и пагинация;
-13. интеграционные события SIEM/DLP/SOAR;
-14. политика передачи персональных данных источника.
+6. будущая статистическая калибровка `probability` и следующие версии модели
+   `score`;
+7. будущие расширения пустого доверенного рабочего каталога critical-правил
+   Profile B;
+8. итоговая JSON Schema как отдельный машинный файл;
+9. срок хранения результатов;
+10. операции отмены, удаления и повторного анализа;
+11. история анализов и пагинация;
+12. интеграционные события SIEM/DLP/SOAR;
+13. политика передачи персональных данных источника.
 
 ИИ-агент обязан остановиться на границе открытого решения, предложить варианты и не выдавать предположение за утверждённый контракт.
 

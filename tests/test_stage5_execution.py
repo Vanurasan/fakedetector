@@ -6,7 +6,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from copy import copy
-from dataclasses import FrozenInstanceError, fields
+from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -45,14 +45,19 @@ from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
 from fakedetector.core import AuthoritativeLifecycleClock
 from fakedetector.domain import (
+    AnalysisCompleteness,
     AnalysisStatus,
     AnalyzerResult,
     AnalyzerStatus,
+    CompletenessStatus,
     ErrorDetail,
     Finding,
     ImageTechnicalParameters,
     MediaType,
     ProcessingStage,
+    Recommendation,
+    RiskAssessment,
+    RiskLevel,
     SourceChannel,
     SourceContext,
     ValidatedFileDescriptor,
@@ -83,9 +88,11 @@ from fakedetector.lifecycle import (
 )
 from fakedetector.lifecycle._stage5 import Stage5ExecutionService
 from fakedetector.lifecycle._stage6 import Stage6FindingService
+from fakedetector.lifecycle._stage7 import Stage7AssessmentService
 from fakedetector.lifecycle.models import (
     Stage5TaskData,
     Stage6TaskData,
+    Stage7TaskData,
     _StoredAnalyzerResult,
     _StoredFinding,
 )
@@ -549,6 +556,7 @@ def _service(
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=orchestrator,
         finding_service=Stage6FindingService(),
+        assessment_service=Stage7AssessmentService(config.risk_assessment),
         monotonic=monotonic,
     )
 
@@ -681,6 +689,7 @@ def test_integrated_stage3_stage4_stage5_production_path(
             AnalyzerRegistry(config, _framework_test_registrations())
         ),
         finding_service=Stage6FindingService(),
+        assessment_service=Stage7AssessmentService(config.risk_assessment),
     )
     receiver = Stage4TaskReceiver(
         config=config,
@@ -916,11 +925,65 @@ def _stage6_error_result() -> AnalyzerResult:
     )
 
 
+def _stage7_values(
+    *,
+    partial: bool = False,
+) -> tuple[AnalysisCompleteness, RiskAssessment, Recommendation]:
+    completeness_status = CompletenessStatus.PARTIAL if partial else CompletenessStatus.COMPLETE
+    completeness = AnalysisCompleteness(
+        status=completeness_status,
+        planned_analyzers=2 if partial else 1,
+        applicable_analyzers=2 if partial else 1,
+        completed_analyzers=1,
+        failed_analyzers=1 if partial else 0,
+        timed_out_analyzers=0,
+        skipped_analyzers=0,
+        not_applicable_analyzers=0,
+        coverage_ratio=0.5 if partial else 1.0,
+        missing_capabilities=["failed_analyzer"] if partial else [],
+        explanation="Анализ выполнен частично." if partial else "Анализ выполнен полностью.",
+    )
+    risk_assessment = RiskAssessment(
+        model_id="score_model_v1",
+        model_version="0.1.0",
+        score=5,
+        score_based_level=RiskLevel.LOW,
+        critical_override_applied=False,
+        critical_finding_ids=[],
+        final_level=RiskLevel.LOW,
+        probability=None,
+        probability_method=None,
+        summary="Существенных признаков доступными методами не выявлено.",
+        explanation="Score=5.",
+        limitations=["Оценка ограничена активным профилем."],
+    )
+    recommendation = Recommendation(
+        primary_action="manual_review" if partial else "no_additional_action",
+        additional_actions=["retry_analysis"] if partial else [],
+        text=(
+            "Рекомендуется выполнить ручную проверку."
+            if partial
+            else "Дополнительные действия не требуются."
+        ),
+        requires_manual_review=partial,
+    )
+    return completeness, risk_assessment, recommendation
+
+
+def _publish_stage6_state(task: AnalysisTask, registry: TaskRegistry) -> None:
+    result = _stage6_source_result()
+    registry.append_stage5_analyzer_result(task, result)
+    registry.publish_stage6_findings(task, Stage6FindingService().form_findings((result,)))
+
+
 def test_stage5_execution_forms_and_publishes_findings_from_authoritative_results(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "temp"
-    config = _config(root)
+    config = _config(
+        root,
+        enabled=["image_metadata_consistency", "image_copy_move_correspondence"],
+    )
     registry = _RecordingRegistry()
     task, _ = _claimed_task(root, config, registry=registry)
     successful = _stage6_source_result()
@@ -935,12 +998,13 @@ def test_stage5_execution_forms_and_publishes_findings_from_authoritative_result
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=cast(AnalyzerOrchestrator, orchestrator),
         finding_service=Stage6FindingService(),
+        assessment_service=Stage7AssessmentService(config.risk_assessment),
         monotonic=_ManualMonotonic(),
     )
 
     outcome = service.execute(task)
 
-    assert outcome == TaskExecutionOutcome.completed()
+    assert outcome == TaskExecutionOutcome.partial()
     assert registry._read_stage5_analyzer_results(task) == (successful, failed)
     assert registry.stage6_publication_stages == [ProcessingStage.ANALYSIS]
     findings = registry._read_stage6_findings(task)
@@ -952,6 +1016,11 @@ def test_stage5_execution_forms_and_publishes_findings_from_authoritative_result
         "prepared_media",
         "analyzer_results",
     ]
+    assessment = registry._read_stage7_assessment(task)
+    assert assessment is not None
+    assert assessment[0].status is CompletenessStatus.PARTIAL
+    assert assessment[1].score == 5
+    assert assessment[2].additional_actions == ["retry_analysis"]
     _cleanup_task(task)
 
 
@@ -986,6 +1055,7 @@ def test_malformed_trusted_candidate_causes_safe_analysis_failure(
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=cast(AnalyzerOrchestrator, orchestrator),
         finding_service=Stage6FindingService(),
+        assessment_service=Stage7AssessmentService(config.risk_assessment),
         monotonic=_ManualMonotonic(),
     )
 
@@ -1066,6 +1136,281 @@ def test_stage6_sibling_state_uses_canonical_bytes_and_detached_reads(tmp_path: 
         tuple(finding.model_dump(mode="json") for finding in registry._read_stage6_findings(task))
         == expected
     )
+
+
+def test_stage7_publication_requires_stage6_risk_stage_and_authoritative_task(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "temp"
+    task, registry = _claimed_task(root, _config(root))
+    _start_result_publication(task, registry)
+    completeness, risk_assessment, recommendation = _stage7_values()
+
+    assert registry._read_stage7_assessment(task) is None
+    with pytest.raises(LifecycleStateError):
+        registry.publish_stage7_assessment(
+            task,
+            completeness,
+            risk_assessment,
+            recommendation,
+        )
+    with pytest.raises(LifecycleStateError):
+        registry.start_stage7_assessment(task)
+    with pytest.raises(LifecycleStateError):
+        AnalysisStateMachine().transition(
+            copy(task),
+            status=AnalysisStatus.RUNNING,
+            stage=ProcessingStage.RISK_ASSESSMENT,
+        )
+
+    _publish_stage6_state(task, registry)
+    with pytest.raises(LifecycleStateError):
+        registry.publish_stage7_assessment(
+            task,
+            completeness,
+            risk_assessment,
+            recommendation,
+        )
+    registry.start_stage7_assessment(task)
+    assert task.context.stage is ProcessingStage.RISK_ASSESSMENT
+
+    with pytest.raises(LifecycleStateError):
+        registry.publish_stage7_assessment(
+            copy(task),
+            completeness,
+            risk_assessment,
+            recommendation,
+        )
+    assert task.stage7_data is None
+
+    registry.publish_stage7_assessment(
+        task,
+        completeness,
+        risk_assessment,
+        recommendation,
+    )
+    with pytest.raises(LifecycleStateError):
+        registry.publish_stage7_assessment(
+            task,
+            completeness,
+            risk_assessment,
+            recommendation,
+        )
+
+    assert [field.name for field in fields(Stage5TaskData)] == [
+        "prepared_media",
+        "analyzer_results",
+    ]
+    assert [field.name for field in fields(Stage6TaskData)] == ["findings"]
+    assert [field.name for field in fields(Stage7TaskData)] == [
+        "completeness_json",
+        "risk_assessment_json",
+        "recommendation_json",
+    ]
+    assert not hasattr(registry.snapshot(task.context.analysis_id), "stage7_data")
+
+
+def test_stage7_state_uses_canonical_bytes_and_detached_reads(tmp_path: Path) -> None:
+    root = tmp_path / "temp"
+    task, registry = _claimed_task(root, _config(root))
+    _start_result_publication(task, registry)
+    _publish_stage6_state(task, registry)
+    registry.start_stage7_assessment(task)
+    completeness, risk_assessment, recommendation = _stage7_values(partial=True)
+    expected = tuple(
+        value.model_dump(mode="json")
+        for value in (completeness, risk_assessment, recommendation)
+    )
+
+    registry.publish_stage7_assessment(
+        task,
+        completeness,
+        risk_assessment,
+        recommendation,
+    )
+
+    assert task.stage7_data is not None
+    stored = task.stage7_data
+    assert all(
+        isinstance(value, bytes)
+        for value in (
+            stored.completeness_json,
+            stored.risk_assessment_json,
+            stored.recommendation_json,
+        )
+    )
+    with pytest.raises(FrozenInstanceError):
+        stored.completeness_json = b"changed"
+    with pytest.raises(TypeError, match="immutable bytes"):
+        Stage7TaskData(
+            completeness_json=cast(bytes, completeness),
+            risk_assessment_json=stored.risk_assessment_json,
+            recommendation_json=stored.recommendation_json,
+        )
+
+    completeness.explanation = "Changed original"
+    completeness.missing_capabilities.append("changed")
+    risk_assessment.summary = "Changed original"
+    risk_assessment.limitations.append("changed")
+    recommendation.text = "Changed original"
+    recommendation.additional_actions.append("verify_source")
+
+    first_read = registry._read_stage7_assessment(task)
+    assert first_read is not None
+    assert tuple(value.model_dump(mode="json") for value in first_read) == expected
+    first_read[0].explanation = "Changed detached read"
+    first_read[0].missing_capabilities.append("changed-again")
+    first_read[1].summary = "Changed detached read"
+    first_read[1].limitations.append("changed-again")
+    first_read[2].text = "Changed detached read"
+    first_read[2].additional_actions.append("verify_source")
+    second_read = registry._read_stage7_assessment(task)
+    assert second_read is not None
+    assert tuple(value.model_dump(mode="json") for value in second_read) == expected
+
+    with pytest.raises(ValueError, match="requires Stage 5 and Stage 6"):
+        replace(task, stage6_data=None)
+
+
+def test_stage7_invalid_values_are_rejected_without_partial_publication(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "temp"
+    task, registry = _claimed_task(root, _config(root))
+    _start_result_publication(task, registry)
+    _publish_stage6_state(task, registry)
+    registry.start_stage7_assessment(task)
+
+    completeness, risk_assessment, recommendation = _stage7_values()
+    completeness.planned_analyzers = -1
+    with pytest.raises(LifecycleStateError):
+        registry.publish_stage7_assessment(
+            task,
+            completeness,
+            risk_assessment,
+            recommendation,
+        )
+    assert task.stage7_data is None
+
+    completeness, risk_assessment, recommendation = _stage7_values()
+    recommendation.additional_actions.append(cast(str, object()))
+    with pytest.raises(LifecycleStateError):
+        registry.publish_stage7_assessment(
+            task,
+            completeness,
+            risk_assessment,
+            recommendation,
+        )
+    assert task.stage7_data is None
+
+    completeness, risk_assessment, recommendation = _stage7_values()
+    risk_assessment.score = float("inf")
+    with pytest.raises(LifecycleStateError):
+        registry.publish_stage7_assessment(
+            task,
+            completeness,
+            risk_assessment,
+            recommendation,
+        )
+    assert task.stage7_data is None
+
+    completeness, risk_assessment, recommendation = _stage7_values()
+    with pytest.raises(LifecycleStateError):
+        registry.publish_stage7_assessment(
+            task,
+            cast(AnalysisCompleteness, object()),
+            risk_assessment,
+            recommendation,
+        )
+    assert task.stage7_data is None
+    registry.publish_stage7_assessment(
+        task,
+        completeness,
+        risk_assessment,
+        recommendation,
+    )
+
+
+@pytest.mark.parametrize(
+    ("outcome", "terminal_status", "partial"),
+    [
+        (TaskExecutionOutcome.completed(), AnalysisStatus.COMPLETED, False),
+        (TaskExecutionOutcome.partial(), AnalysisStatus.PARTIAL, True),
+    ],
+    ids=["completed", "partial"],
+)
+def test_stage7_usable_outcomes_cleanup_and_keep_detached_state(
+    tmp_path: Path,
+    outcome: TaskExecutionOutcome,
+    terminal_status: AnalysisStatus,
+    partial: bool,
+) -> None:
+    root = tmp_path / "temp"
+    config = _config(root)
+    task, registry = _claimed_task(root, config)
+    _start_result_publication(task, registry)
+    _publish_stage6_state(task, registry)
+    registry.start_stage7_assessment(task)
+    completeness, risk_assessment, recommendation = _stage7_values(partial=partial)
+
+    with pytest.raises(LifecycleStateError):
+        registry.record_outcome(task.context.analysis_id, outcome)
+    assert task.context.status is AnalysisStatus.RUNNING
+    assert task.context.stage is ProcessingStage.RISK_ASSESSMENT
+
+    registry.publish_stage7_assessment(
+        task,
+        completeness,
+        risk_assessment,
+        recommendation,
+    )
+    registry.record_outcome(task.context.analysis_id, outcome)
+    assert task.context.status is terminal_status
+    assert task.context.stage is ProcessingStage.CLEANUP
+
+    final = Stage4TaskProcessor(
+        config=config,
+        clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
+        registry=registry,
+    ).settle_terminal(task.context.analysis_id)
+
+    assert final.status is terminal_status
+    assert final.stage is ProcessingStage.FINISHED
+    assert final.cleanup is not None
+    assert task.accepted_source.is_released
+    detached = registry._read_stage7_assessment(task)
+    assert detached is not None
+    assert detached == (completeness, risk_assessment, recommendation)
+
+
+def test_stage7_internal_failure_can_finish_without_assessment(tmp_path: Path) -> None:
+    root = tmp_path / "temp"
+    config = _config(root)
+    task, registry = _claimed_task(root, config)
+    _start_result_publication(task, registry)
+    _publish_stage6_state(task, registry)
+    registry.start_stage7_assessment(task)
+
+    registry.record_outcome(
+        task.context.analysis_id,
+        TaskExecutionOutcome.failed(
+            ErrorDetail(
+                code="internal_error",
+                category="internal",
+                message="Stage 7 failed safely.",
+                retryable=True,
+            )
+        ),
+    )
+    final = Stage4TaskProcessor(
+        config=config,
+        clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
+        registry=registry,
+    ).settle_terminal(task.context.analysis_id)
+
+    assert final.status is AnalysisStatus.FAILED
+    assert final.stage is ProcessingStage.FINISHED
+    assert task.stage7_data is None
 
 
 @pytest.mark.parametrize(
@@ -1325,7 +1670,7 @@ def test_registry_rejects_stale_and_foreign_stage5_capabilities(tmp_path: Path) 
     ],
 )
 @pytest.mark.parametrize("continue_on_failure", [True, False])
-def test_individual_analyzer_failures_remain_results_and_execution_completes(
+def test_individual_analyzer_failures_remain_results_and_execution_is_partial(
     tmp_path: Path,
     first_analyzer: str,
     first_kind: _WorkerRunKind,
@@ -1350,7 +1695,7 @@ def test_individual_analyzer_failures_remain_results_and_execution_completes(
         monotonic=_ManualMonotonic(),
     ).execute(task)
 
-    assert outcome == TaskExecutionOutcome.completed()
+    assert outcome == TaskExecutionOutcome.partial()
     assert task.stage5_data is not None
     results = registry._read_stage5_analyzer_results(task)
     assert [result.status for result in results] == [
@@ -1369,6 +1714,15 @@ def test_individual_analyzer_failures_remain_results_and_execution_completes(
     assert [stored.canonical_json for stored in task.stage5_data.analyzer_results] == [
         _serialize_stage5_analyzer_result(result) for result in results
     ]
+    assessment = registry._read_stage7_assessment(task)
+    assert assessment is not None
+    assert assessment[0].status is (
+        CompletenessStatus.PARTIAL
+        if continue_on_failure
+        else CompletenessStatus.INSUFFICIENT
+    )
+    assert assessment[0].coverage_ratio == (0.5 if continue_on_failure else 0.0)
+    assert assessment[2].additional_actions == ["retry_analysis"]
     _cleanup_task(task)
 
 
@@ -1498,6 +1852,7 @@ def test_equal_distinct_configs_share_one_stage5_snapshot_identity(
             AnalyzerRegistry(registry_config, _framework_test_registrations())
         ),
         finding_service=Stage6FindingService(),
+        assessment_service=Stage7AssessmentService(config.risk_assessment),
     )
 
     assert service._config_snapshot.snapshot_id == config_snapshot_fingerprint(config)
@@ -1519,6 +1874,7 @@ def test_stage5_constructor_rejects_mixed_dispatcher_snapshot(
                 AnalyzerRegistry(config, _framework_test_registrations())
             ),
             finding_service=Stage6FindingService(),
+            assessment_service=Stage7AssessmentService(config.risk_assessment),
         )
 
 
@@ -1538,6 +1894,25 @@ def test_stage5_constructor_rejects_mixed_analyzer_snapshot(
                 AnalyzerRegistry(different, _framework_test_registrations())
             ),
             finding_service=Stage6FindingService(),
+            assessment_service=Stage7AssessmentService(config.risk_assessment),
+        )
+
+
+def test_stage5_constructor_rejects_mixed_stage7_policy(tmp_path: Path) -> None:
+    config = _config(tmp_path / "temp")
+    different = config.model_copy(deep=True)
+    different.risk_assessment.thresholds.low_max += 1
+
+    with pytest.raises(ValueError, match="different risk configuration"):
+        Stage5ExecutionService(
+            config=config,
+            registry=TaskRegistry(),
+            preprocessing=PreprocessingDispatcher(config),
+            orchestrator=AnalyzerOrchestrator(
+                AnalyzerRegistry(config, _framework_test_registrations())
+            ),
+            finding_service=Stage6FindingService(),
+            assessment_service=Stage7AssessmentService(different.risk_assessment),
         )
 
 
@@ -2116,12 +2491,16 @@ def test_stage5_runs_filesystem_and_analyzer_work_without_registry_lock(
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=cast(AnalyzerOrchestrator, orchestrator),
         finding_service=Stage6FindingService(),
+        assessment_service=Stage7AssessmentService(config.risk_assessment),
         monotonic=_ManualMonotonic(),
     )
 
     outcome = service.execute(task)
 
-    assert outcome == TaskExecutionOutcome.completed()
+    assert outcome == TaskExecutionOutcome.partial()
+    assessment = registry._read_stage7_assessment(task)
+    assert assessment is not None
+    assert assessment[0].status is CompletenessStatus.INSUFFICIENT
     assert not task.accepted_source.is_released
     assert any(path.is_file() for path in task.artifacts.cleanup_obligations())
     _cleanup_task(task)

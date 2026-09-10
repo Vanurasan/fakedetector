@@ -112,7 +112,7 @@ class TaskSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class TaskExecutionOutcome:
-    """Factual narrow result returned by an injected Increment 1 executor."""
+    """Factual narrow primary result returned by a managed task executor."""
 
     status: AnalysisStatus
     errors: tuple[ErrorDetail, ...] = ()
@@ -123,14 +123,21 @@ class TaskExecutionOutcome:
     )
 
     def __post_init__(self) -> None:
-        if self.status not in {AnalysisStatus.COMPLETED, AnalysisStatus.FAILED}:
-            raise ValueError("execution outcome must be completed or failed")
+        if self.status not in {
+            AnalysisStatus.COMPLETED,
+            AnalysisStatus.PARTIAL,
+            AnalysisStatus.FAILED,
+        }:
+            raise ValueError("execution outcome must be completed, partial, or failed")
         if self.status is AnalysisStatus.COMPLETED and self.errors:
             raise ValueError("completed execution outcome cannot contain errors")
         if self.status is AnalysisStatus.FAILED and not self.errors:
             raise ValueError("failed execution outcome requires a safe error")
-        if self.status is AnalysisStatus.COMPLETED and self._cleanup_safety_barrier is not None:
-            raise ValueError("completed execution outcome cannot defer cleanup")
+        if (
+            self.status is not AnalysisStatus.FAILED
+            and self._cleanup_safety_barrier is not None
+        ):
+            raise ValueError("usable execution outcome cannot defer cleanup")
         if self._cleanup_safety_barrier is not None and not isinstance(
             self._cleanup_safety_barrier,
             _CleanupSafetyBarrier,
@@ -140,6 +147,10 @@ class TaskExecutionOutcome:
     @classmethod
     def completed(cls) -> TaskExecutionOutcome:
         return cls(status=AnalysisStatus.COMPLETED)
+
+    @classmethod
+    def partial(cls) -> TaskExecutionOutcome:
+        return cls(status=AnalysisStatus.PARTIAL)
 
     @classmethod
     def failed(
@@ -267,6 +278,26 @@ class Stage6TaskData:
         object.__setattr__(self, "findings", findings)
 
 
+@dataclass(frozen=True, slots=True)
+class Stage7TaskData:
+    """Internal sibling state retaining one canonical Stage 7 assessment."""
+
+    completeness_json: bytes = field(repr=False)
+    risk_assessment_json: bytes = field(repr=False)
+    recommendation_json: bytes = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not all(
+            isinstance(value, bytes)
+            for value in (
+                self.completeness_json,
+                self.risk_assessment_json,
+                self.recommendation_json,
+            )
+        ):
+            raise TypeError("Stage 7 task data requires immutable bytes")
+
+
 @dataclass(slots=True)
 class AnalysisTask:
     """Internal application aggregate retaining the accepted-source capability."""
@@ -278,6 +309,7 @@ class AnalysisTask:
     artifacts: WorkspaceArtifactRegistry
     stage5_data: Stage5TaskData | None = None
     stage6_data: Stage6TaskData | None = None
+    stage7_data: Stage7TaskData | None = None
     queued_at: datetime | None = None
     cleanup_result: CleanupResult | None = None
     errors: list[ErrorDetail] = field(default_factory=list)
@@ -315,6 +347,11 @@ class AnalysisTask:
                 raise TypeError("task Stage 6 data must be Stage6TaskData")
             if self.stage5_data is None:
                 raise ValueError("task Stage 6 data requires Stage 5 data")
+        if self.stage7_data is not None:
+            if not isinstance(self.stage7_data, Stage7TaskData):
+                raise TypeError("task Stage 7 data must be Stage7TaskData")
+            if self.stage5_data is None or self.stage6_data is None:
+                raise ValueError("task Stage 7 data requires Stage 5 and Stage 6 data")
 
     def snapshot(self) -> TaskSnapshot:
         """Copy the current aggregate into an immutable capability-free projection."""

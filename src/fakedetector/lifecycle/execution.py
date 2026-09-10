@@ -15,6 +15,7 @@ from pydantic_core import PydanticSerializationError
 
 from fakedetector.analyzers._transport import _serialize_stage5_analyzer_result
 from fakedetector.domain import (
+    AnalysisCompleteness,
     AnalysisStatus,
     AnalyzerResult,
     CleanupResult,
@@ -22,6 +23,8 @@ from fakedetector.domain import (
     Finding,
     MediaType,
     ProcessingStage,
+    Recommendation,
+    RiskAssessment,
     ValidatedFileDescriptor,
 )
 from fakedetector.domain.models import validate_utc_datetime
@@ -30,6 +33,7 @@ from fakedetector.lifecycle.models import (
     CleanupFacts,
     Stage5TaskData,
     Stage6TaskData,
+    Stage7TaskData,
     TaskExecutionOutcome,
     TaskSnapshot,
     TerminalSettlement,
@@ -127,7 +131,13 @@ class AnalysisStateMachine:
             (AnalysisStatus.FAILED, ProcessingStage.CLEANUP),
         },
         (AnalysisStatus.RUNNING, ProcessingStage.ANALYSIS): {
+            (AnalysisStatus.RUNNING, ProcessingStage.RISK_ASSESSMENT),
             (AnalysisStatus.COMPLETED, ProcessingStage.CLEANUP),
+            (AnalysisStatus.FAILED, ProcessingStage.CLEANUP),
+        },
+        (AnalysisStatus.RUNNING, ProcessingStage.RISK_ASSESSMENT): {
+            (AnalysisStatus.COMPLETED, ProcessingStage.CLEANUP),
+            (AnalysisStatus.PARTIAL, ProcessingStage.CLEANUP),
             (AnalysisStatus.FAILED, ProcessingStage.CLEANUP),
         },
         (AnalysisStatus.COMPLETED, ProcessingStage.CLEANUP): {
@@ -135,6 +145,9 @@ class AnalysisStateMachine:
         },
         (AnalysisStatus.FAILED, ProcessingStage.CLEANUP): {
             (AnalysisStatus.FAILED, ProcessingStage.FINISHED)
+        },
+        (AnalysisStatus.PARTIAL, ProcessingStage.CLEANUP): {
+            (AnalysisStatus.PARTIAL, ProcessingStage.FINISHED)
         },
     }
 
@@ -151,6 +164,14 @@ class AnalysisStateMachine:
         current = (task.context.status, task.context.stage)
         target = (status, stage)
         if target not in self._TRANSITIONS.get(current, set()):
+            raise LifecycleStateError()
+        if stage is ProcessingStage.RISK_ASSESSMENT and task.stage6_data is None:
+            raise LifecycleStateError()
+        if (
+            current == (AnalysisStatus.RUNNING, ProcessingStage.RISK_ASSESSMENT)
+            and status in {AnalysisStatus.COMPLETED, AnalysisStatus.PARTIAL}
+            and task.stage7_data is None
+        ):
             raise LifecycleStateError()
         if stage is ProcessingStage.PREPROCESSING:
             if task.context.started_at is not None or started_at is None:
@@ -240,6 +261,8 @@ class TaskRegistry:
                 raise LifecycleStateError()
             task = self._get(analysis_id)
             if stage is ProcessingStage.ANALYSIS and task.stage5_data is None:
+                raise LifecycleStateError()
+            if stage is ProcessingStage.RISK_ASSESSMENT and task.stage6_data is None:
                 raise LifecycleStateError()
             self._state_machine.transition(
                 task,
@@ -443,6 +466,84 @@ class TaskRegistry:
             data = authoritative.stage6_data
             findings = () if data is None else data.findings
         return tuple(Finding.model_validate_json(finding.canonical_json) for finding in findings)
+
+    def start_stage7_assessment(self, task: AnalysisTask) -> None:
+        """Enter risk assessment only after authoritative Stage 6 publication."""
+        with self._lock:
+            authoritative = self._require_stage5_task(task, ProcessingStage.ANALYSIS)
+            if authoritative.stage6_data is None or authoritative.stage7_data is not None:
+                raise LifecycleStateError()
+            self._state_machine.transition(
+                authoritative,
+                status=AnalysisStatus.RUNNING,
+                stage=ProcessingStage.RISK_ASSESSMENT,
+            )
+
+    def publish_stage7_assessment(
+        self,
+        task: AnalysisTask,
+        completeness: AnalysisCompleteness,
+        risk_assessment: RiskAssessment,
+        recommendation: Recommendation,
+    ) -> None:
+        """Atomically publish one canonical immutable Stage 7 sibling value."""
+        if (
+            not isinstance(completeness, AnalysisCompleteness)
+            or not isinstance(risk_assessment, RiskAssessment)
+            or not isinstance(recommendation, Recommendation)
+        ):
+            raise LifecycleStateError()
+        try:
+            validated_completeness = AnalysisCompleteness.model_validate(
+                completeness.model_dump(mode="python", warnings="error")
+            )
+            validated_risk_assessment = RiskAssessment.model_validate(
+                risk_assessment.model_dump(mode="python", warnings="error")
+            )
+            validated_recommendation = Recommendation.model_validate(
+                recommendation.model_dump(mode="python", warnings="error")
+            )
+            stage7_data = Stage7TaskData(
+                completeness_json=_serialize_stage7_value(validated_completeness),
+                risk_assessment_json=_serialize_stage7_value(validated_risk_assessment),
+                recommendation_json=_serialize_stage7_value(validated_recommendation),
+            )
+        except (
+            AttributeError,
+            PydanticSerializationError,
+            ValidationError,
+            TypeError,
+            ValueError,
+        ):
+            raise LifecycleStateError() from None
+
+        with self._lock:
+            authoritative = self._require_stage5_task(task, ProcessingStage.RISK_ASSESSMENT)
+            if (
+                authoritative.stage5_data is None
+                or authoritative.stage6_data is None
+                or authoritative.stage7_data is not None
+            ):
+                raise LifecycleStateError()
+            authoritative.stage7_data = stage7_data
+
+    def _read_stage7_assessment(
+        self,
+        task: AnalysisTask,
+    ) -> tuple[AnalysisCompleteness, RiskAssessment, Recommendation] | None:
+        """Materialize detached canonical Stage 7 values, including after terminalization."""
+        with self._lock:
+            authoritative = self._get(task.context.analysis_id)
+            if authoritative is not task:
+                raise LifecycleStateError()
+            data = authoritative.stage7_data
+        if data is None:
+            return None
+        return (
+            AnalysisCompleteness.model_validate_json(data.completeness_json),
+            RiskAssessment.model_validate_json(data.risk_assessment_json),
+            Recommendation.model_validate_json(data.recommendation_json),
+        )
 
     def record_outcome(self, analysis_id: str, outcome: TaskExecutionOutcome) -> None:
         with self._lock:
@@ -768,6 +869,18 @@ class TaskRegistry:
 def _serialize_stage6_finding(finding: Finding) -> bytes:
     return json.dumps(
         finding.model_dump(mode="json", warnings="error"),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _serialize_stage7_value(
+    value: AnalysisCompleteness | RiskAssessment | Recommendation,
+) -> bytes:
+    return json.dumps(
+        value.model_dump(mode="json", warnings="error"),
         ensure_ascii=False,
         allow_nan=False,
         sort_keys=True,

@@ -340,9 +340,106 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-10
+
+### Изменено
+
+- **[Stage 7/Формальное закрытие] Stage 7 формально закрыт со статусом
+  `DONE` после независимого read-only аудита.** Verdict аудита —
+  `CLOSE_STAGE7_UNCHANGED`; correctness findings уровней `BLOCKER`, `HIGH` и
+  `MEDIUM` отсутствуют. `S7-A01` (`LOW`) закрыт как документационная
+  неточность: комментарий `config/config.example.yaml` теперь отражает
+  подключённый production execution path Stage 7. `S7-A02` принят как
+  `LOW / NON_BLOCKING / ACCEPTED_TEST_COVERAGE_DEBT`: отдельной
+  regression-проверки истечения общего processing deadline именно во время
+  Stage 7 assessment/publication нет, но текущий код содержит checkpoint и
+  функциональный дефект не установлен. Долг тестового покрытия не блокирует
+  Stage 8. Implementation barrier перед аудитом: `1511 passed, 2 skipped`,
+  combined coverage `89.76%`, statements `92.23%` (`5937/6437`), branches
+  `80.01%` (`1309/1636`). Independent final audit не повторял полный
+  barrier и дополнительно выполнил узкий набор Stage 7/domain tests:
+  `100 passed`; `git diff --check` — `PASS`. Stage 8 остаётся `NOT_STARTED`.
+
+### Добавлено
+
+- **[Stage 7/Increment 3] Stage 7 подключён к рабочему контуру выполнения;
+  Increment 3 реализован.** После авторитетной публикации Stage 6 рабочий
+  исполнитель повторно читает независимо восстановленные `AnalyzerResult[]` и
+  `Finding[]`, переходит в
+  `RUNNING / RISK_ASSESSMENT`, вызывает чистый `Stage7AssessmentService` с
+  активным планом анализаторов из того же неизменяемого снимка конфигурации и
+  атомарно публикует `AnalysisCompleteness`, `RiskAssessment` и `Recommendation`
+  до возврата основного результата выполнения и начала очистки. `complete`
+  завершается как `COMPLETED`, а `partial` и `insufficient` — как `PARTIAL`;
+  внутренний сбой безопасно завершается как `FAILED` через прежнего владельца
+  очистки. Тесты рабочего контура подтвердили пустую оценку риска при
+  `insufficient`, порог покрытия `0.5`, `NOT_APPLICABLE`,
+  `ERROR`/`TIMEOUT`/`SKIPPED`, один вклад weak со значением `5` для
+  коррелированной пары `Finding` copy-move, отсутствие `probability` и
+  `critical_override`, порядок публикации и сохранность состояния Stage 7 после
+  `FINISHED`. Предаудитный полный барьер качества реализации пройден:
+  `1511 passed, 2 skipped`, совокупное покрытие `89.76%`, покрытие операторов
+  `92.23%` (`5937/6437`), покрытие ветвей `80.01%` (`1309/1636`). Формальное
+  закрытие Stage 7 ожидает независимый финальный аудит. Stage 8 остаётся
+  `NOT_STARTED`; `AnalysisResult`, API/WebUI и постоянное хранение не реализованы.
+
+- **[Stage 7/Increment 2] Добавлено отдельное авторитетное состояние и минимальный
+  участок жизненного цикла.** Предназначенный только для внутреннего использования
+  `Stage7TaskData` хранит канонические неизменяемые JSON-байты UTF-8 для
+  `AnalysisCompleteness`, `RiskAssessment` и `Recommendation`; `TaskRegistry`
+  обеспечивает однократную атомарную публикацию после `Stage6TaskData` и независимое
+  чтение с повторной валидацией, доступное после `FINISHED`.
+  Переходы расширены цепочкой
+  `ANALYSIS → RISK_ASSESSMENT → COMPLETED | PARTIAL | FAILED / CLEANUP` и
+  `PARTIAL / CLEANUP → PARTIAL / FINISHED`. `TaskExecutionOutcome.partial()`
+  представляет пригодный результат без искусственного `ErrorDetail` и барьера
+  безопасности очистки и использует существующий механизм владения очисткой Stage 4.
+  Подключение к рабочему контуру, `AnalysisResult`, постоянное хранение, API/WebUI,
+  планировщик и архитектура очистки не изменены.
+
 ### 2026-09-09
 
+### Добавлено
+
+- **[Stage 7/Increment 1] Реализовано чистое детерминированное ядро полноты, риска и
+  рекомендаций.** Новый внутренний модуль `_stage7.py` принимает точный активный
+  план анализаторов, авторитетные `AnalyzerResult[]` и `Finding[]`, формирует
+  контрактные `AnalysisCompleteness`, `RiskAssessment` и `Recommendation` без
+  файловой системы, HTTP, хранения, планировщика или интеграции с жизненным
+  циклом. Подсчёт группирует коррелированные `Finding`, не меняет
+  `Finding.score_impact`, всегда оставляет `probability=null` и выдаёт стабильные
+  русские объяснения и ограничения. Доверенный рабочий каталог critical-правил
+  Profile B пуст; общий механизм `critical_override` проверен только точным
+  тестовым правилом.
+
+### Решение
+
+- **[Stage 7/Политика v1] Утверждён единый пакет правил
+  `score_model_v1@0.1.0`.** Алгоритм полноты использует порог `0.5`; вклады по
+  `severity` равны `5/25/25`, а уровни `score` — `0..5 low`, `6..29 medium`,
+  `30+ high`. Группа корреляции учитывает максимальный вклад и выбирает
+  представителя по минимальному `finding_id`. Это внутренняя проектная эвристика
+  без статистической валидации и без общей `probability`; отдельное публичное
+  поле версии полноты не добавляется, точная конфигурация выполнения остаётся
+  связана существующим `config_snapshot_id`.
+
 ### Changed
+
+- **[AnalysisResult/schema 1.0] Уточнён контракт принятого недостаточного
+  анализа.** `AnalysisStatus.PARTIAL` теперь допускает
+  `completeness.status=INSUFFICIENT` только с `risk_assessment.score=null`,
+  `risk_assessment.score_based_level=null` и
+  `risk_assessment.final_level=null`; обычный
+  `PARTIAL + completeness=PARTIAL` по-прежнему требует ненулевой риск. Это
+  уточнение контракта до публикации внешнего API без повышения `schema_version`;
+  семантика `REJECTED` и `FAILED` не изменена.
+- **[Конфигурация/schema 1.0] Зафиксированы значения Stage 7 по умолчанию и
+  инварианты.** В `severity_scores` добавлен `critical=25`, значения `thresholds`
+  изменены на `5/29`, а модели отклоняют пустые идентификаторы, неупорядоченные
+  `thresholds`, неположительный `weak`, `significant <= weak`, пустые или
+  повторные значения списка разрешённых типов и
+  `mark_partial_on_analyzer_failure=false`. Новых зависимостей и альтернативной
+  семантики статуса не добавлено.
 
 - **[Stage 6/Финальное закрытие] Stage 6 формально закрыт со статусом `DONE`.**
   Финальная полная проверка качества на HEAD

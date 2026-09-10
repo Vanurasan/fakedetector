@@ -618,6 +618,15 @@ class AnalysisResult(_DomainModel):
     @model_validator(mode="after")
     def validate_terminal_result(self) -> Self:
         """Enforce fixed structural invariants for terminal result statuses."""
+        if self.completeness.status is CompletenessStatus.INSUFFICIENT and any(
+            value is not None
+            for value in (
+                self.risk_assessment.score,
+                self.risk_assessment.score_based_level,
+                self.risk_assessment.final_level,
+            )
+        ):
+            raise ValueError("insufficient completeness cannot contain score or risk levels")
         if self.status is AnalysisStatus.COMPLETED:
             if not isinstance(self.file, ValidatedFileDescriptor):
                 raise ValueError("completed result requires a validated file")
@@ -628,10 +637,18 @@ class AnalysisResult(_DomainModel):
         if self.status is AnalysisStatus.PARTIAL:
             if not isinstance(self.file, ValidatedFileDescriptor):
                 raise ValueError("partial result requires a validated file")
-            if self.completeness.status is not CompletenessStatus.PARTIAL:
-                raise ValueError("partial result requires completeness=partial")
-            if self.risk_assessment.final_level is None:
-                raise ValueError("partial result requires a final risk level")
+            if self.completeness.status not in {
+                CompletenessStatus.PARTIAL,
+                CompletenessStatus.INSUFFICIENT,
+            }:
+                raise ValueError("partial result requires completeness=partial or insufficient")
+            if (
+                self.completeness.status is CompletenessStatus.PARTIAL
+                and self.risk_assessment.final_level is None
+            ):
+                raise ValueError(
+                    "partial result with partial completeness requires a final risk level"
+                )
             limitation_is_explained = (
                 any(warning.strip() for warning in self.warnings)
                 or bool(self.errors)
@@ -656,11 +673,6 @@ class AnalysisResult(_DomainModel):
                 raise ValueError("failed result cannot contain a final risk level")
             if not self.errors:
                 raise ValueError("failed result requires at least one error")
-        if (
-            self.completeness.status is CompletenessStatus.INSUFFICIENT
-            and self.risk_assessment.final_level is not None
-        ):
-            raise ValueError("insufficient completeness cannot contain a final risk level")
         return self
 
 

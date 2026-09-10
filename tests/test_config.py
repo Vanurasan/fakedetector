@@ -13,7 +13,17 @@ from pydantic import ValidationError as PydanticValidationError
 from pytest import param
 
 from fakedetector.config.loader import ConfigurationError, load_config
-from fakedetector.config.models import APIConfig, AppConfig, LoggingConfig
+from fakedetector.config.models import (
+    APIConfig,
+    AppConfig,
+    CompletenessConfig,
+    CriticalOverrideConfig,
+    ErrorHandlingConfig,
+    LoggingConfig,
+    RiskAssessmentConfig,
+    RiskThresholds,
+    SeverityScores,
+)
 
 _REQUIRED_TOP_LEVEL_FIELDS = (
     "schema_version",
@@ -108,11 +118,12 @@ risk_assessment:
   model_id: "score_model_v1"
   model_version: "0.1.0"
   thresholds:
-    low_max: 29
-    medium_max: 60
+    low_max: 5
+    medium_max: 29
   severity_scores:
     weak: 5
     significant: 25
+    critical: 25
   critical_override:
     enabled: false
     allowed_finding_types: []
@@ -149,6 +160,77 @@ external_systems:
         assert config.server.port == 9090
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_stage7_policy_defaults_are_canonical() -> None:
+    config = RiskAssessmentConfig()
+
+    assert config.model_id == "score_model_v1"
+    assert config.model_version == "0.1.0"
+    assert config.thresholds.low_max == 5
+    assert config.thresholds.medium_max == 29
+    assert config.severity_scores.weak == 5
+    assert config.severity_scores.significant == 25
+    assert config.severity_scores.critical == 25
+    assert not config.critical_override.enabled
+    assert config.critical_override.allowed_finding_types == []
+    assert config.completeness.minimum_for_assessment == 0.5
+
+
+@pytest.mark.parametrize("field", ["model_id", "model_version"])
+@pytest.mark.parametrize("value", ["", "   "])
+def test_stage7_model_identity_must_be_non_empty(field: str, value: str) -> None:
+    with pytest.raises(PydanticValidationError):
+        RiskAssessmentConfig.model_validate({field: value})
+
+
+@pytest.mark.parametrize(
+    ("low_max", "medium_max"),
+    [(5, 5), (6, 5)],
+)
+def test_stage7_thresholds_must_be_strictly_ordered(
+    low_max: int,
+    medium_max: int,
+) -> None:
+    with pytest.raises(PydanticValidationError, match="low_max"):
+        RiskThresholds(low_max=low_max, medium_max=medium_max)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"weak": 0, "significant": 25, "critical": 25},
+        {"weak": 5, "significant": 5, "critical": 25},
+        {"weak": 6, "significant": 5, "critical": 25},
+    ],
+)
+def test_stage7_severity_scores_enforce_canonical_order(
+    values: dict[str, int],
+) -> None:
+    with pytest.raises(PydanticValidationError):
+        SeverityScores.model_validate(values)
+
+
+@pytest.mark.parametrize(
+    "allowed_finding_types",
+    [[""], ["   "], ["signal", "signal"]],
+)
+def test_critical_override_allowlist_requires_unique_non_empty_values(
+    allowed_finding_types: list[str],
+) -> None:
+    with pytest.raises(PydanticValidationError):
+        CriticalOverrideConfig(allowed_finding_types=allowed_finding_types)
+
+
+@pytest.mark.parametrize("minimum", [-0.01, 1.01])
+def test_completeness_minimum_must_be_unit_interval(minimum: float) -> None:
+    with pytest.raises(PydanticValidationError):
+        CompletenessConfig(minimum_for_assessment=minimum)
+
+
+def test_schema_1_0_rejects_disabling_partial_on_analyzer_failure() -> None:
+    with pytest.raises(PydanticValidationError, match="must be enabled"):
+        ErrorHandlingConfig(mark_partial_on_analyzer_failure=False)
 
 
 def test_unknown_field_rejected() -> None:
@@ -226,11 +308,12 @@ risk_assessment:
   model_id: "score_model_v1"
   model_version: "0.1.0"
   thresholds:
-    low_max: 29
-    medium_max: 60
+    low_max: 5
+    medium_max: 29
   severity_scores:
     weak: 5
     significant: 25
+    critical: 25
   critical_override:
     enabled: false
     allowed_finding_types: []
@@ -345,11 +428,12 @@ risk_assessment:
   model_id: "score_model_v1"
   model_version: "0.1.0"
   thresholds:
-    low_max: 29
-    medium_max: 60
+    low_max: 5
+    medium_max: 29
   severity_scores:
     weak: 5
     significant: 25
+    critical: 25
   critical_override:
     enabled: false
     allowed_finding_types: []
@@ -743,11 +827,12 @@ risk_assessment:
   model_id: "score_model_v1"
   model_version: "0.1.0"
   thresholds:
-    low_max: 29
-    medium_max: 60
+    low_max: 5
+    medium_max: 29
   severity_scores:
     weak: 5
     significant: 25
+    critical: 25
   critical_override:
     enabled: false
     allowed_finding_types: []
@@ -817,6 +902,14 @@ def test_full_example_config_loads() -> None:
     config = load_config(str(example_path))
     assert isinstance(config, AppConfig)
     assert config.schema_version == "1.0"
+    assert config.risk_assessment.thresholds.low_max == 5
+    assert config.risk_assessment.thresholds.medium_max == 29
+    assert config.risk_assessment.severity_scores.model_dump() == {
+        "weak": 5,
+        "significant": 25,
+        "critical": 25,
+    }
+    assert not config.risk_assessment.critical_override.enabled
 
 
 def test_unknown_nested_field_rejected() -> None:
@@ -895,11 +988,12 @@ risk_assessment:
   model_id: "score_model_v1"
   model_version: "0.1.0"
   thresholds:
-    low_max: 29
-    medium_max: 60
+    low_max: 5
+    medium_max: 29
   severity_scores:
     weak: 5
     significant: 25
+    critical: 25
   critical_override:
     enabled: false
     allowed_finding_types: []
@@ -1075,11 +1169,12 @@ risk_assessment:
   model_id: "score_model_v1"
   model_version: "0.1.0"
   thresholds:
-    low_max: 29
-    medium_max: 60
+    low_max: 5
+    medium_max: 29
   severity_scores:
     weak: 5
     significant: 25
+    critical: 25
   critical_override:
     enabled: false
     allowed_finding_types: []

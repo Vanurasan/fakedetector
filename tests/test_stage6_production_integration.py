@@ -79,15 +79,6 @@ def _png_bytes(pixels: np.ndarray) -> bytes:
     return output.getvalue()
 
 
-def _copy_move_image() -> bytes:
-    rng = np.random.default_rng(217)
-    canvas = np.full((512, 512, 3), 24, dtype=np.uint8)
-    patch = rng.integers(0, 256, size=(112, 112, 3), dtype=np.uint8)
-    canvas[64:176, 48:160] = patch
-    canvas[300:412, 320:432] = patch
-    return _png_bytes(canvas)
-
-
 def _saturated_wav() -> bytes:
     samples = np.full(8_000, 1_000, dtype="<i2")
     samples[::100] = 32_767
@@ -159,11 +150,12 @@ def test_canonical_example_activates_valid_profile_b_in_production_order() -> No
 def test_production_image_vertical_publishes_authoritative_results_and_findings(
     tmp_path: Path,
     real_worker_processes: list[BaseProcess],
+    copy_move_png_bytes: bytes,
 ) -> None:
     runtime = _production_runtime(_config(tmp_path))
     accepted, task = _run(
         runtime,
-        _copy_move_image(),
+        copy_move_png_bytes,
         original_name="copy-move.png",
         declared_content_type="image/png",
     )

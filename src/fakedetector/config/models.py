@@ -267,8 +267,15 @@ class RiskThresholds(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    low_max: int = Field(default=29, ge=0)
-    medium_max: int = Field(default=60, ge=0)
+    low_max: int = Field(default=5, ge=0)
+    medium_max: int = Field(default=29, ge=0)
+
+    @model_validator(mode="after")
+    def require_ordered_thresholds(self) -> RiskThresholds:
+        """Require distinct monotonically increasing risk boundaries."""
+        if self.low_max >= self.medium_max:
+            raise ValueError("low_max must be less than medium_max")
+        return self
 
 
 class SeverityScores(BaseModel):
@@ -276,8 +283,16 @@ class SeverityScores(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    weak: int = Field(default=5, ge=0)
-    significant: int = Field(default=25, ge=0)
+    weak: int = Field(default=5, gt=0)
+    significant: int = Field(default=25, gt=0)
+    critical: int = Field(default=25, ge=0)
+
+    @model_validator(mode="after")
+    def require_increasing_noncritical_scores(self) -> SeverityScores:
+        """Keep a significant finding stronger than a weak finding."""
+        if self.significant <= self.weak:
+            raise ValueError("significant must be greater than weak")
+        return self
 
 
 class CriticalOverrideConfig(BaseModel):
@@ -287,6 +302,16 @@ class CriticalOverrideConfig(BaseModel):
 
     enabled: bool = False
     allowed_finding_types: list[str] = Field(default_factory=list)
+
+    @field_validator("allowed_finding_types")
+    @classmethod
+    def require_unique_non_empty_finding_types(cls, value: list[str]) -> list[str]:
+        """Reject ambiguous or empty configured finding type keys."""
+        if any(not finding_type.strip() for finding_type in value):
+            raise ValueError("allowed_finding_types values must be non-empty")
+        if len(value) != len(set(value)):
+            raise ValueError("allowed_finding_types values must be unique")
+        return value
 
 
 class CompletenessConfig(BaseModel):
@@ -309,6 +334,14 @@ class RiskAssessmentConfig(BaseModel):
     critical_override: CriticalOverrideConfig = Field(default_factory=CriticalOverrideConfig)
     completeness: CompletenessConfig = Field(default_factory=CompletenessConfig)
 
+    @field_validator("model_id", "model_version")
+    @classmethod
+    def require_non_empty_model_identity(cls, value: str) -> str:
+        """Require a meaningful versioned identity for the Stage 7 policy bundle."""
+        if not value.strip():
+            raise ValueError("risk model identity values must be non-empty")
+        return value
+
 
 class ResultConfig(BaseModel):
     """Result storage configuration."""
@@ -329,6 +362,14 @@ class ErrorHandlingConfig(BaseModel):
     continue_if_analyzer_fails: bool = True
     mark_partial_on_analyzer_failure: bool = True
     hide_internal_error_details: bool = True
+
+    @field_validator("mark_partial_on_analyzer_failure")
+    @classmethod
+    def require_canonical_stage7_partial_policy(cls, value: bool) -> bool:
+        """Reject the alternate status semantics that schema 1.0 does not define."""
+        if not value:
+            raise ValueError("mark_partial_on_analyzer_failure must be enabled")
+        return value
 
 
 class LoggingConfig(BaseModel):

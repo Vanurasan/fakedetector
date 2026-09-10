@@ -18,6 +18,7 @@ from fakedetector.intake import (
 )
 from fakedetector.lifecycle._stage5 import Stage5ExecutionService
 from fakedetector.lifecycle._stage6 import Stage6FindingService
+from fakedetector.lifecycle._stage7 import Stage7AssessmentService
 from fakedetector.lifecycle.execution import MediaRouter, TaskRegistry
 from fakedetector.lifecycle.receiver import Stage4TaskReceiver
 from fakedetector.lifecycle.scheduler import BoundedLocalScheduler
@@ -45,6 +46,7 @@ def _build_production_runtime(config: AppConfig) -> _ProductionRuntime:
         preprocessing=PreprocessingDispatcher(config),
         orchestrator=AnalyzerOrchestrator(analyzer_registry),
         finding_service=Stage6FindingService(),
+        assessment_service=Stage7AssessmentService(config.risk_assessment),
     )
     scheduler = BoundedLocalScheduler(
         config=config,

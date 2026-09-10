@@ -1,7 +1,7 @@
 # Полный пример канонической конфигурации.
-# Настройки Stage 7/8 пока не используются приложением.
-# Пороги и веса risk_assessment являются проектными примерами
-# и не являются валидированной моделью оценки риска.
+# Настройки Stage 7 зафиксированы как внутренняя детерминированная policy;
+# Stage 7 подключён к production execution path; возможности Stage 8 пока отсутствуют.
+# Пороги и веса risk_assessment не являются статистически валидированной моделью.
 # Скопируйте этот файл в config.yaml и измените под своё окружение.
 # Секреты (токены, пароли) храните только в переменных окружения или .env.
 
@@ -92,11 +92,12 @@ risk_assessment:
   model_id: "score_model_v1"
   model_version: "0.1.0"
   thresholds:
-    low_max: 29
-    medium_max: 60
+    low_max: 5
+    medium_max: 29
   severity_scores:
     weak: 5
     significant: 25
+    critical: 25
   critical_override:
     enabled: false
     allowed_finding_types: []
