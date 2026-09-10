@@ -342,6 +342,24 @@ YYYY-MM-DD
 
 ### 2026-09-10
 
+### Изменено
+
+- **[Stage 7/Формальное закрытие] Stage 7 формально закрыт со статусом
+  `DONE` после независимого read-only аудита.** Verdict аудита —
+  `CLOSE_STAGE7_UNCHANGED`; correctness findings уровней `BLOCKER`, `HIGH` и
+  `MEDIUM` отсутствуют. `S7-A01` (`LOW`) закрыт как документационная
+  неточность: комментарий `config/config.example.yaml` теперь отражает
+  подключённый production execution path Stage 7. `S7-A02` принят как
+  `LOW / NON_BLOCKING / ACCEPTED_TEST_COVERAGE_DEBT`: отдельной
+  regression-проверки истечения общего processing deadline именно во время
+  Stage 7 assessment/publication нет, но текущий код содержит checkpoint и
+  функциональный дефект не установлен. Долг тестового покрытия не блокирует
+  Stage 8. Implementation barrier перед аудитом: `1511 passed, 2 skipped`,
+  combined coverage `89.76%`, statements `92.23%` (`5937/6437`), branches
+  `80.01%` (`1309/1636`). Independent final audit не повторял полный
+  barrier и дополнительно выполнил узкий набор Stage 7/domain tests:
+  `100 passed`; `git diff --check` — `PASS`. Stage 8 остаётся `NOT_STARTED`.
+
 ### Добавлено
 
 - **[Stage 7/Increment 3] Stage 7 подключён к рабочему контуру выполнения;
