@@ -324,6 +324,24 @@ ownership execution claim, primary outcome, terminal settlement, cleanup и
 FINISHED publication. Canonical `Stage5ExecutionService` реализует существующий
 port `TaskExecutor.execute(task) -> TaskExecutionOutcome`, не меняя его signature.
 
+Stage 7 Increment 2 добавляет следующий участок жизненного цикла, предназначенный
+только для внутреннего использования:
+
+```text
+RUNNING / ANALYSIS + опубликованный Stage6TaskData
+→ RUNNING / RISK_ASSESSMENT
+→ COMPLETED | PARTIAL | FAILED / CLEANUP
+→ тот же основной статус / FINISHED
+```
+
+Переход в `RISK_ASSESSMENT` требует опубликованный `Stage6TaskData`.
+`COMPLETED` и `PARTIAL` из `RISK_ASSESSMENT` требуют опубликованный
+`Stage7TaskData`; настоящий внутренний сбой может завершиться `FAILED` без него.
+`TaskExecutionOutcome` допускает `COMPLETED`, пригодный `PARTIAL` без искусственного
+`ErrorDetail` и барьера безопасности очистки либо `FAILED` с обязательной безопасной
+основной ошибкой. До подключения Increment 3 к рабочему контуру прежний путь
+завершения Stage 5 из `ANALYSIS` сохраняется.
+
 ### 3.2. Внутренний контекст задачи `AnalysisContext`
 
 Минимальные поля:
@@ -398,6 +416,18 @@ Stage 6 хранит нормализованные `Finding[]` в отдель�
 сохраняет связь каждого finding с `source_analyzer_id` и
 `source_analyzer_version` и не вводит промежуточный `AnalysisResult`, persistence
 или public schema.
+
+Stage 7 хранит `AnalysisCompleteness`, `RiskAssessment` и `Recommendation` в
+отдельном `Stage7TaskData`. Каждое значение сохраняется как канонические
+JSON-байты UTF-8, повторно провалидированные перед единственной атомарной
+публикацией в `RUNNING / RISK_ASSESSMENT`. Публикация требует тот же объект
+авторитетной задачи, существующие `Stage5TaskData` и `Stage6TaskData` и
+отсутствующее прежнее состояние Stage 7. Внутреннее чтение через
+`TaskRegistry._read_stage7_assessment(task)` повторно выполняет
+`model_validate_json` и возвращает новые независимо восстановленные
+провалидированные значения Pydantic, в том числе после `FINISHED`.
+`Stage7TaskData` не входит в `TaskSnapshot`, публичную схему, постоянное хранение
+или `AnalysisResult`.
 
 До visible terminal publication aggregate может содержать минимальный
 internal-only `TerminalSettlement`. Он не входит в `TaskSnapshot`, external JSON,

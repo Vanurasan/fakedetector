@@ -340,6 +340,24 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-10
+
+### Добавлено
+
+- **[Stage 7/Increment 2] Добавлено отдельное авторитетное состояние и минимальный
+  участок жизненного цикла.** Предназначенный только для внутреннего использования
+  `Stage7TaskData` хранит канонические неизменяемые JSON-байты UTF-8 для
+  `AnalysisCompleteness`, `RiskAssessment` и `Recommendation`; `TaskRegistry`
+  обеспечивает однократную атомарную публикацию после `Stage6TaskData` и независимое
+  чтение с повторной валидацией, доступное после `FINISHED`.
+  Переходы расширены цепочкой
+  `ANALYSIS → RISK_ASSESSMENT → COMPLETED | PARTIAL | FAILED / CLEANUP` и
+  `PARTIAL / CLEANUP → PARTIAL / FINISHED`. `TaskExecutionOutcome.partial()`
+  представляет пригодный результат без искусственного `ErrorDetail` и барьера
+  безопасности очистки и использует существующий механизм владения очисткой Stage 4.
+  Подключение к рабочему контуру, `AnalysisResult`, постоянное хранение, API/WebUI,
+  планировщик и архитектура очистки не изменены.
+
 ### 2026-09-09
 
 ### Добавлено
