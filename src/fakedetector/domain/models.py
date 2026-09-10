@@ -464,16 +464,37 @@ class AnalysisCompleteness(_DomainModel):
     model_config = ConfigDict(extra="forbid")
 
     status: CompletenessStatus
-    planned_analyzers: int = Field(ge=0)
-    applicable_analyzers: int = Field(ge=0)
-    completed_analyzers: int = Field(ge=0)
-    failed_analyzers: int = Field(ge=0)
-    timed_out_analyzers: int = Field(ge=0)
-    skipped_analyzers: int = Field(ge=0)
-    not_applicable_analyzers: int = Field(ge=0)
-    coverage_ratio: float = Field(ge=0, le=1)
+    planned_analyzers: int | None = Field(ge=0)
+    applicable_analyzers: int | None = Field(ge=0)
+    completed_analyzers: int | None = Field(ge=0)
+    failed_analyzers: int | None = Field(ge=0)
+    timed_out_analyzers: int | None = Field(ge=0)
+    skipped_analyzers: int | None = Field(ge=0)
+    not_applicable_analyzers: int | None = Field(ge=0)
+    coverage_ratio: float | None = Field(ge=0, le=1)
     missing_capabilities: list[str]
     explanation: str
+
+    @model_validator(mode="after")
+    def validate_assessment_facts(self) -> Self:
+        """Separate an unperformed assessment from factual Stage 7 counters."""
+        counters = (
+            self.planned_analyzers,
+            self.applicable_analyzers,
+            self.completed_analyzers,
+            self.failed_analyzers,
+            self.timed_out_analyzers,
+            self.skipped_analyzers,
+            self.not_applicable_analyzers,
+        )
+        if self.status is CompletenessStatus.NOT_ASSESSED:
+            if any(value is not None for value in (*counters, self.coverage_ratio)):
+                raise ValueError("not_assessed completeness cannot contain counters")
+            if self.missing_capabilities:
+                raise ValueError("not_assessed completeness cannot contain missing capabilities")
+        elif any(value is None for value in (*counters, self.coverage_ratio)):
+            raise ValueError("assessed completeness requires all counters and coverage_ratio")
+        return self
 
 
 class RiskAssessment(_DomainModel):
@@ -558,7 +579,7 @@ class AnalysisProcessing(_DomainModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    queued_at: datetime
+    queued_at: datetime | None
     started_at: datetime | None
     finished_at: datetime | None
     duration_ms: int | None = Field(ge=0)
@@ -570,6 +591,22 @@ class AnalysisProcessing(_DomainModel):
     def validate_datetime_is_utc(cls, value: datetime | None) -> datetime | None:
         """Require UTC for every processing timestamp that is present."""
         return _validate_utc_datetime(value, "processing datetimes")
+
+    @model_validator(mode="after")
+    def validate_factual_duration(self) -> Self:
+        """Require duration to equal the full elapsed milliseconds after start."""
+        if self.started_at is None:
+            if self.duration_ms is not None:
+                raise ValueError("duration_ms requires started_at")
+            return self
+        if self.finished_at is None:
+            raise ValueError("started_at requires finished_at and duration_ms")
+        expected_duration_ms = (self.finished_at - self.started_at) // timedelta(
+            milliseconds=1
+        )
+        if self.duration_ms != expected_duration_ms:
+            raise ValueError("duration_ms must equal factual processing duration")
+        return self
 
     @field_serializer("queued_at", "started_at", "finished_at", when_used="json")
     def serialize_datetime(self, value: datetime | None) -> str | None:
@@ -589,14 +626,14 @@ class AnalysisResult(_DomainModel):
     status: AnalysisStatus
     stage: ProcessingStage
     source: SourceContext
-    file: InputFileDescriptor | ValidatedFileDescriptor
+    file: InputFileDescriptor | ValidatedFileDescriptor | None
     processing: AnalysisProcessing
     analyzers: list[AnalyzerResult]
     findings: list[Finding]
     completeness: AnalysisCompleteness
-    risk_assessment: RiskAssessment
-    recommendation: Recommendation
-    cleanup: CleanupResult
+    risk_assessment: RiskAssessment | None
+    recommendation: Recommendation | None
+    cleanup: CleanupResult | None
     warnings: list[str]
     errors: list[ErrorDetail]
 
@@ -618,30 +655,93 @@ class AnalysisResult(_DomainModel):
     @model_validator(mode="after")
     def validate_terminal_result(self) -> Self:
         """Enforce fixed structural invariants for terminal result statuses."""
-        if self.completeness.status is CompletenessStatus.INSUFFICIENT and any(
-            value is not None
-            for value in (
-                self.risk_assessment.score,
-                self.risk_assessment.score_based_level,
-                self.risk_assessment.final_level,
-            )
+        if self.status not in {
+            AnalysisStatus.COMPLETED,
+            AnalysisStatus.PARTIAL,
+            AnalysisStatus.REJECTED,
+            AnalysisStatus.FAILED,
+        }:
+            raise ValueError("analysis result requires a terminal status")
+        if self.stage is not ProcessingStage.FINISHED:
+            raise ValueError("analysis result requires stage=finished")
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at cannot precede created_at")
+        if self.processing.finished_at is None:
+            raise ValueError("terminal result requires processing.finished_at")
+        if self.processing.finished_at != self.updated_at:
+            raise ValueError("updated_at must equal processing.finished_at")
+        if (
+            self.processing.queued_at is not None
+            and self.processing.queued_at < self.created_at
         ):
-            raise ValueError("insufficient completeness cannot contain score or risk levels")
+            raise ValueError("queued_at cannot precede created_at")
+        if self.processing.started_at is not None:
+            if self.processing.queued_at is None:
+                raise ValueError("started_at requires queued_at")
+            if self.processing.started_at < self.processing.queued_at:
+                raise ValueError("started_at cannot precede queued_at")
+        lower_bound = self.processing.started_at or self.processing.queued_at or self.created_at
+        if self.processing.finished_at < lower_bound:
+            raise ValueError("finished_at violates processing chronology")
+        if self.file is not None and self.cleanup is None:
+            raise ValueError("terminal result with file facts requires cleanup facts")
+        if (
+            self.cleanup is not None
+            and self.cleanup.finished_at is not None
+            and self.cleanup.finished_at > self.processing.finished_at
+        ):
+            raise ValueError("cleanup finished_at cannot follow result finalization")
+        if self.completeness.status is CompletenessStatus.INSUFFICIENT:
+            if self.risk_assessment is None:
+                raise ValueError("insufficient completeness requires a Stage 7 assessment")
+            if any(
+                value is not None
+                for value in (
+                    self.risk_assessment.score,
+                    self.risk_assessment.score_based_level,
+                    self.risk_assessment.final_level,
+                )
+            ):
+                raise ValueError("insufficient completeness cannot contain score or risk levels")
         if self.status is AnalysisStatus.COMPLETED:
             if not isinstance(self.file, ValidatedFileDescriptor):
                 raise ValueError("completed result requires a validated file")
+            if any(
+                timestamp is None
+                for timestamp in (
+                    self.processing.queued_at,
+                    self.processing.started_at,
+                    self.processing.finished_at,
+                )
+            ):
+                raise ValueError("completed result requires factual processing timestamps")
             if self.completeness.status is not CompletenessStatus.COMPLETE:
                 raise ValueError("completed result requires completeness=complete")
-            if self.risk_assessment.final_level is None:
+            if self.risk_assessment is None or self.risk_assessment.final_level is None:
                 raise ValueError("completed result requires a final risk level")
+            if self.recommendation is None:
+                raise ValueError("completed result requires a recommendation")
+            if self.cleanup is None:
+                raise ValueError("completed result requires cleanup facts")
         if self.status is AnalysisStatus.PARTIAL:
             if not isinstance(self.file, ValidatedFileDescriptor):
                 raise ValueError("partial result requires a validated file")
+            if any(
+                timestamp is None
+                for timestamp in (
+                    self.processing.queued_at,
+                    self.processing.started_at,
+                    self.processing.finished_at,
+                )
+            ):
+                raise ValueError("partial result requires factual processing timestamps")
             if self.completeness.status not in {
                 CompletenessStatus.PARTIAL,
                 CompletenessStatus.INSUFFICIENT,
             }:
                 raise ValueError("partial result requires completeness=partial or insufficient")
+            if self.risk_assessment is None:
+                raise ValueError("partial result requires a risk assessment")
             if (
                 self.completeness.status is CompletenessStatus.PARTIAL
                 and self.risk_assessment.final_level is None
@@ -657,22 +757,43 @@ class AnalysisResult(_DomainModel):
             )
             if not limitation_is_explained:
                 raise ValueError("partial result requires an explicit limitation")
+            if self.recommendation is None:
+                raise ValueError("partial result requires a recommendation")
+            if self.cleanup is None:
+                raise ValueError("partial result requires cleanup facts")
         if self.status is AnalysisStatus.REJECTED:
+            if isinstance(self.file, ValidatedFileDescriptor):
+                raise ValueError("rejected result cannot contain a validated file")
             if self.analyzers:
                 raise ValueError("rejected result cannot contain analyzer results")
             if self.findings:
                 raise ValueError("rejected result cannot contain findings")
-            if self.risk_assessment.final_level is not None:
-                raise ValueError("rejected result cannot contain a final risk level")
             if self.completeness.status is not CompletenessStatus.NOT_ASSESSED:
                 raise ValueError("rejected result requires completeness=not_assessed")
+            if self.risk_assessment is not None:
+                raise ValueError("rejected result cannot contain a risk assessment")
+            if self.recommendation is not None:
+                raise ValueError("rejected result cannot contain a recommendation")
+            if self.processing.queued_at is not None or self.processing.started_at is not None:
+                raise ValueError("rejected result cannot contain queue or start timestamps")
             if not self.errors:
                 raise ValueError("rejected result requires at least one error")
         if self.status is AnalysisStatus.FAILED:
-            if self.risk_assessment.final_level is not None:
-                raise ValueError("failed result cannot contain a final risk level")
+            if self.completeness.status is not CompletenessStatus.NOT_ASSESSED:
+                raise ValueError("failed result requires completeness=not_assessed")
+            if self.risk_assessment is not None:
+                raise ValueError("failed result cannot contain a risk assessment")
+            if self.recommendation is not None:
+                raise ValueError("failed result cannot contain a recommendation")
             if not self.errors:
                 raise ValueError("failed result requires at least one error")
+        if self.processing.queued_at is not None:
+            if not isinstance(self.file, ValidatedFileDescriptor):
+                raise ValueError("queued result requires a validated file")
+            if self.cleanup is None:
+                raise ValueError("queued terminal result requires cleanup facts")
+            if self.cleanup.finished_at != self.processing.finished_at:
+                raise ValueError("accepted cleanup must share the terminal timestamp")
         return self
 
 
@@ -716,6 +837,8 @@ class AnalysisResultSummary(_DomainModel):
             updated_at=result.updated_at,
             status=result.status,
             media_type=media_type,
-            final_risk_level=result.risk_assessment.final_level,
+            final_risk_level=(
+                None if result.risk_assessment is None else result.risk_assessment.final_level
+            ),
             completeness_status=result.completeness.status,
         )

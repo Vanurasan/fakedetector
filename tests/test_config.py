@@ -677,6 +677,15 @@ def test_empty_allowed_formats_section_uses_canonical_mvp_matrix() -> None:
     assert config.allowed_formats.video.extensions == ["mp4", "mov", "avi", "mkv"]
 
 
+@pytest.mark.parametrize("field", ["atomic_write", "store_original_name"])
+def test_result_mvp_requires_safe_storage_policy(field: str) -> None:
+    data = yaml.safe_load(_MINIMAL_YAML)
+    data["result"][field] = False
+
+    with pytest.raises(PydanticValidationError):
+        AppConfig.model_validate(data)
+
+
 def test_noncanonical_allowed_formats_are_rejected() -> None:
     data = yaml.safe_load(_MINIMAL_YAML)
     data["allowed_formats"]["image"]["extensions"].remove("webp")

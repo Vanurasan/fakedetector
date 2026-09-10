@@ -15,6 +15,7 @@ from threading import enumerate as enumerate_threads
 from types import FrameType
 
 import pytest
+from result_backend_fakes import SuccessfulAcceptedResultFinalizer
 
 import fakedetector.lifecycle.scheduler as scheduler_module
 from fakedetector.app import create_app
@@ -502,7 +503,12 @@ def make_runtime(
     registry = TaskRegistry()
     raw_clock = clock or UtcClock()
     actual_clock = AuthoritativeLifecycleClock(raw_clock)
-    scheduler = scheduler_factory(config=config, clock=actual_clock, registry=registry)
+    scheduler = scheduler_factory(
+        config=config,
+        clock=actual_clock,
+        registry=registry,
+        result_finalizer=SuccessfulAcceptedResultFinalizer(),
+    )
     receiver = Stage4TaskReceiver(
         config=config,
         clock=actual_clock,
@@ -638,7 +644,12 @@ def test_exactly_once_registry_claim_race_executes_and_cleans_once(tmp_path: Pat
     )
     submit(receiver, owner, "claim-race")
     assert queue.pop_next() is not None
-    processor = Stage4TaskProcessor(config=config, clock=clock, registry=registry)
+    processor = Stage4TaskProcessor(
+        config=config,
+        clock=clock,
+        registry=registry,
+        result_finalizer=SuccessfulAcceptedResultFinalizer(),
+    )
     barrier = Barrier(3)
     outcomes: list[object] = []
 
@@ -788,7 +799,7 @@ def test_terminal_clock_failure_does_not_strand_task_or_destroy_worker(tmp_path:
     assert scheduler.is_stopped
 
 
-def test_worker_recovers_fact_ready_settlement_without_repeating_cleanup(
+def test_worker_leaves_post_save_publication_failure_in_persistence_without_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -811,14 +822,15 @@ def test_worker_recovers_fact_ready_settlement_without_repeating_cleanup(
     scheduler.shutdown(drain=True)
 
     snapshot = registry.snapshot(accepted.analysis_id)
-    assert finalize_calls == 2
+    assert finalize_calls == 1
     assert snapshot.status is AnalysisStatus.COMPLETED
-    assert snapshot.stage is ProcessingStage.FINISHED
-    assert snapshot.cleanup is not None
-    assert snapshot.cleanup.finished_at == snapshot.finished_at
+    assert snapshot.stage is ProcessingStage.PERSISTENCE
+    assert snapshot.cleanup is None
+    assert snapshot.finished_at is None
     assert owner.cleanup_calls(accepted.analysis_id) == 1
     assert accepted.controlled_source.is_released
-    assert not registry.is_active(accepted.analysis_id)
+    assert registry.is_active(accepted.analysis_id)
+    assert registry.recoverable_terminal_tasks() == ()
 
 
 def test_regressing_raw_started_sample_degrades_and_worker_remains_usable(

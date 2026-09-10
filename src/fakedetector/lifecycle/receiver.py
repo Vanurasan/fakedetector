@@ -27,6 +27,10 @@ from fakedetector.lifecycle.models import (
     TaskSnapshot,
     TerminalSettlementPhase,
 )
+from fakedetector.result_finalization import (
+    AcceptedResultFinalizer,
+    ResultFinalizationError,
+)
 
 
 class Stage4ReceiverError(Exception):
@@ -130,11 +134,17 @@ class Stage4LifecycleRunner:
         clock: AuthoritativeLifecycleClock,
         registry: TaskRegistry,
         queue: DeterministicTaskQueue,
+        result_finalizer: AcceptedResultFinalizer,
     ) -> None:
         self._clock = clock
         self._registry = registry
         self._queue = queue
-        self._processor = Stage4TaskProcessor(config=config, clock=clock, registry=registry)
+        self._processor = Stage4TaskProcessor(
+            config=config,
+            clock=clock,
+            registry=registry,
+            result_finalizer=result_finalizer,
+        )
 
     def run_next(self) -> TaskSnapshot | None:
         """Execute and finish exactly one queued task, or return None when empty."""
@@ -154,10 +164,16 @@ class Stage4TaskProcessor:
         config: AppConfig,
         clock: AuthoritativeLifecycleClock,
         registry: TaskRegistry,
+        result_finalizer: AcceptedResultFinalizer,
     ) -> None:
-        captured_config = _ConfigSnapshot.capture(config).materialize()
+        config_snapshot = _ConfigSnapshot.capture(config)
+        captured_config = config_snapshot.materialize()
+        snapshot_check = getattr(result_finalizer, "_uses_config_snapshot", None)
+        if snapshot_check is not None and not snapshot_check(config_snapshot):
+            raise ValueError("result finalizer uses a different config snapshot")
         self._clock = clock
         self._registry = registry
+        self._result_finalizer = result_finalizer
         self._cleanup = WorkspaceCleanup(
             config=captured_config.temporary_storage,
             clock=clock,
@@ -245,8 +261,35 @@ class Stage4TaskProcessor:
                 settlement = self._registry.terminal_settlement(analysis_id, owner_token)
             if settlement.phase is not TerminalSettlementPhase.FACT_READY:
                 raise RuntimeError("terminal settlement is not fact-ready")
-            lower_bound = task.context.started_at or task.queued_at or task.context.created_at
+            terminal_facts = self._registry.terminal_task_facts(
+                analysis_id,
+                owner_token,
+            )
+            lower_bound = (
+                terminal_facts.started_at
+                or terminal_facts.queued_at
+                or terminal_facts.created_at
+            )
             finished_at = self._clock.terminal_now(not_before=lower_bound)
+            try:
+                self._result_finalizer.finalize_accepted(
+                    terminal_facts,
+                    finished_at=finished_at,
+                    before_save=lambda: self._registry.start_terminal_persistence(
+                        analysis_id,
+                        owner_token,
+                    ),
+                )
+            except ResultFinalizationError as error:
+                if error.analysis_id != analysis_id:
+                    raise RuntimeError("result finalization identity mismatch") from None
+                self._registry.record_result_persistence_failure(
+                    analysis_id,
+                    owner_token,
+                    error.error_detail,
+                )
+                self._registry.release_terminal_settlement(analysis_id, owner_token)
+                return self._registry.snapshot(analysis_id)
             self._registry.finalize_terminal_settlement(
                 analysis_id,
                 owner_token,

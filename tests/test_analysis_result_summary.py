@@ -78,7 +78,7 @@ def result_data(*, validated_file: bool) -> dict[str, Any]:
         "analysis_id": "projection-001",
         "created_at": created_at,
         "updated_at": updated_at,
-        "status": "completed" if validated_file else "running",
+        "status": "completed" if validated_file else "failed",
         "stage": "finished",
         "source": {
             "channel": "api",
@@ -88,48 +88,72 @@ def result_data(*, validated_file: bool) -> dict[str, Any]:
         },
         "file": validated_descriptor if validated_file else input_file,
         "processing": {
-            "queued_at": created_at,
-            "started_at": created_at,
+            "queued_at": created_at if validated_file else None,
+            "started_at": created_at if validated_file else None,
             "finished_at": updated_at,
-            "duration_ms": 180_000,
+            "duration_ms": 180_000 if validated_file else None,
             "config_snapshot_id": "config-test",
             "application_version": "0.1.0",
         },
         "analyzers": [],
         "findings": [],
-        "completeness": {
-            "status": "complete",
-            "planned_analyzers": 99,
-            "applicable_analyzers": 98,
-            "completed_analyzers": 1,
-            "failed_analyzers": 97,
-            "timed_out_analyzers": 0,
-            "skipped_analyzers": 1,
-            "not_applicable_analyzers": 1,
-            "coverage_ratio": 0.01,
-            "missing_capabilities": ["private-capability"],
-            "explanation": "This value must not enter the summary.",
-        },
-        "risk_assessment": {
-            "model_id": "score-model",
-            "model_version": "1.0",
-            "score": 999,
-            "score_based_level": "high",
-            "critical_override_applied": False,
-            "critical_finding_ids": [],
-            "final_level": "medium",
-            "probability": None,
-            "probability_method": None,
-            "summary": "Private risk text.",
-            "explanation": "Private explanation.",
-            "limitations": ["private limitation"],
-        },
-        "recommendation": {
-            "primary_action": "manual_review",
-            "additional_actions": [],
-            "text": "Private recommendation.",
-            "requires_manual_review": True,
-        },
+        "completeness": (
+            {
+                "status": "complete",
+                "planned_analyzers": 99,
+                "applicable_analyzers": 98,
+                "completed_analyzers": 1,
+                "failed_analyzers": 97,
+                "timed_out_analyzers": 0,
+                "skipped_analyzers": 1,
+                "not_applicable_analyzers": 1,
+                "coverage_ratio": 0.01,
+                "missing_capabilities": ["private-capability"],
+                "explanation": "This value must not enter the summary.",
+            }
+            if validated_file
+            else {
+                "status": "not_assessed",
+                "planned_analyzers": None,
+                "applicable_analyzers": None,
+                "completed_analyzers": None,
+                "failed_analyzers": None,
+                "timed_out_analyzers": None,
+                "skipped_analyzers": None,
+                "not_applicable_analyzers": None,
+                "coverage_ratio": None,
+                "missing_capabilities": [],
+                "explanation": "Полнота анализа не оценивалась.",
+            }
+        ),
+        "risk_assessment": (
+            {
+                "model_id": "score-model",
+                "model_version": "1.0",
+                "score": 999,
+                "score_based_level": "high",
+                "critical_override_applied": False,
+                "critical_finding_ids": [],
+                "final_level": "medium",
+                "probability": None,
+                "probability_method": None,
+                "summary": "Private risk text.",
+                "explanation": "Private explanation.",
+                "limitations": ["private limitation"],
+            }
+            if validated_file
+            else None
+        ),
+        "recommendation": (
+            {
+                "primary_action": "manual_review",
+                "additional_actions": [],
+                "text": "Private recommendation.",
+                "requires_manual_review": True,
+            }
+            if validated_file
+            else None
+        ),
         "cleanup": {
             "status": "completed",
             "original_file_deleted": True,
@@ -139,7 +163,18 @@ def result_data(*, validated_file: bool) -> dict[str, Any]:
             "errors": [],
         },
         "warnings": ["Private warning."],
-        "errors": [],
+        "errors": (
+            []
+            if validated_file
+            else [
+                {
+                    "code": "internal_error",
+                    "category": "internal",
+                    "message": "Safe failure.",
+                    "retryable": False,
+                }
+            ]
+        ),
     }
 
 
@@ -225,12 +260,17 @@ def test_summary_rejects_extra_fields_and_omits_full_result_fields() -> None:
 
 
 @pytest.mark.parametrize(
-    ("validated_file", "expected_media_type"),
-    [(True, MediaType.IMAGE), (False, None)],
+    ("validated_file", "expected_media_type", "expected_risk", "expected_completeness"),
+    [
+        (True, MediaType.IMAGE, RiskLevel.MEDIUM, CompletenessStatus.COMPLETE),
+        (False, None, None, CompletenessStatus.NOT_ASSESSED),
+    ],
 )
 def test_summary_projection_copies_only_contracted_sources(
     validated_file: bool,
     expected_media_type: MediaType | None,
+    expected_risk: RiskLevel | None,
+    expected_completeness: CompletenessStatus,
 ) -> None:
     result = AnalysisResult.model_validate(result_data(validated_file=validated_file))
 
@@ -242,10 +282,11 @@ def test_summary_projection_copies_only_contracted_sources(
         updated_at=result.updated_at,
         status=result.status,
         media_type=expected_media_type,
-        final_risk_level=RiskLevel.MEDIUM,
-        completeness_status=CompletenessStatus.COMPLETE,
+        final_risk_level=expected_risk,
+        completeness_status=expected_completeness,
     )
-    assert summary.final_risk_level is not result.risk_assessment.score_based_level
+    if result.risk_assessment is not None:
+        assert summary.final_risk_level is not result.risk_assessment.score_based_level
     serialized = summary.model_dump_json()
     for sensitive_value in (
         "misleading-audio.mp3",
@@ -262,22 +303,13 @@ def test_summary_projection_copies_only_contracted_sources(
 
 def test_summary_projection_preserves_absent_final_risk_without_deriving_low() -> None:
     data = result_data(validated_file=False)
-    data["status"] = "failed"
-    data["risk_assessment"]["final_level"] = None
-    data["completeness"]["status"] = "not_assessed"
-    data["errors"] = [
-        {
-            "code": "internal_error",
-            "category": "internal",
-            "message": "Safe failure.",
-            "retryable": False,
-        }
-    ]
+    data["file"] = None
     result = AnalysisResult.model_validate(data)
 
     summary = AnalysisResultSummary.from_result(result)
 
     assert summary.final_risk_level is None
+    assert summary.media_type is None
     assert summary.completeness_status is CompletenessStatus.NOT_ASSESSED
 
 

@@ -349,9 +349,9 @@ class ResultConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     directory: str = "runtime/results"
-    atomic_write: bool = True
+    atomic_write: Literal[True] = True
     include_raw_metrics: bool = False
-    store_original_name: bool = True
+    store_original_name: Literal[True] = True
 
 
 class ErrorHandlingConfig(BaseModel):

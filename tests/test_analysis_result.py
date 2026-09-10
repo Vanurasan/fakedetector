@@ -163,6 +163,20 @@ def finding_data() -> dict[str, Any]:
 
 def completeness_data(status: str = "complete") -> dict[str, Any]:
     """Return declared completeness without calculating it in the result model."""
+    if status == "not_assessed":
+        return {
+            "status": status,
+            "planned_analyzers": None,
+            "applicable_analyzers": None,
+            "completed_analyzers": None,
+            "failed_analyzers": None,
+            "timed_out_analyzers": None,
+            "skipped_analyzers": None,
+            "not_applicable_analyzers": None,
+            "coverage_ratio": None,
+            "missing_capabilities": [],
+            "explanation": "Полнота анализа не оценивалась.",
+        }
     return {
         "status": status,
         "planned_analyzers": 1,
@@ -213,7 +227,7 @@ def cleanup_data() -> dict[str, Any]:
         "original_file_deleted": True,
         "intermediate_files_deleted": True,
         "quarantine_used": False,
-        "finished_at": datetime(2026, 7, 24, 14, 36, 17, tzinfo=UTC),
+        "finished_at": datetime(2026, 7, 24, 14, 36, 18, tzinfo=UTC),
         "errors": [],
     }
 
@@ -249,10 +263,17 @@ def rejected_result_data() -> dict[str, Any]:
             "status": "rejected",
             "stage": "finished",
             "file": input_file_data(),
+            "processing": {
+                **processing_data(),
+                "queued_at": None,
+                "started_at": None,
+                "duration_ms": None,
+            },
             "analyzers": [],
             "findings": [],
             "completeness": completeness_data("not_assessed"),
-            "risk_assessment": risk_data(None),
+            "risk_assessment": None,
+            "recommendation": None,
             "errors": [error_data("file_signature_mismatch", "validation")],
         }
     )
@@ -266,7 +287,8 @@ def failed_result_data() -> dict[str, Any]:
         {
             "status": "failed",
             "completeness": completeness_data("not_assessed"),
-            "risk_assessment": risk_data(None),
+            "risk_assessment": None,
+            "recommendation": None,
             "errors": [error_data()],
         }
     )
@@ -282,6 +304,7 @@ def test_analysis_result_accepts_full_completed_result() -> None:
     assert result.analyzers[0].score == 4.2
     assert result.risk_assessment.probability is None
     assert result.risk_assessment.final_level is not None
+    assert result.processing.duration_ms == 55_000
 
 
 def test_analysis_result_accepts_partial_result_with_partial_completeness() -> None:
@@ -298,6 +321,7 @@ def test_analysis_result_accepts_partial_result_with_partial_completeness() -> N
 
     assert result.status is AnalysisStatus.PARTIAL
     assert result.completeness.status.value == "partial"
+    assert result.processing.duration_ms == 55_000
 
 
 def test_analysis_result_accepts_partial_result_with_insufficient_completeness() -> None:
@@ -393,11 +417,70 @@ def test_analysis_result_accepts_rejected_result_with_input_descriptor() -> None
     assert result.findings == []
 
 
+@pytest.mark.parametrize(
+    ("status", "file_data"),
+    [
+        ("rejected", input_file_data()),
+        ("failed", input_file_data()),
+        ("failed", validated_file_data()),
+    ],
+)
+def test_terminal_result_with_file_facts_requires_cleanup(
+    status: str,
+    file_data: dict[str, Any],
+) -> None:
+    data = rejected_result_data()
+    data.update({"status": status, "file": file_data, "cleanup": None})
+
+    with pytest.raises(ValidationError, match="file facts requires cleanup facts"):
+        AnalysisResult.model_validate(data)
+
+
+@pytest.mark.parametrize("status", ["rejected", "failed"])
+@pytest.mark.parametrize("with_cleanup", [False, True])
+def test_terminal_result_without_file_facts_allows_optional_cleanup(
+    status: str,
+    with_cleanup: bool,
+) -> None:
+    data = rejected_result_data()
+    data.update(
+        {
+            "status": status,
+            "file": None,
+            "cleanup": cleanup_data() if with_cleanup else None,
+        }
+    )
+
+    result = AnalysisResult.model_validate(data)
+
+    assert result.file is None
+    assert (result.cleanup is not None) is with_cleanup
+
+
+def test_analysis_result_accepts_stage3_terminal_with_nullable_factual_fields() -> None:
+    data = rejected_result_data()
+    data.update({"file": None, "cleanup": None})
+
+    result = AnalysisResult.model_validate(data)
+
+    assert result.file is None
+    assert result.processing.queued_at is None
+    assert result.processing.started_at is None
+    assert result.processing.duration_ms is None
+    assert result.risk_assessment is None
+    assert result.recommendation is None
+    assert result.cleanup is None
+    assert result.completeness.planned_analyzers is None
+    assert result.completeness.coverage_ratio is None
+
+
 def test_analysis_result_accepts_failed_result() -> None:
     result = AnalysisResult.model_validate(failed_result_data())
 
     assert result.status is AnalysisStatus.FAILED
-    assert result.risk_assessment.final_level is None
+    assert result.risk_assessment is None
+    assert result.recommendation is None
+    assert result.processing.duration_ms == 55_000
 
 
 def test_schema_version_defaults_to_and_serializes_as_1_0() -> None:
@@ -469,7 +552,53 @@ def test_analysis_result_rejects_negative_processing_duration() -> None:
         )
 
 
-def test_analysis_result_requires_non_null_processing_queued_at() -> None:
+@pytest.mark.parametrize(
+    ("started_at", "duration_ms"),
+    [
+        (None, 0),
+        (processing_data()["started_at"], None),
+    ],
+)
+def test_analysis_processing_requires_duration_if_and_only_if_started(
+    started_at: datetime | None,
+    duration_ms: int | None,
+) -> None:
+    with pytest.raises(ValidationError):
+        AnalysisProcessing.model_validate(
+            {
+                **processing_data(),
+                "started_at": started_at,
+                "duration_ms": duration_ms,
+            }
+        )
+
+
+def test_analysis_processing_rejects_duration_inconsistent_with_timestamps() -> None:
+    with pytest.raises(ValidationError):
+        AnalysisProcessing.model_validate(
+            {**processing_data(), "duration_ms": 54_999}
+        )
+
+
+@pytest.mark.parametrize("elapsed_microseconds", [0, 999])
+def test_analysis_processing_uses_full_elapsed_milliseconds(
+    elapsed_microseconds: int,
+) -> None:
+    started_at = processing_data()["started_at"]
+    assert isinstance(started_at, datetime)
+    processing = AnalysisProcessing.model_validate(
+        {
+            **processing_data(),
+            "started_at": started_at,
+            "finished_at": started_at + timedelta(microseconds=elapsed_microseconds),
+            "duration_ms": 0,
+        }
+    )
+
+    assert processing.duration_ms == 0
+
+
+def test_completed_analysis_result_requires_non_null_processing_queued_at() -> None:
     with pytest.raises(ValidationError):
         AnalysisResult.model_validate(
             {
@@ -571,6 +700,21 @@ def test_failed_result_rejects_final_level() -> None:
 def test_failed_result_requires_errors() -> None:
     with pytest.raises(ValidationError):
         AnalysisResult.model_validate({**failed_result_data(), "errors": []})
+
+
+def test_failed_result_requires_not_assessed_completeness() -> None:
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate(
+            {**failed_result_data(), "completeness": completeness_data("partial")}
+        )
+
+
+@pytest.mark.parametrize("field", ["risk_assessment", "recommendation"])
+def test_failed_result_rejects_assessment_outputs(field: str) -> None:
+    value = risk_data(None) if field == "risk_assessment" else recommendation_data()
+
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate({**failed_result_data(), field: value})
 
 
 def test_completed_result_requires_complete_completeness() -> None:
@@ -695,9 +839,10 @@ def test_insufficient_completeness_accepts_absent_risk_values() -> None:
     result = AnalysisResult.model_validate(
         {
             **completed_result_data(),
-            "status": "running",
+            "status": "partial",
             "completeness": completeness_data("insufficient"),
             "risk_assessment": risk,
+            "warnings": ["Полнота недостаточна для итоговой оценки."],
         }
     )
 
@@ -709,6 +854,64 @@ def test_insufficient_completeness_accepts_absent_risk_values() -> None:
 def test_partial_result_requires_partial_completeness() -> None:
     with pytest.raises(ValidationError):
         AnalysisResult.model_validate({**completed_result_data(), "status": "partial"})
+
+
+@pytest.mark.parametrize("status", ["queued", "running"])
+def test_analysis_result_rejects_non_terminal_status(status: str) -> None:
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate({**completed_result_data(), "status": status})
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [stage.value for stage in ProcessingStage if stage is not ProcessingStage.FINISHED],
+)
+def test_analysis_result_rejects_non_terminal_stage(stage: str) -> None:
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate({**completed_result_data(), "stage": stage})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("updated_at", datetime(2026, 7, 24, 14, 35, 21, tzinfo=UTC)),
+        ("queued_at", datetime(2026, 7, 24, 14, 35, 21, tzinfo=UTC)),
+        ("started_at", datetime(2026, 7, 24, 14, 35, 21, tzinfo=UTC)),
+        ("finished_at", datetime(2026, 7, 24, 14, 35, 21, tzinfo=UTC)),
+    ],
+)
+def test_analysis_result_rejects_invalid_chronology(field: str, value: datetime) -> None:
+    data = completed_result_data()
+    if field == "updated_at":
+        data[field] = value
+    else:
+        data["processing"] = {**processing_data(), field: value}
+
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate(data)
+
+
+def test_analysis_result_requires_updated_at_to_match_terminal_processing_time() -> None:
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate(
+            {
+                **completed_result_data(),
+                "updated_at": datetime(2026, 7, 24, 14, 36, 19, tzinfo=UTC),
+            }
+        )
+
+
+def test_accepted_terminal_result_requires_cleanup_at_terminal_timestamp() -> None:
+    with pytest.raises(ValidationError):
+        AnalysisResult.model_validate(
+            {
+                **failed_result_data(),
+                "cleanup": {
+                    **cleanup_data(),
+                    "finished_at": datetime(2026, 7, 24, 14, 36, 17, tzinfo=UTC),
+                },
+            }
+        )
 
 
 @pytest.mark.parametrize(("field", "value"), [("status", "done"), ("stage", "done")])

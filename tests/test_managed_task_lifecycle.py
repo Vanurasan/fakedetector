@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import NoReturn
 
 import pytest
+from result_backend_fakes import SuccessfulAcceptedResultFinalizer
 
 from fakedetector.config.models import AppConfig
 from fakedetector.core import AuthoritativeLifecycleClock, Clock
 from fakedetector.domain import (
     AnalysisStatus,
+    CleanupResult,
     CleanupStatus,
     ErrorDetail,
     ImageTechnicalParameters,
@@ -259,6 +261,7 @@ def make_stage4(
         clock=shared_clock,
         registry=registry,
         queue=actual_queue,
+        result_finalizer=SuccessfulAcceptedResultFinalizer(),
     )
     return receiver, runner, registry, actual_queue
 
@@ -350,6 +353,15 @@ def fact_ready_settlement(registry: TaskRegistry, analysis_id: str) -> object:
         ),
     )
     return owner_token
+
+
+def start_persistence(
+    registry: TaskRegistry,
+    analysis_id: str,
+    owner_token: object,
+) -> None:
+    registry.terminal_task_facts(analysis_id, owner_token)
+    registry.start_terminal_persistence(analysis_id, owner_token)
 
 
 @pytest.fixture
@@ -467,6 +479,11 @@ def test_state_machine_rejects_reverse_skip_duplicate_finish_and_terminal_restar
             started_at=started_at,
         )
     owner_token = fact_ready_settlement(registry, analysis_id)
+    start_persistence(
+        registry,
+        analysis_id,
+        owner_token,
+    )
     registry.finalize_terminal_settlement(
         analysis_id,
         owner_token,
@@ -507,6 +524,7 @@ def test_registry_atomically_records_terminal_cleanup_and_rejects_duplicates(
     assert unchanged.finished_at is None
     assert registry.is_active(analysis_id)
 
+    start_persistence(registry, analysis_id, owner_token)
     registry.finalize_terminal_settlement(analysis_id, owner_token, finished_at)
 
     snapshot = registry.snapshot(analysis_id)
@@ -605,7 +623,7 @@ def test_terminal_settlement_progress_survives_reentry_and_fact_ready_is_immutab
         )
 
 
-def test_fact_ready_invalid_commit_preserves_facts_and_processor_recovery_skips_cleanup(
+def test_fact_ready_projection_preserves_facts_and_processor_recovery_skips_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -617,12 +635,8 @@ def test_fact_ready_invalid_commit_preserves_facts_and_processor_recovery_skips_
     registry.fail_pending(analysis_id, safe_execution_error())
     owner_token = fact_ready_settlement(registry, analysis_id)
 
-    with pytest.raises(LifecycleStateError):
-        registry.finalize_terminal_settlement(
-            analysis_id,
-            owner_token,
-            _REGISTERED - timedelta(seconds=1),
-        )
+    terminal_facts = registry.terminal_task_facts(analysis_id, owner_token)
+    assert CleanupResult.model_validate_json(terminal_facts.cleanup_json).finished_at is None
     assert registry.terminal_settlement(analysis_id, owner_token).facts is not None
     registry.release_terminal_settlement(analysis_id, owner_token)
 
@@ -631,6 +645,7 @@ def test_fact_ready_invalid_commit_preserves_facts_and_processor_recovery_skips_
         config=config,
         clock=AuthoritativeLifecycleClock(IncrementingClock()),
         registry=registry,
+        result_finalizer=SuccessfulAcceptedResultFinalizer(),
     )
     monkeypatch.setattr(
         processor._cleanup,
@@ -776,6 +791,7 @@ def test_registry_rejects_invalid_executed_terminal_timestamp_without_mutation_a
     registry.claim(analysis_id, _REGISTERED)
     registry.record_outcome(analysis_id, TaskExecutionOutcome.completed())
     owner_token = fact_ready_settlement(registry, analysis_id)
+    start_persistence(registry, analysis_id, owner_token)
 
     with pytest.raises(LifecycleStateError):
         registry.finalize_terminal_settlement(
@@ -785,7 +801,7 @@ def test_registry_rejects_invalid_executed_terminal_timestamp_without_mutation_a
         )
 
     unchanged = registry.snapshot(analysis_id)
-    assert unchanged.stage is ProcessingStage.CLEANUP
+    assert unchanged.stage is ProcessingStage.PERSISTENCE
     assert unchanged.cleanup is None
     assert unchanged.finished_at is None
 
@@ -808,6 +824,7 @@ def test_registry_accepts_equal_started_and_finished_timestamps(
     registry.claim(analysis_id, _REGISTERED)
     registry.record_outcome(analysis_id, TaskExecutionOutcome.completed())
     owner_token = fact_ready_settlement(registry, analysis_id)
+    start_persistence(registry, analysis_id, owner_token)
     registry.finalize_terminal_settlement(analysis_id, owner_token, _REGISTERED)
 
     snapshot = registry.snapshot(analysis_id)
@@ -825,6 +842,7 @@ def test_registry_rejects_invalid_never_started_terminal_timestamp_without_mutat
     registry.mark_enqueued(analysis_id, _REGISTERED)
     registry.fail_pending(analysis_id, safe_execution_error())
     owner_token = fact_ready_settlement(registry, analysis_id)
+    start_persistence(registry, analysis_id, owner_token)
 
     with pytest.raises(LifecycleStateError):
         registry.finalize_terminal_settlement(
@@ -834,7 +852,7 @@ def test_registry_rejects_invalid_never_started_terminal_timestamp_without_mutat
         )
 
     unchanged = registry.snapshot(analysis_id)
-    assert unchanged.stage is ProcessingStage.CLEANUP
+    assert unchanged.stage is ProcessingStage.PERSISTENCE
     assert unchanged.started_at is None
     assert unchanged.cleanup is None
     assert unchanged.finished_at is None

@@ -167,7 +167,6 @@ class Stage5ExecutionService:
                 risk_assessment,
                 recommendation,
             )
-            remaining_timeout_seconds()
         except _Stage5DeadlineExceededError:
             return TaskExecutionOutcome.failed(_processing_timeout(phase))
         except PreprocessingError as error:

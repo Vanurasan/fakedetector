@@ -76,8 +76,17 @@ def completeness_data() -> dict[str, Any]:
 
 @pytest.mark.parametrize("status", list(CompletenessStatus))
 def test_analysis_completeness_accepts_every_status(status: CompletenessStatus) -> None:
+    data = {**completeness_data(), "status": status.value}
+    if status is CompletenessStatus.NOT_ASSESSED:
+        data.update(
+            {
+                **dict.fromkeys(COUNTER_FIELDS),
+                "coverage_ratio": None,
+                "missing_capabilities": [],
+            }
+        )
     completeness = AnalysisCompleteness.model_validate(
-        {**completeness_data(), "status": status.value}
+        data
     )
 
     assert completeness.status is status
@@ -155,6 +164,52 @@ def test_analysis_completeness_does_not_derive_status_from_counters() -> None:
     )
 
     assert completeness.status is CompletenessStatus.INSUFFICIENT
+
+
+def test_not_assessed_completeness_requires_nullable_unknown_facts() -> None:
+    completeness = AnalysisCompleteness.model_validate(
+        {
+            **completeness_data(),
+            "status": "not_assessed",
+            **dict.fromkeys(COUNTER_FIELDS),
+            "coverage_ratio": None,
+            "missing_capabilities": [],
+        }
+    )
+
+    assert completeness.planned_analyzers is None
+    assert completeness.coverage_ratio is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("planned_analyzers", 0),
+        ("coverage_ratio", 0.0),
+        ("missing_capabilities", ["placeholder"]),
+    ],
+)
+def test_not_assessed_completeness_rejects_placeholder_facts(
+    field: str,
+    value: object,
+) -> None:
+    data = {
+        **completeness_data(),
+        "status": "not_assessed",
+        **dict.fromkeys(COUNTER_FIELDS),
+        "coverage_ratio": None,
+        "missing_capabilities": [],
+        field: value,
+    }
+
+    with pytest.raises(ValidationError):
+        AnalysisCompleteness.model_validate(data)
+
+
+@pytest.mark.parametrize("field", [*COUNTER_FIELDS, "coverage_ratio"])
+def test_assessed_completeness_rejects_missing_factual_value(field: str) -> None:
+    with pytest.raises(ValidationError):
+        AnalysisCompleteness.model_validate({**completeness_data(), field: None})
 
 
 def test_analysis_completeness_json_dump_and_round_trip() -> None:
