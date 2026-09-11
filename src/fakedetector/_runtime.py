@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from fakedetector.analyzers._catalog import _real_analyzer_registrations
 from fakedetector.analyzers._orchestrator import AnalyzerOrchestrator
 from fakedetector.analyzers._registry import AnalyzerRegistry
+from fakedetector.application import AnalysisApplicationService
 from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
 from fakedetector.core import AuthoritativeLifecycleClock, UtcClock, Uuid4AnalysisIdGenerator
@@ -32,6 +33,7 @@ from fakedetector.result_finalization import ResultFinalizationService
 class _ProductionRuntime:
     """Owned production services needed by current and future external adapters."""
 
+    application_service: AnalysisApplicationService
     analyzer_registry: AnalyzerRegistry
     intake: FileIntakeService
     registry: TaskRegistry
@@ -92,7 +94,14 @@ def _build_production_runtime(config: AppConfig) -> _ProductionRuntime:
         accepted_receiver=receiver,
         clock=clock,
     )
+    application_service = AnalysisApplicationService(
+        intake=intake,
+        registry=task_registry,
+        result_finalizer=result_finalizer,
+        result_repository=result_repository,
+    )
     return _ProductionRuntime(
+        application_service=application_service,
         analyzer_registry=analyzer_registry,
         intake=intake,
         registry=task_registry,

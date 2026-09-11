@@ -6,12 +6,17 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from fakedetector._runtime import _build_production_runtime
+from fakedetector.api import install_api
+from fakedetector.auth import load_api_authenticator, load_webui_authenticator
 from fakedetector.config.models import AppConfig
 from fakedetector.lifecycle import SchedulerStateError
+from fakedetector.webui import install_webui
 
 
 def create_app(config: AppConfig) -> FastAPI:
     """Создать и настроить экземпляр FastAPI-приложения."""
+    api_authenticator = load_api_authenticator(config.access_channels.api)
+    webui_authenticator = load_webui_authenticator(config.access_channels.webui)
     runtime = _build_production_runtime(config)
 
     @asynccontextmanager
@@ -41,9 +46,24 @@ def create_app(config: AppConfig) -> FastAPI:
     app = FastAPI(title="FakeDetector", version="0.1.0", lifespan=lifespan)
     app.state.config = config
     app.state.runtime = runtime
+    app.state.application_service = runtime.application_service
 
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    if config.access_channels.api.enabled:
+        install_api(
+            app,
+            service=runtime.application_service,
+            authenticator=api_authenticator,
+        )
+    if config.access_channels.webui.enabled:
+        install_webui(
+            app,
+            service=runtime.application_service,
+            authenticator=webui_authenticator,
+            config=config,
+        )
 
     return app

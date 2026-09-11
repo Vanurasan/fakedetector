@@ -11,6 +11,7 @@ import yaml
 from fastapi import FastAPI
 
 from fakedetector import main as main_module
+from fakedetector.auth import AccessConfigurationError
 from fakedetector.config.loader import ConfigurationError
 from fakedetector.config.models import AppConfig
 from fakedetector.logging_setup import LoggingSetupError
@@ -293,6 +294,32 @@ def test_logging_setup_error_is_safe_and_stops_startup(monkeypatch, capsys) -> N
     assert captured.out == ""
     assert captured.err == "Logging initialization failed.\n"
     assert unsafe_detail not in captured.err
+
+
+def test_access_configuration_error_is_safe_and_stops_uvicorn(monkeypatch, capsys) -> None:
+    config = make_config()
+    sentinel = "PRIVATE ACCESS SECRET"
+
+    monkeypatch.setattr(main_module, "load_config", lambda path: config)
+    monkeypatch.setattr(main_module, "ensure_runtime_directories", lambda value: None)
+    monkeypatch.setattr(main_module, "configure_logging", lambda value: logging.getLogger())
+    monkeypatch.setattr(
+        main_module,
+        "create_app",
+        lambda value: (_ for _ in ()).throw(AccessConfigurationError()),
+    )
+    monkeypatch.setattr(
+        main_module.uvicorn,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError(sentinel)),
+    )
+
+    result = main_module.main([])
+    captured = capsys.readouterr()
+
+    assert result == 5
+    assert captured.err == "Access configuration failed.\n"
+    assert sentinel not in captured.err
 
 
 def test_unsupported_yaml_logging_level_exits_before_uvicorn(

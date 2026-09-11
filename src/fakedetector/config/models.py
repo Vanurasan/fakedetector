@@ -37,6 +37,12 @@ class WebUIConfig(BaseModel):
 
     enabled: bool = True
     require_authentication: bool = True
+    credentials_env_var: str = Field(
+        default="MEDIA_ANALYZER_WEBUI_CREDENTIALS",
+        min_length=1,
+        pattern=r"^[A-Z_][A-Z0-9_]*$",
+        description="Name of the environment variable containing WebUI credentials",
+    )
 
 
 class APIConfig(BaseModel):

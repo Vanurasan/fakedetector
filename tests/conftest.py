@@ -16,6 +16,16 @@ from PIL import Image
 from fakedetector.analyzers._worker import _MultiprocessingSpawnBackend
 
 
+@pytest.fixture(autouse=True)
+def stage8_access_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provide non-secret deterministic credentials for enabled test channels."""
+    monkeypatch.setenv("MEDIA_ANALYZER_API_TOKEN", "stage8-test-token")
+    monkeypatch.setenv(
+        "MEDIA_ANALYZER_WEBUI_CREDENTIALS",
+        "stage8-user:stage8-password",
+    )
+
+
 class _ProbeInterruption(BaseException):
     pass
 

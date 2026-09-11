@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FakeDetector — загрузка</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="container">
+    <h1>FakeDetector</h1>
+    <p class="lead">Загрузите мультимедийный файл для автоматизированной оценки признаков искусственного создания или модификации.</p>
+    <div class="notice">FakeDetector не является окончательной экспертной экспертизой. Проверяйте значимые выводы независимыми методами.</div>
+    <form id="analysis-upload" action="/analyses" method="post" enctype="multipart/form-data">
+      <label for="file">Файл</label>
+      <input id="file" name="file" type="file" required>
+      <button id="analysis-submit" type="submit">Начать анализ</button>
+    </form>
+    <section>
+      <h2>Поддерживаемые форматы и лимиты</h2>
+      <dl>
+      {% for label, extensions in formats.items() %}
+        <dt>{{ label }}</dt>
+        <dd>{{ extensions | join(", ") }} — до {{ limits[label] }} МБ</dd>
+      {% endfor %}
+      </dl>
+    </section>
+  </main>
+  <script>
+    document.getElementById("analysis-upload").addEventListener("submit", function () {
+      document.getElementById("analysis-submit").disabled = true;
+    });
+  </script>
+</body>
+</html>

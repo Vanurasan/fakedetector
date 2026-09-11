@@ -1,8 +1,10 @@
 """Тесты health endpoint."""
 
+import pytest
 from fastapi.testclient import TestClient
 
 from fakedetector.app import create_app
+from fakedetector.auth import AccessConfigurationError
 from fakedetector.config.models import AppConfig
 
 
@@ -51,3 +53,17 @@ def test_create_app_stores_config() -> None:
     app = create_app(config)
 
     assert app.state.config is config
+
+
+def test_create_app_rejects_missing_required_api_token(monkeypatch) -> None:
+    monkeypatch.delenv("MEDIA_ANALYZER_API_TOKEN")
+
+    with pytest.raises(AccessConfigurationError):
+        create_app(make_config())
+
+
+def test_create_app_rejects_missing_required_webui_credentials(monkeypatch) -> None:
+    monkeypatch.delenv("MEDIA_ANALYZER_WEBUI_CREDENTIALS")
+
+    with pytest.raises(AccessConfigurationError):
+        create_app(make_config())
