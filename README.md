@@ -10,10 +10,10 @@ FakeDetector — прототип системы предварительног�
 
 ## Состояние проекта
 
-**Stage 8 — IN_PROGRESS.** Macro 1 хранения результата и Macro 2 внешнего
-вертикального среза реализованы. Текущее состояние ожидает проверки владельцем и
-отдельного независимого финального аудита только для чтения; Stage 8 ещё не
-`DONE/CLOSED`, Stage 9 не начат.
+**Stage 8 — DONE / CLOSED.** Macro 1 хранения результата и Macro 2 внешнего
+вертикального среза завершены. Независимый финальный аудит выполнен, findings
+`S8-A01`–`S8-A03` исправлены, а post-remediation closure audit завершён с
+`PASS` без новых findings. Stage 9 имеет статус `NOT_STARTED`.
 
 | Stage | Status | Что реализовано или запланировано |
 |---:|---|---|
@@ -24,7 +24,7 @@ FakeDetector — прототип системы предварительног�
 | 5 | DONE | Preprocessing image/audio/video и analyzer framework |
 | 6 | DONE | Profile B и рабочий путь Finding реализованы; этап закрыт |
 | 7 | DONE | Полнота анализа, риск и рекомендации |
-| 8 | IN_PROGRESS | `AnalysisResult` 1.0, репозиторий JSON, асинхронный API и WebUI реализованы; ожидается финальный аудит |
+| 8 | DONE | `AnalysisResult` 1.0, репозиторий JSON, асинхронный API и WebUI реализованы; этап закрыт |
 | 9 | NOT_STARTED | Надёжность, безопасность и сквозные тесты |
 
 ## Что уже умеет система
@@ -77,8 +77,8 @@ Input → Validation → Task lifecycle → Preprocessing
 → FACT_READY → PERSISTENCE → ResultRepository.save() → FINISHED
 → общий AnalysisApplicationService → API / WebUI
 
-ДАЛЕЕ — проверка владельцем и независимый финальный аудит Stage 8,
-затем усиление надёжности и расширенная сквозная проверка Stage 9
+ДАЛЕЕ — планирование Stage 9; усиление надёжности и расширенная
+сквозная проверка ещё не начаты
 ```
 
 ## Запуск и проверки

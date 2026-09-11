@@ -391,6 +391,12 @@ YYYY-MM-DD
 
 ### Изменено
 
+- **[Stage 8/Формальное закрытие] Stage 8 завершён со статусом
+  `DONE / CLOSED`.** Macro 1 и Macro 2 завершены, независимый финальный аудит
+  выполнен, findings `S8-A01`, `S8-A02` и `S8-A03` исправлены в remediation
+  commit `7093922`. Post-remediation independent closure audit завершён с
+  `PASS`, новых findings нет; Stage 9 имеет статус `NOT_STARTED`.
+
 - **[Stage 8 Macro 2/Финализация] Уточнена типизация ошибок Stage 3.** Только
   `ResultFinalizationError` преобразуется в `result_write_failed` и HTTP `503`;
   неожиданный дефект часов, сборки или доменной валидации преобразуется в
