@@ -6,7 +6,7 @@ from base64 import b64encode
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from stage8_helpers import (
     StubApplicationService,
@@ -26,10 +26,41 @@ from fakedetector.application import (
 )
 from fakedetector.auth import WebUIBasicAuthenticator
 from fakedetector.domain import AnalysisStatus, ProcessingStage
-from fakedetector.webui import install_webui
+from fakedetector.webui import install_webui, is_same_origin
 
 AUTH = ("analyst", "stage8-password")
 SAME_ORIGIN = {"Origin": "http://testserver"}
+VALID_BASIC_PAYLOAD = b64encode(b"analyst:stage8-password").decode("ascii")
+
+
+def _basic_authorization(credentials: bytes) -> str:
+    return f"Basic {b64encode(credentials).decode('ascii')}"
+
+
+def _asgi_request_with_security_header(
+    *,
+    scheme: str,
+    host: str,
+    header_name: str,
+    header_value: str,
+) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": scheme,
+            "path": "/analyses",
+            "raw_path": b"/analyses",
+            "query_string": b"",
+            "headers": [
+                (b"host", host.encode("ascii")),
+                (header_name.encode("ascii"), header_value.encode("latin-1")),
+            ],
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+        }
+    )
 
 
 def _client(
@@ -52,29 +83,53 @@ def _client(
     return TestClient(app)
 
 
-def test_http_basic_missing_invalid_and_valid(tmp_path: Path) -> None:
+def test_http_basic_missing_wrong_and_valid_credentials(tmp_path: Path) -> None:
     client = _client(tmp_path, StubApplicationService())
 
     missing = client.get("/")
-    malformed_base64 = client.get("/", headers={"Authorization": "Basic a"})
-    missing_delimiter = client.get(
-        "/",
-        headers={
-            "Authorization": f"Basic {b64encode(b'analyst').decode('ascii')}"
-        },
-    )
     wrong = client.get("/", auth=("analyst", "wrong"))
     valid = client.get("/", auth=AUTH)
 
-    for response in (missing, malformed_base64, missing_delimiter, wrong):
+    for response in (missing, wrong):
         assert response.status_code == 401
         assert response.headers["www-authenticate"] == 'Basic realm="FakeDetector"'
         assert "Запрос не выполнен" in response.text
         assert "Not authenticated" not in response.text
     assert "authentication_required" in missing.text
-    for response in (malformed_base64, missing_delimiter, wrong):
-        assert "authentication_failed" in response.text
+    assert "authentication_failed" in wrong.text
     assert valid.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        f"Basic !!!{VALID_BASIC_PAYLOAD}",
+        f"Basic {VALID_BASIC_PAYLOAD[:8]}!{VALID_BASIC_PAYLOAD[8:]}",
+        f"Basic {VALID_BASIC_PAYLOAD.rstrip('=')}",
+        _basic_authorization(b"analyst"),
+    ],
+    ids=[
+        "invalid-prefix",
+        "invalid-middle",
+        "invalid-padding",
+        "missing-delimiter",
+    ],
+)
+def test_http_basic_malformed_payloads_are_safe_401_pages(
+    tmp_path: Path,
+    authorization: str,
+) -> None:
+    response = _client(tmp_path, StubApplicationService()).get(
+        "/",
+        headers={"Authorization": authorization},
+    )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == 'Basic realm="FakeDetector"'
+    assert response.headers["content-type"].startswith("text/html")
+    assert "authentication_failed" in response.text
+    assert "Запрос не выполнен" in response.text
+    assert "Not authenticated" not in response.text
 
 
 def test_upload_page_shows_formats_limits_and_disclaimer(tmp_path: Path) -> None:
@@ -125,6 +180,82 @@ def test_same_origin_referer_is_accepted_when_origin_is_absent(tmp_path: Path) -
 
 
 @pytest.mark.parametrize(
+    ("scheme", "host", "header_name", "header_value"),
+    [
+        ("http", "testserver", "origin", "http://testserver:80"),
+        ("https", "testserver", "referer", "https://testserver:443/form"),
+        ("http", "testserver:8080", "origin", "http://testserver:8080"),
+        ("http", "127.0.0.1:8080", "origin", "http://127.0.0.1:8080"),
+        ("http", "[2001:db8::1]", "origin", "http://[2001:db8::1]"),
+        (
+            "http",
+            "[2001:db8::1]:8080",
+            "referer",
+            "http://[2001:db8::1]:8080/form",
+        ),
+    ],
+)
+def test_same_origin_preserves_port_and_ipv6_normalization(
+    scheme: str,
+    host: str,
+    header_name: str,
+    header_value: str,
+) -> None:
+    request = _asgi_request_with_security_header(
+        scheme=scheme,
+        host=host,
+        header_name=header_name,
+        header_value=header_value,
+    )
+
+    assert is_same_origin(request)
+
+
+@pytest.mark.parametrize("header_name", ["origin", "referer"])
+def test_same_origin_rejects_all_ascii_control_characters_before_normalization(
+    header_name: str,
+) -> None:
+    for codepoint in (*range(0x20), 0x7F):
+        request = _asgi_request_with_security_header(
+            scheme="http",
+            host="testserver",
+            header_name=header_name,
+            header_value=f"http://test{chr(codepoint)}server",
+        )
+
+        assert not is_same_origin(request), f"accepted U+{codepoint:04X}"
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Origin": "http://test\tserver"},
+        {"Origin": "http://test\x00server"},
+        {"Referer": "http://test\tserver/form"},
+        {"Referer": "http://test\x7fserver/form"},
+    ],
+    ids=["origin-htab", "origin-nul", "referer-htab", "referer-del"],
+)
+def test_control_characters_are_rejected_before_multipart_and_application(
+    tmp_path: Path,
+    headers: dict[str, str],
+) -> None:
+    service = StubApplicationService()
+
+    response = _client(tmp_path, service).post(
+        "/analyses",
+        content=b"not-a-valid-multipart-body",
+        headers={"Content-Type": "multipart/form-data", **headers},
+        auth=AUTH,
+    )
+
+    assert response.status_code == 403
+    assert "same_origin_required" in response.text
+    assert "invalid_multipart" not in response.text
+    assert service.sources == []
+
+
+@pytest.mark.parametrize(
     "headers",
     [
         {},
@@ -159,11 +290,30 @@ def test_malformed_multipart_is_rejected_only_after_auth_and_origin_guards(
     service = StubApplicationService()
     client = _client(tmp_path, service)
     malformed_headers = {"Content-Type": "multipart/form-data"}
+    malformed_authorization = f"Basic !!!{VALID_BASIC_PAYLOAD}"
 
     missing_auth = client.post(
         "/analyses",
         content=b"not-a-valid-multipart-body",
         headers=malformed_headers,
+    )
+    malformed_auth_before_origin = client.post(
+        "/analyses",
+        content=b"not-a-valid-multipart-body",
+        headers={
+            **malformed_headers,
+            "Origin": "https://evil.example",
+            "Authorization": malformed_authorization,
+        },
+    )
+    malformed_auth_before_multipart = client.post(
+        "/analyses",
+        content=b"not-a-valid-multipart-body",
+        headers={
+            **malformed_headers,
+            **SAME_ORIGIN,
+            "Authorization": malformed_authorization,
+        },
     )
     cross_origin = client.post(
         "/analyses",
@@ -181,6 +331,12 @@ def test_malformed_multipart_is_rejected_only_after_auth_and_origin_guards(
     assert missing_auth.status_code == 401
     assert missing_auth.headers["www-authenticate"] == 'Basic realm="FakeDetector"'
     assert "authentication_required" in missing_auth.text
+    for response in (malformed_auth_before_origin, malformed_auth_before_multipart):
+        assert response.status_code == 401
+        assert response.headers["www-authenticate"] == 'Basic realm="FakeDetector"'
+        assert "authentication_failed" in response.text
+        assert "same_origin_required" not in response.text
+        assert "invalid_multipart" not in response.text
     assert cross_origin.status_code == 403
     assert "same_origin_required" in cross_origin.text
     assert same_origin.status_code == 400

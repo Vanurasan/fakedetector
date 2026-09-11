@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from base64 import b64decode
+from binascii import Error as Base64DecodeError
 from contextlib import suppress
 from pathlib import Path
 from urllib.parse import SplitResult, urlsplit
 
 from fastapi import APIRouter, FastAPI, Request, Security
 from fastapi.responses import RedirectResponse
-from fastapi.security import HTTPBasic
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from python_multipart.exceptions import MultipartParseError
@@ -33,7 +34,6 @@ from fakedetector.auth import WebUIBasicAuthenticator
 from fakedetector.config.models import AppConfig
 from fakedetector.domain import ErrorDetail, SourceChannel, SourceContext
 
-_BASIC_SCHEME = HTTPBasic(auto_error=False)
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 
 
@@ -61,13 +61,11 @@ def install_webui(
     ) -> None:
         if authenticator is None:
             return
-        try:
-            credentials = await _BASIC_SCHEME(request)
-        except StarletteHTTPException:
-            raise WebUIAuthenticationError(missing=False) from None
-        if credentials is None:
-            raise WebUIAuthenticationError(missing="authorization" not in request.headers)
-        if not authenticator.verify(credentials.username, credentials.password):
+        authorization = request.headers.get("authorization")
+        if authorization is None:
+            raise WebUIAuthenticationError(missing=True)
+        username, password = _strict_basic_credentials(authorization)
+        if not authenticator.verify(username, password):
             raise WebUIAuthenticationError(missing=False)
 
     dependencies = [Security(require_basic)] if authenticator is not None else []
@@ -258,7 +256,7 @@ def is_same_origin(request: Request) -> bool:
 
 
 def _matches_request_origin(value: str, request: Request, *, origin_header: bool) -> bool:
-    if not value or value == "null":
+    if not value or value == "null" or _contains_ascii_control_character(value):
         return False
     try:
         supplied = urlsplit(value)
@@ -270,6 +268,24 @@ def _matches_request_origin(value: str, request: Request, *, origin_header: bool
     except (TypeError, ValueError):
         return False
     return supplied_origin == expected_origin
+
+
+def _strict_basic_credentials(authorization: str) -> tuple[str, str]:
+    scheme, separator, encoded = authorization.partition(" ")
+    if scheme.lower() != "basic" or not separator or not encoded:
+        raise WebUIAuthenticationError(missing=False)
+    try:
+        decoded = b64decode(encoded, validate=True).decode("ascii")
+    except (Base64DecodeError, UnicodeDecodeError, ValueError):
+        raise WebUIAuthenticationError(missing=False) from None
+    username, separator, password = decoded.partition(":")
+    if not separator:
+        raise WebUIAuthenticationError(missing=False)
+    return username, password
+
+
+def _contains_ascii_control_character(value: str) -> bool:
+    return any(ord(character) <= 0x1F or ord(character) == 0x7F for character in value)
 
 
 def _normalized_origin(parts: SplitResult) -> tuple[str, str, int] | None:
