@@ -19,6 +19,7 @@ from fakedetector.lifecycle.execution import (
 )
 from fakedetector.lifecycle.models import AnalysisTask
 from fakedetector.lifecycle.receiver import Stage4TaskProcessor
+from fakedetector.result_finalization import AcceptedResultFinalizer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ class BoundedLocalScheduler:
         config: AppConfig,
         clock: AuthoritativeLifecycleClock,
         registry: TaskRegistry,
+        result_finalizer: AcceptedResultFinalizer,
     ) -> None:
         limits = config.limits.max_parallel_tasks
         self._limits = {
@@ -75,7 +77,12 @@ class BoundedLocalScheduler:
         self._queues = {media_type: deque[_QueueItem]() for media_type in MediaType}
         self._analysis_ids: set[str] = set()
         self._condition = Condition(RLock())
-        self._processor = Stage4TaskProcessor(config=config, clock=clock, registry=registry)
+        self._processor = Stage4TaskProcessor(
+            config=config,
+            clock=clock,
+            registry=registry,
+            result_finalizer=result_finalizer,
+        )
         self._janitor = WorkspaceJanitor(
             config=config.temporary_storage,
             clock=clock,

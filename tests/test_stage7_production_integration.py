@@ -394,6 +394,15 @@ def test_production_stage7_internal_failure_is_safe_and_uses_existing_cleanup(
         "phase": "risk_assessment",
         "reason_code": "assessment_failure",
     }
+    result = runtime.result_repository.get(accepted.analysis_id)
+    assert result is not None
+    assert result.status is AnalysisStatus.FAILED
+    assert result.completeness.status is CompletenessStatus.NOT_ASSESSED
+    assert result.completeness.planned_analyzers is None
+    assert result.risk_assessment is None
+    assert result.recommendation is None
+    assert result.analyzers
+    assert result.cleanup is not None
     assert private_detail not in task.errors[0].model_dump_json()
     assert len(real_worker_processes) == 2
 
@@ -406,14 +415,14 @@ def test_production_not_assessed_from_stage7_is_an_internal_failure(
     _use_controlled_runner(monkeypatch, runner)
     not_assessed = AnalysisCompleteness(
         status=CompletenessStatus.NOT_ASSESSED,
-        planned_analyzers=0,
-        applicable_analyzers=0,
-        completed_analyzers=0,
-        failed_analyzers=0,
-        timed_out_analyzers=0,
-        skipped_analyzers=0,
-        not_applicable_analyzers=0,
-        coverage_ratio=0.0,
+        planned_analyzers=None,
+        applicable_analyzers=None,
+        completed_analyzers=None,
+        failed_analyzers=None,
+        timed_out_analyzers=None,
+        skipped_analyzers=None,
+        not_applicable_analyzers=None,
+        coverage_ratio=None,
         missing_capabilities=[],
         explanation="Рабочая оценка ошибочно не выполнена.",
     )

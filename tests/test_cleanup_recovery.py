@@ -10,6 +10,7 @@ from threading import Event, Thread
 from typing import NoReturn
 
 import pytest
+from result_backend_fakes import SuccessfulAcceptedResultFinalizer
 
 import fakedetector.intake.temporary_input as temporary_input_module
 import fakedetector.lifecycle.cleanup as cleanup_module
@@ -225,6 +226,7 @@ def register_finished_task(
             errors=tuple(cleanup_result.errors),
         ),
     )
+    registry.start_terminal_persistence(analysis_id, owner_token)
     registry.finalize_terminal_settlement(
         analysis_id,
         owner_token,
@@ -408,6 +410,8 @@ def test_failed_primary_outcome_is_preserved_when_cleanup_exhausts(
         ),
     )
     registry.mark_terminal_facts_ready(analysis_id, owner_token, cleanup)
+    registry.terminal_task_facts(analysis_id, owner_token)
+    registry.start_terminal_persistence(analysis_id, owner_token)
     registry.finalize_terminal_settlement(analysis_id, owner_token, _NOW)
 
     snapshot = registry.snapshot(analysis_id)
@@ -1036,7 +1040,12 @@ def test_scheduler_invokes_startup_post_terminal_and_shutdown_sweeps(
     monkeypatch.setattr(WorkspaceJanitor, "sweep", count_sweep)
     executor = CompletedExecutor()
     clock = authoritative_clock()
-    scheduler = BoundedLocalScheduler(config=config, clock=clock, registry=registry)
+    scheduler = BoundedLocalScheduler(
+        config=config,
+        clock=clock,
+        registry=registry,
+        result_finalizer=SuccessfulAcceptedResultFinalizer(),
+    )
     receiver = Stage4TaskReceiver(
         config=config,
         clock=clock,

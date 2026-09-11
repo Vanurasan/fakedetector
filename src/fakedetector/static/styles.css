@@ -1,0 +1,37 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, sans-serif;
+  color: #16202a;
+  background: #eef2f6;
+}
+
+body { margin: 0; }
+.container {
+  max-width: 760px;
+  margin: 3rem auto;
+  padding: 2rem;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgb(20 32 44 / 10%);
+}
+.lead { font-size: 1.1rem; }
+.notice, .error {
+  margin: 1rem 0;
+  padding: 1rem;
+  border-left: 4px solid #b05a00;
+  background: #fff4e8;
+}
+form { display: grid; gap: 1rem; margin: 2rem 0; }
+button {
+  width: fit-content;
+  padding: .7rem 1.1rem;
+  border: 0;
+  border-radius: 6px;
+  color: white;
+  background: #1558a6;
+  cursor: pointer;
+}
+dt { margin-top: .8rem; font-weight: 700; }
+dd { margin-left: 0; }
+nav { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1.5rem; }
+code { overflow-wrap: anywhere; }

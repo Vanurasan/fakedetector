@@ -37,6 +37,12 @@ class WebUIConfig(BaseModel):
 
     enabled: bool = True
     require_authentication: bool = True
+    credentials_env_var: str = Field(
+        default="MEDIA_ANALYZER_WEBUI_CREDENTIALS",
+        min_length=1,
+        pattern=r"^[A-Z_][A-Z0-9_]*$",
+        description="Name of the environment variable containing WebUI credentials",
+    )
 
 
 class APIConfig(BaseModel):
@@ -349,9 +355,9 @@ class ResultConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     directory: str = "runtime/results"
-    atomic_write: bool = True
+    atomic_write: Literal[True] = True
     include_raw_metrics: bool = False
-    store_original_name: bool = True
+    store_original_name: Literal[True] = True
 
 
 class ErrorHandlingConfig(BaseModel):

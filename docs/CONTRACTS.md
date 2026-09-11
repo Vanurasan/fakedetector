@@ -302,10 +302,13 @@ registry reservation или route lookup. Переход к `preprocessing` яв
 остаются допустимыми значениями общей state machine, но Stage 4 не утверждает, что
 этапы 5–8 были пройдены.
 
-Terminal lifecycle задачи проходит через `cleanup → finished`. Cleanup failure
-фиксируется отдельно и не переписывает primary terminal status. Terminal task
-нельзя повторно поставить в очередь или перезапустить как ту же задачу; повторный
-analysis требует нового task lifecycle по каноническим контрактам.
+Терминальный жизненный цикл задачи проходит через
+`cleanup → persistence → finished`. Ошибка очистки фиксируется отдельно и не
+переписывает основной терминальный статус.
+`finished` означает, что полный канонический `AnalysisResult` уже сохранён.
+Терминальную задачу нельзя повторно поставить в очередь или перезапустить как ту
+же задачу; повторный анализ требует нового жизненного цикла задачи по
+каноническим контрактам.
 
 Stage 5 уточняет фактический участок этой state machine без изменения Stage 4
 ownership:
@@ -315,14 +318,16 @@ QUEUED / QUEUED
 → RUNNING / PREPROCESSING
 → RUNNING / ANALYSIS
 → COMPLETED | FAILED / CLEANUP
-→ same primary status / FINISHED
+→ тот же основной статус / PERSISTENCE
+→ тот же основной статус / FINISHED
 ```
 
 `TaskRegistry` остаётся единственной authority lifecycle mutations. Concrete
 preprocessor и analyzer их не выполняют. `Stage4TaskProcessor` сохраняет
 ownership execution claim, primary outcome, terminal settlement, cleanup и
-FINISHED publication. Canonical `Stage5ExecutionService` реализует существующий
-port `TaskExecutor.execute(task) -> TaskExecutionOutcome`, не меняя его signature.
+публикацию `PERSISTENCE`/`FINISHED`. Канонический `Stage5ExecutionService`
+реализует существующий порт
+`TaskExecutor.execute(task) -> TaskExecutionOutcome`, не меняя его сигнатуру.
 
 Stage 7 Increment 2 добавляет следующий участок жизненного цикла, предназначенный
 только для внутреннего использования:
@@ -331,6 +336,7 @@ Stage 7 Increment 2 добавляет следующий участок жиз�
 RUNNING / ANALYSIS + опубликованный Stage6TaskData
 → RUNNING / RISK_ASSESSMENT
 → COMPLETED | PARTIAL | FAILED / CLEANUP
+→ тот же основной статус / PERSISTENCE
 → тот же основной статус / FINISHED
 ```
 
@@ -346,6 +352,38 @@ RUNNING / ANALYSIS + опубликованный Stage6TaskData
 выполнения. `complete` соответствует `COMPLETED`, а `partial` и `insufficient` —
 `PARTIAL`; `not_assessed` на этом пути является внутренним сбоем, а не пригодным
 результатом.
+
+Stage 8 Macro 1 уточняет единую последовательность терминальной фиксации принятой
+задачи:
+
+```text
+основной исход
+→ фактическая очистка
+→ TerminalSettlement.FACT_READY
+→ отделённый TerminalTaskFacts
+→ кандидат на терминальную временную метку
+→ сборка AnalysisResult
+→ PERSISTENCE
+→ ResultRepository.save()
+→ фактический CleanupResult + FINISHED
+```
+
+`TerminalTaskFacts` извлекается `TaskRegistry` только для авторитетной задачи в
+`FACT_READY`. Это неизменяемая отделённая проекция канонических байтов и
+фактических временных меток без ссылок на живые модели, путей файловой системы,
+прав доступа к источнику или артефактам и иных дескрипторов владения.
+`Stage4TaskProcessor` делегирует сборку и единственный `save()` узкому
+`ResultFinalizationService`; сам обработчик не дублирует преобразование
+`AnalysisResult`. После успешной атомарной записи допускается малое окно, в
+котором JSON уже существует, а реестр ещё показывает
+`PERSISTENCE`. Обратное окно запрещено: `FINISHED` всегда означает сохранённый
+канонический результат.
+
+Ошибка `save()` не повторяет анализ или очистку, не меняет фактический основной
+статус и не публикует `FINISHED`. Задача остаётся в `PERSISTENCE`, расчёт — в
+`FACT_READY`, владение финализацией освобождается, а в авторитетный реестр
+добавляется безопасная ошибка `result_write_failed`. Автоматические повторная
+попытка и восстановление после перезапуска относятся к Stage 9.
 
 ### 3.2. Внутренний контекст задачи `AnalysisContext`
 
@@ -370,10 +408,13 @@ RUNNING / ANALYSIS + опубликованный Stage6TaskData
 сериализации повторно провалидированного `AppConfig`. Неизменяемый снимок хранит
 канонические байты и связывает контекст и задачу Stage 4, `PreprocessingDispatcher`,
 `AnalyzerRegistry`/`AnalyzerOrchestrator`, `Stage5ExecutionService`, а также локальный для
-задачи бюджет созданных артефактов. Разные экземпляры `AppConfig` с одинаковым
-содержимым совместимы; идентичность объектов не используется. Компоненты работают с
+задачи бюджет созданных артефактов и `ResultFinalizationService`. Значение
+`processing.application_version` берётся из той же материализованной копии
+единственного рабочего снимка. Разные экземпляры `AppConfig` с одинаковым содержимым
+совместимы; идентичность объектов не используется. Компоненты работают с
 отделёнными зафиксированными значениями, а несовпадение отклоняется немедленно
-при сборке сервиса либо до предварительной обработки и ввода-вывода при выполнении задачи.
+при сборке сервиса либо до предварительной обработки и ввода-вывода при выполнении
+задачи.
 
 `AnalysisContext` впервые создаётся Stage 4 только из фактического
 `Stage3Accepted`: identity, registration time, `SourceContext` и
@@ -410,8 +451,9 @@ Internal application model `AnalysisTask` может агрегировать:
 задачи и фиксирует кортеж под блокировкой, затем вне блокировки создаёт свежие
 канонические `AnalyzerResult` из сохранённых байтов. Изменения исходной модели или
 результата чтения, включая вложенные словари и списки, не меняют сохранённые факты;
-повторное чтение воспроизводит их также в `CLEANUP` и `FINISHED`. Запись в этих
-состояниях запрещена. Байты не публикуются через API чтения или `TaskSnapshot`.
+повторное чтение воспроизводит их также в `CLEANUP`, `PERSISTENCE` и `FINISHED`.
+Запись в этих состояниях запрещена. Байты не публикуются через API чтения или
+`TaskSnapshot`.
 Эти данные хранятся только внутри процесса для последующих Stages 6–8: отдельный
 репозиторий, persistence, промежуточный `AnalysisResult` и
 `ResultRepository.save()` не создаются.
@@ -430,7 +472,8 @@ JSON-байты UTF-8, повторно провалидированные пе�
 отсутствующее прежнее состояние Stage 7. Внутреннее чтение через
 `TaskRegistry._read_stage7_assessment(task)` повторно выполняет
 `model_validate_json` и возвращает новые независимо восстановленные
-провалидированные значения Pydantic, в том числе после `FINISHED`.
+провалидированные значения Pydantic, в том числе в `PERSISTENCE` и после
+`FINISHED`.
 `Stage7TaskData` не входит в `TaskSnapshot`, публичную схему, постоянное хранение
 или `AnalysisResult`.
 
@@ -446,6 +489,10 @@ Claim создаётся только для task в `cleanup` и до перв�
 effect; duplicate owner запрещён. Factual progress cleanup attempts, artifacts,
 source и quarantine сохраняется в settlement. `FACT_READY` означает завершённый
 immediate physical cleanup workflow, который для этой task больше не повторяется.
+После `FACT_READY` формируются только отделённые факты терминального состояния и
+терминальная временная метка, собирается `AnalysisResult`, выполняются переход в
+`PERSISTENCE` и единственный `save()`, а `CleanupResult + FINISHED` публикуются
+только после успешной записи.
 
 Для результата со статусом `FAILED` и неподтверждённым корректным завершением
 процесса фаза `CLAIMED` может содержать внутренний барьер безопасности очистки
@@ -882,11 +929,13 @@ Stage3Outcome = Stage3Accepted | Stage3Terminal
 внешний API/JSON contract и не публичная доменная модель Этапа 2. Он не изменяет
 `schema_version` итогового JSON.
 
-Stage 3 не формирует `AnalysisResult`. В частности, запрещено заполнять его
-вымышленными queue timestamps, `config_snapshot_id`, processing values, risk,
-recommendation или файловым дескриптором с неизвестным фактическим размером.
-`AnalysisResult` формируется последующим lifecycle только после появления
-требуемых им фактических данных.
+Сам Stage 3 не формирует `AnalysisResult`. В частности, ему запрещено заполнять
+вымышленные временные метки очереди, `config_snapshot_id`, значения обработки,
+оценку риска, рекомендацию или файловый дескриптор с неизвестным фактическим
+размером. Для зарегистрированного `Stage3Terminal` общий финализатор Stage 8
+предоставляет синхронную операцию, которую вызовет внешняя граница Macro 2. Она
+формирует и сохраняет терминальный `AnalysisResult` только из фактических данных
+и единого рабочего снимка конфигурации.
 
 #### `Stage3Accepted`
 
@@ -925,7 +974,7 @@ receiver commit из раздела 3.4 обязанность cleanup боль�
 - `analyzers=[]`;
 - `findings=[]`;
 - completeness=`not_assessed`;
-- final risk level=`null`;
+- оценка риска=`null`;
 - recommendation=`null`;
 - `CleanupResult | null` согласно разделу 6.9;
 - массив безопасных `ErrorDetail` с primary reason.
@@ -1606,9 +1655,18 @@ result. Будущая persistence может использовать composite
 порогу `0.5` даёт `partial`, если условия `complete` не выполнены.
 
 При `insufficient` поля `RiskAssessment.score`, `score_based_level` и
-`final_level` равны `null`. `not_assessed` не является результатом рабочей оценки
-Stage 7 для принятой задачи и сохраняется для отклонения или сбоя до Stage 7 и
-будущего формирования терминального результата.
+`final_level` равны `null`. Для `complete`, `partial` и `insufficient` все семь
+счётчиков и `coverage_ratio` обязательны и сохраняют перечисленные выше
+инварианты.
+
+`not_assessed` не является результатом рабочей оценки Stage 7 для принятой задачи
+и используется только для терминального `rejected` либо `failed`, когда Stage 7 не
+сформировал авторитетную оценку. В этом состоянии
+`planned_analyzers`, `applicable_analyzers`, `completed_analyzers`,
+`failed_analyzers`, `timed_out_analyzers`, `skipped_analyzers`,
+`not_applicable_analyzers` и `coverage_ratio` равны `null`, а
+`missing_capabilities=[]`. Нули как подстановочные значения неизвестных фактов
+запрещены.
 
 ### 10.3. `missing_capabilities`
 
@@ -1905,6 +1963,14 @@ internal
 }
 ```
 
+`AnalysisResult` схемы `1.0` существует только как терминальный результат:
+допустимы статусы `completed`, `partial`, `rejected`, `failed` и только
+`stage=finished`. `queued`, `running` и любой иной этап обработки запрещены.
+Поля `file`, `risk_assessment`, `recommendation` и `cleanup` допускают `null`,
+когда соответствующий факт не был достигнут. Это исправление схемы `1.0` до
+появления первого рабочего потребителя API/WebUI; версия не повышается, чтение и
+миграция `1.0 → 2.0` не вводятся.
+
 ### 14.2. Блок `processing`
 
 ```json
@@ -1917,6 +1983,20 @@ internal
   "application_version": "0.1.0"
 }
 ```
+
+`queued_at` и `started_at` допускают `null`, если задача фактически не была
+поставлена в очередь или запущена. Для терминального результата `finished_at`
+обязателен, а `updated_at == processing.finished_at`. Временная метка не выводится
+из другого события и не создаётся как подстановочное значение.
+
+`duration_ms` определяется только фактическим запуском:
+
+- при `started_at=null` значение `duration_ms` равно `null`;
+- при ненулевом `started_at` значение `duration_ms` обязательно и равно целому
+  числу полных миллисекунд между `started_at` и `finished_at`, то есть
+  `(finished_at - started_at) // timedelta(milliseconds=1)`;
+- `queued_at` не участвует в расчёте;
+- нулевая длительность допустима, а интервал менее миллисекунды даёт `0`.
 
 ### 14.3. Блок `cleanup`
 
@@ -1931,15 +2011,18 @@ internal
 }
 ```
 
-Для Stage 4 `finished_at` означает post-cleanup terminal event: timestamp
-получается после завершения immediate cleanup/retry/quarantine workflow, когда
-factual cleanup outcome уже находится в `FACT_READY` и готов к atomic publication.
-Публичный `CleanupResult` становится видимым только одновременно с
-`stage=finished`; cleanup при visible `stage=cleanup` и `finished` без cleanup
-запрещены. Обязательный invariant:
+Для принятой Stage 4 задачи `finished_at` означает терминальное событие после
+очистки. Временная метка получается после завершения непосредственного процесса
+очистки, повторных попыток и карантина, когда фактический результат очистки уже
+находится в `FACT_READY`. Она включается в собранный кандидат результата до
+`save()`, но становится доступной потребителю только как часть уже сохранённого
+`AnalysisResult` после публикации `FINISHED`. Принятый терминальный результат без
+очистки запрещён. Обязательные инварианты принятой задачи:
 
 ```text
 task.finished_at == task.cleanup.finished_at
+AnalysisResult.updated_at == AnalysisResult.processing.finished_at
+AnalysisResult.processing.finished_at == AnalysisResult.cleanup.finished_at
 ```
 
 Canonical chronology сохраняется:
@@ -1953,16 +2036,30 @@ Equality разрешена. Naive и non-zero-offset timestamps отклоня�
 Late janitor cleanup quarantined resource не меняет historical `finished_at` или
 зафиксированный `CleanupResult`.
 
+Для зарегистрированного `Stage3Terminal` временная метка финализации получается
+из `AuthoritativeLifecycleClock` не раньше всех фактических временных меток
+Stage 3.
+`cleanup` может быть `null`, когда владение и очистка фактически не требовались;
+если очистка присутствует, её `finished_at` не может быть позже
+`processing.finished_at`.
+
+Для любого терминального `AnalysisResult` действует однонаправленный инвариант
+`file != null → cleanup != null`. Обратное требование не вводится: сочетания
+`file=null, cleanup=null` и `file=null, cleanup!=null` допустимы. Сборщик Stage 3
+не создаёт `CleanupResult`, если фактического результата очистки нет.
+
 ### 14.4. Правила терминальных результатов
 
 #### `completed`
 
 - файл принят;
 - `file` является `ValidatedFileDescriptor`;
+- `queued_at`, `started_at` и `finished_at` содержат фактические временные метки;
 - анализ выполнен с требуемой полнотой;
 - `completeness.status=complete`;
-- `risk_assessment.final_level` не равен `null`;
-- риск и рекомендация сформированы;
+- `risk_assessment` и `recommendation` не равны `null`, а
+  `risk_assessment.final_level` определён;
+- `cleanup` не равен `null`;
 - результат сохранён;
 - статус очистки отражает фактическое состояние.
 
@@ -1970,6 +2067,7 @@ Late janitor cleanup quarantined resource не меняет historical `finished
 
 - файл принят;
 - `file` является `ValidatedFileDescriptor`;
+- `queued_at`, `started_at` и `finished_at` содержат фактические временные метки;
 - результат анализа ограничен сбоями или неполнотой;
 - полнота равна `partial` с ненулевым `risk_assessment.final_level` либо
   `insufficient` с `risk_assessment.score=null`,
@@ -1980,7 +2078,8 @@ Late janitor cleanup quarantined resource не меняет historical `finished
   `errors`, непустого после `.strip()` `completeness.explanation` или хотя бы
   одного непустого после `.strip()` элемента `risk_assessment.limitations`;
 - предупреждения и ошибки только внутри отдельных `AnalyzerResult` сами по себе
-  не удовлетворяют этому правилу.
+  не удовлетворяют этому правилу;
+- `recommendation` и `cleanup` не равны `null`.
 
 Комбинация `status=partial`, `completeness.status=insufficient` и
 нулевые `risk_assessment.score`, `risk_assessment.score_based_level` и
@@ -1994,25 +2093,40 @@ Late janitor cleanup quarantined resource не меняет historical `finished
 #### `rejected`
 
 - ожидаемое нарушение требований к входу обнаружено на validation либо принято
-  factual normative routing decision после подтверждённого Stage 4 ownership;
+  фактическое нормативное решение маршрутизации после подтверждённого владения
+  Stage 4;
 - анализаторы не запускались;
+- `analyzers=[]`;
 - `findings=[]`;
-- `risk_assessment.final_level=null`;
 - `completeness.status=not_assessed`;
+- `risk_assessment=null`;
+- `recommendation=null`;
 - причина отклонения присутствует в `errors` стабильным машинным кодом;
-- cleanup временного input до ownership handoff выполняется и его фактический
-  результат отражается существующим блоком `cleanup`.
+- `file` равен фактическому `InputFileDescriptor` либо `null`, но не
+  `ValidatedFileDescriptor`;
+- `queued_at=null`, `started_at=null`;
+- очистка временного входа до передачи владения выполняется, когда владение
+  фактически возникло, и отражается существующим блоком `cleanup`; если владение
+  и очистка не требовались, `cleanup=null`.
 
 #### `failed`
 
 - внутренняя системная ошибка FakeDetector, а не нормативное свойство входа, не
   позволила продолжить обработку;
-- пригодная риск-оценка отсутствует;
-- `risk_assessment.final_level=null`;
-- причина сбоя отражена безопасно;
+- `errors` содержит безопасную причину сбоя;
+- `completeness.status=not_assessed`;
+- `risk_assessment=null`, `recommendation=null`;
+- `file`, `queued_at`, `started_at` и `cleanup` отражают только фактически
+  достигнутое состояние;
+- уже опубликованные `AnalyzerResult` и `Finding` сохраняются, но не
+  фабрикуются;
 - очистка выполняется и фиксируется после подтверждения, что сохранённый процесс
   или читающий поток больше не препятствует безопасной физической очистке; до
   такого подтверждения задача правдиво остаётся в `FAILED / CLEANUP`.
+
+Любой терминальный результат с ненулевым `queued_at` относится к принятой задаче:
+`file` обязан быть `ValidatedFileDescriptor`, `cleanup` не равен `null`, а
+`cleanup.finished_at == processing.finished_at`.
 
 К `rejected` относятся, в частности, отсутствие или неподдерживаемость
 расширения, неподдерживаемый фактический MIME/тип, несоответствие сигнатуры или
@@ -2031,9 +2145,21 @@ Cleanup не добавляется в `ValidationResult`: Stage 3 отража�
 артефакты не создавались, `intermediate_files_deleted=true` означает, что после
 cleanup промежуточных файлов не осталось; это не утверждение об их создании.
 
-Stage 4 не формирует полный `AnalysisResult` и не создаёт его промежуточную или
-фиктивную версию. Он не фабрикует analyzer results, findings, completeness, risk,
-recommendation, processing или persistence facts последующих этапов.
+Для зарегистрированного `Stage3Terminal` единые `AnalysisResultAssembler` и
+`ResultFinalizationService` предоставляют синхронную операцию финализации: при
+успешном `save()` канонический терминальный результат доступен в репозитории. Её
+вызов из внешней HTTP-границы относится к Macro 2. Ошибка сохранения возвращает
+безопасную типизированную ошибку с фактическим `analysis_id`, не создаёт
+фиктивный результат, URL результата, кеш или обещание последующего GET либо
+восстановления. `PreRegistrationError` не создаёт `AnalysisResult`. Повторная
+попытка и восстановление после неудачного сохранения Stage 3 относятся к Stage 9.
+
+Stage 4 не формирует промежуточную или фиктивную версию `AnalysisResult` и не
+фабрикует результаты анализаторов, признаки, полноту, оценку риска или
+рекомендацию. После `FACT_READY` `Stage4TaskProcessor` передаёт отделённые
+авторитетные факты финализатору Stage 8, который использует то же преобразование
+сборщика, применяет политику сохранения и сохраняет полный терминальный результат
+до публикации `FINISHED`.
 
 ### 14.5. Полный пример
 
@@ -2220,9 +2346,10 @@ class ResultRepository(Protocol):
     def list_recent(self, limit: int) -> list[AnalysisResultSummary]: ...
 ```
 
-`ResultRepository` является repository полного terminal `AnalysisResult` на
-Stage 8. Stage 4 не вызывает `ResultRepository.save()`; его in-process
-`TaskRegistry` не реализует и не заменяет этот интерфейс.
+`ResultRepository` является репозиторием полного терминального `AnalysisResult`
+на Stage 8. `Stage4TaskProcessor` вызывает его только косвенно через внедрённый
+`ResultFinalizationService` после `FACT_READY`; внутрипроцессный `TaskRegistry` не
+реализует и не заменяет этот интерфейс.
 
 Первая реализация:
 
@@ -2259,7 +2386,9 @@ class AnalysisResultSummary(BaseModel):
 - `status = result.status`;
 - для `ValidatedFileDescriptor` используется `media_type = result.file.media_type`;
 - для `InputFileDescriptor` используется `media_type = null`;
-- `final_risk_level = result.risk_assessment.final_level`;
+- при `risk_assessment != null` используется
+  `final_risk_level = result.risk_assessment.final_level`, иначе
+  `final_risk_level = null`;
 - `completeness_status = result.completeness.status`.
 
 Тип медиа нельзя угадывать по имени, расширению или MIME. Риск и полнота не
@@ -2310,15 +2439,30 @@ external references, ошибки, findings, результаты и метри�
 
 ### 15.4. Требования
 
-- атомарная запись;
+- детерминированный канонический UTF-8 JSON: сортировка ключей, компактные
+  разделители и запрет NaN/Infinity;
+- атомарная запись через временный файл в том же каталоге, `flush`, `fsync` и
+  `os.replace`, с удалением временного файла при сбое;
 - полная повторная проверка схемы непосредственно на границе `save` до
-  построения target path, сериализации сохраняемого payload и любых операций с
+  построения целевого пути, сериализации сохраняемых данных и любых операций с
   файловой системой; сохраняется именно повторно провалидированный результат;
+- безопасный системный `analysis_id`, включая запрет обхода каталогов и
+  зарезервированных имён Windows;
+- существующая прямая символическая ссылка на целевой JSON отклоняется до записи
+  временного файла;
 - отсутствие прямой записи из анализаторов;
 - безопасное формирование пути;
 - отсутствие исходного мультимедиа в результате;
 - корректная обработка повреждённого JSON;
+- `get`, `exists` и `list_recent` отображают `OSError` в безопасный
+  `ResultRepositoryError` без пути, данных и исходного текста ОС;
 - возможность позднее заменить реализацию без изменения ядра.
+
+Перед сохранением `ResultFinalizationService` применяет политику
+`result.include_raw_metrics` к отделённой проекции результата: при `true`
+сохраняются авторитетные `raw_metrics`, при `false` в сохраняемом и публичном
+`AnalyzerResult` сохраняется пустой словарь. `Stage5TaskData` и его канонические
+байты не изменяются.
 
 `list_recent` может не выставляться во внешний API MVP, но интерфейс допускается для WebUI и будущей истории.
 
@@ -2369,7 +2513,15 @@ external_systems
 #### `access_channels.webui`
 
 - `enabled`;
-- `require_authentication`.
+- `require_authentication`;
+- `credentials_env_var`.
+
+`credentials_env_var` содержит имя переменной окружения с единственной парой
+`username:password` и соответствует ASCII-шаблону
+`^[A-Z_][A-Z0-9_]*$`. Сама пара не хранится в YAML, модели конфигурации,
+результате или журнале. Для включённого WebUI с
+`require_authentication=true` отсутствующее или некорректное значение приводит
+к безопасному отказу запуска до обслуживания HTTP-запросов.
 
 #### `access_channels.api`
 
@@ -2379,7 +2531,11 @@ external_systems
 
 `token_env_var` содержит имя переменной окружения и соответствует ASCII-шаблону
 `^[A-Z_][A-Z0-9_]*$`. Поле не содержит сам секрет. Наличие указанной переменной
-окружения и получение её значения являются отдельной runtime-задачей.
+окружения и получение её значения являются отдельной задачей рабочего runtime.
+Для включённого API с `require_token=true` отсутствующий или пустой токен
+приводит к безопасному отказу запуска. Проверка Bearer-токена использует
+`secrets.compare_digest`; отсутствующий или неверный токен возвращает `401` с
+`WWW-Authenticate: Bearer`.
 
 #### `limits`
 
@@ -2472,6 +2628,14 @@ Stage 4 не вводятся.
 - `include_raw_metrics`;
 - `store_original_name`.
 
+Для MVP `atomic_write=true` и `store_original_name=true` являются обязательными:
+`false` отклоняется Pydantic при валидации конфигурации. Альтернативный
+неатомарный путь сохранения и скрытое либо пустое подстановочное исходное имя не
+вводятся. `include_raw_metrics` является единственной переключаемой политикой:
+`true` сохраняет авторитетные необработанные метрики в отделённом сохраняемом
+результате, `false` очищает их только в публичной и сохраняемой проекции без
+изменения состояния задачи.
+
 #### `error_handling`
 
 - `continue_if_analyzer_fails`;
@@ -2513,6 +2677,7 @@ access_channels:
   webui:
     enabled: true
     require_authentication: true
+    credentials_env_var: "MEDIA_ANALYZER_WEBUI_CREDENTIALS"
   api:
     enabled: true
     require_token: true
@@ -2633,9 +2798,18 @@ API должен обеспечивать логические операции:
 
 Операции отмены, удаления результата, повторного анализа и истории не входят в обязательный MVP.
 
+Обе внешние границы вызывают один `AnalysisApplicationService`, который
+использует один рабочий runtime, `FileIntakeService`, `TaskRegistry`,
+`ResultFinalizationService` и `ResultRepository`. Для чтения статуса и результата
+сначала проверяется текущее состояние `TaskRegistry` и только при отсутствии
+задачи — `ResultRepository`. Поэтому уже записанный JSON не раскрывается, пока
+текущая задача ещё находится в `PERSISTENCE`; `FINISHED` всегда означает
+доступный сохранённый результат.
+
 ### 17.2. Модель выполнения API
 
-Окончательный выбор между синхронным и асинхронным профилем имеет статус **OPEN**.
+Для MVP утверждён асинхронный профиль B с задачами. HTTP-граница реализована в
+Stage 8 Macro 2.
 
 #### Профиль A — синхронный
 
@@ -2645,20 +2819,20 @@ API должен обеспечивать логические операции:
 - проще реализовать;
 - плохо подходит для долгого видео и тайм-аутов.
 
-#### Профиль B — асинхронный job-style
+#### Профиль B — асинхронный, с задачами
 
-- загрузка возвращает `analysis_id` и `queued`;
+- загрузка возвращает `analysis_id` и фактически полученные `status` и `stage`;
 - клиент получает статус отдельным запросом;
 - итоговый результат запрашивается после завершения;
 - лучше соответствует очереди, аудио и видео;
 - требует хранения промежуточного состояния и дополнительных маршрутов.
 
-**Рекомендация для универсального image/audio/video API: профиль B.**  
-**Решение должно быть подтверждено владельцем проекта до реализации HTTP-маршрутов.**
+**Статус профиля B: FIXED.**
 
-### 17.3. Рекомендуемый асинхронный HTTP-профиль
+### 17.3. Утверждённый асинхронный HTTP-профиль
 
-Этот раздел имеет статус **CONDITIONAL** до подтверждения профиля B.
+Для MVP утверждены и реализованы ровно три маршрута, описанные ниже. Их
+контрактные HTTP-тесты принадлежат Stage 8 Macro 2.
 
 #### Создать анализ
 
@@ -2683,10 +2857,36 @@ Authorization: Bearer <token>
 {
   "analysis_id": "01J3...",
   "status": "queued",
+  "stage": "queued",
   "status_url": "/api/v1/analyses/01J3...",
   "result_url": "/api/v1/analyses/01J3.../result"
 }
 ```
+
+Временные метки статуса отражают только фактическое состояние задачи или
+результата и не создаются адаптером как подстановочные значения.
+
+Отсутствующий `source_context` преобразуется в
+`SourceContext(channel=SourceChannel.API)`. Переданная строка обязана быть JSON-
+объектом валидной модели `SourceContext` с `channel=api`; некорректный JSON даёт
+`400`, объект с нарушением схемы или иным `channel` — `422`. Поля атрибуции не
+участвуют в аутентификации, авторизации, доверии маршрутизации или построении
+внутренних путей.
+
+Bearer проверяется до разбора тела запроса. Только после успешной аутентификации
+адаптер вызывает `request.form()` и извлекает `file` и `source_context`.
+Некорректное тело `multipart/form-data` возвращает `400` в модели
+`APIErrorResponse`; ответ обработчика FastAPI с полем `detail` наружу не выходит.
+
+Принятый `Stage3Accepted` возвращает `202`. Успешно сохранённый
+`Stage3Terminal` использует смешанную семантику `413`/`415`/`422`/`500` и только
+после успешного `save()` может включать `analysis_id`, `status_url` и
+`result_url`. `PreRegistrationError` даёт безопасный `500` без ID и ссылок.
+Только `ResultFinalizationError` при сохранении `Stage3Terminal` даёт безопасный
+`503` с `result_write_failed`, без ID, ссылок, состояния повторной попытки или
+обещания восстановления. Неожиданное исключение часов, сборки либо доменной
+валидации до сохранения даёт безопасный `500` с `internal_error` без раскрытия
+подробностей и без результата или ссылок.
 
 #### Получить статус
 
@@ -2701,9 +2901,18 @@ Authorization: Bearer <token>
   "status": "running",
   "stage": "analysis",
   "created_at": "2026-07-24T14:35:22Z",
-  "updated_at": "2026-07-24T14:35:42Z"
+  "queued_at": "2026-07-24T14:35:22Z",
+  "started_at": "2026-07-24T14:35:23Z",
+  "finished_at": null,
+  "result_available": false,
+  "errors": []
 }
 ```
+
+Все временные метки фактические и допускают отсутствие, кроме `created_at`;
+искусственный `updated_at` отсутствует. Текущее состояние `PERSISTENCE` с
+`result_write_failed` возвращает `200`, `result_available=false` и сохранённую
+безопасную ошибку.
 
 #### Получить результат
 
@@ -2715,10 +2924,18 @@ Authorization: Bearer <token>
 - `200 OK` — терминальный результат существует;
 - `202 Accepted` — анализ ещё выполняется;
 - `404 Not Found` — неизвестный идентификатор.
+- `503 Service Unavailable` — текущая задача находится в `PERSISTENCE` после
+  `result_write_failed`;
+- `500 Internal Server Error` — репозиторий недоступен для чтения или повреждён
+  либо нарушен внутренний инвариант `FINISHED → сохранённый результат`.
+
+После перезапуска сохранённый терминальный результат доступен из
+`ResultRepository`; потерянный идентификатор незавершённой задачи без результата
+становится неизвестным и возвращает `404`.
 
 ### 17.4. Синхронный HTTP-профиль
 
-Статус **CONDITIONAL** до выбора профиля A.
+Профиль A не выбран и не входит в MVP.
 
 ```http
 POST /api/v1/analyze
@@ -2747,6 +2964,11 @@ Authorization: Bearer <token>
 | `500` | Внутренняя ошибка |
 | `503` | Сервис временно не способен принять задачу |
 
+При смешанной семантике HTTP-ответов для отклонения зарегистрированный
+терминальный результат Stage 3 может вернуть HTTP `4xx` вместе с `analysis_id` и
+ссылками только после успешного сохранения канонического `AnalysisResult`. При
+ошибке сохранения ссылки и утверждение о доступном результате запрещены.
+
 ### 17.6. HTTP-ошибка
 
 ```json
@@ -2770,6 +2992,19 @@ Authorization: Bearer <token>
 
 ## 18. Контракт WebUI
 
+Stage 8 Macro 2 использует формируемый на сервере HTML на Jinja2 без SPA и
+сеанса на основе cookie. Все HTML-маршруты защищены HTTP Basic, если
+`require_authentication=true`; учётные данные читаются только из переменной
+окружения, а `username` и `password` сравниваются через
+`secrets.compare_digest`. Ответ `401` содержит
+`WWW-Authenticate: Basic realm="FakeDetector"`. Отсутствующее, неверное или
+некорректно закодированное значение HTTP Basic преобразуется в одну безопасную
+серверную страницу `401` без подробностей обработчика. HTML-маршруты исключены
+из OpenAPI, а отключённый WebUI не регистрирует маршруты или статические ресурсы.
+
+За пределами локального интерфейса HTTP Basic разрешён только за HTTPS и обратным
+прокси; слой TLS не принадлежит Macro 2.
+
 ### 18.1. Минимальный пользовательский поток
 
 1. Пользователь проходит предусмотренную аутентификацию.
@@ -2780,14 +3015,35 @@ Authorization: Bearer <token>
 6. Получает статус обработки.
 7. Видит итоговый результат или безопасную ошибку.
 
+Маршруты MVP:
+
+```text
+GET  /
+POST /analyses
+GET  /analyses/{analysis_id}
+GET  /analyses/{analysis_id}/result
+```
+
 ### 18.2. Минимальная форма
 
 - одно поле файла;
 - кнопка запуска;
 - сведения о допустимых типах и размерах;
-- защита от повторной отправки во время загрузки;
-- CSRF-защита, если используется cookie-сессия;
+- защита от повторной отправки во время загрузки путём блокировки кнопки после
+  фактического события отправки формы;
+- строгая проверка совпадения источника по `Origin` либо `Referer` для
+  `POST /analyses`;
 - отсутствие пути локального файла в логах.
+
+Совпадение источника означает точное совпадение схемы, хоста и эффективного порта
+с источником текущего запроса. Запрос с другого источника, некорректный источник,
+`Origin: null` и запрос без достаточного `Origin`/`Referer` отклоняются безопасной
+страницей `403`. Cookie, сеанс и CSRF-токен не вводятся.
+
+На `POST /analyses` HTTP Basic завершается до входа в обработчик, затем
+проверяется совпадение источника и только после этого вызывается
+`request.form()`. Некорректная форма после успешных проверок получает безопасную
+HTML-страницу `400`.
 
 ### 18.3. Страница результата
 
@@ -2803,7 +3059,12 @@ Authorization: Bearer <token>
 - предупреждение об отсутствии окончательной экспертизы;
 - фактический статус очистки без раскрытия внутренних путей.
 
-Точный дизайн экранов имеет статус **OPEN**.
+Ожидающий статус отображается с `<meta refresh>` без JavaScript. Готовый статус
+перенаправляет `303` на страницу результата; запрос ещё не готового результата
+возвращает ту же страницу статуса с `202`. Неизвестный ID возвращает `404`, а
+ошибка сохранения принятой задачи — `503`. WebUI отображает только поля
+сохранённого `AnalysisResult` и не пересчитывает `Finding`,
+`AnalysisCompleteness`, `RiskAssessment` или `Recommendation`.
 
 ---
 
@@ -2911,21 +3172,18 @@ JSONL whitelist и обязательные поля события остают
 
 До соответствующих этапов разработки требуют подтверждения:
 
-1. синхронный или асинхронный HTTP-профиль;
-2. окончательные HTTP-маршруты;
-3. механизм аутентификации WebUI;
-4. срок жизни и управление API-токенами после MVP;
-5. точный набор обязательных анализаторов профиля;
-6. будущая статистическая калибровка `probability` и следующие версии модели
+1. срок жизни и управление API-токенами после MVP;
+2. точный набор обязательных анализаторов профиля;
+3. будущая статистическая калибровка `probability` и следующие версии модели
    `score`;
-7. будущие расширения пустого доверенного рабочего каталога critical-правил
+4. будущие расширения пустого доверенного рабочего каталога critical-правил
    Profile B;
-8. итоговая JSON Schema как отдельный машинный файл;
-9. срок хранения результатов;
-10. операции отмены, удаления и повторного анализа;
-11. история анализов и пагинация;
-12. интеграционные события SIEM/DLP/SOAR;
-13. политика передачи персональных данных источника.
+5. итоговая JSON Schema как отдельный машинный файл;
+6. срок хранения результатов;
+7. операции отмены, удаления и повторного анализа;
+8. история анализов и пагинация;
+9. интеграционные события SIEM/DLP/SOAR;
+10. политика передачи персональных данных источника.
 
 ИИ-агент обязан остановиться на границе открытого решения, предложить варианты и не выдавать предположение за утверждённый контракт.
 
@@ -2940,18 +3198,15 @@ WebUI / API
 → ValidationResult
 → Stage3Outcome
   | accepted: Stage3Accepted + opaque owned-source handoff
-  | rejected / failed: Stage3Terminal + factual pre-handoff cleanup outcome
-→ AnalysisContext
-→ PreparedMedia
-→ AnalyzerRequest
-→ AnalyzerResult[]
-→ Finding[]
-→ AnalysisCompleteness
-→ RiskAssessment
-→ Recommendation
-→ CleanupResult
-→ AnalysisResult
-→ ResultRepository
+  | → AnalysisContext → PreparedMedia → AnalyzerRequest → AnalyzerResult[]
+  | → Finding[] → AnalysisCompleteness → RiskAssessment → Recommendation
+  | → фактическая очистка → FACT_READY → TerminalTaskFacts
+  | → терминальная временная метка → AnalysisResult → PERSISTENCE
+  | → ResultRepository.save() → CleanupResult + FINISHED
+  |
+  | rejected / failed: Stage3Terminal + фактический результат очистки до передачи владения
+  | → AnalysisResultAssembler → ResultFinalizationService
+  | → ResultRepository.save()
 ```
 
 Ключевые запреты:

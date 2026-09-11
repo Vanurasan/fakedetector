@@ -15,6 +15,7 @@ from typing import NoReturn, cast
 
 import pytest
 import yaml
+from result_backend_fakes import SuccessfulAcceptedResultFinalizer
 
 import fakedetector.analyzers._orchestrator as orchestrator_module
 import fakedetector.analyzers._worker as worker_module
@@ -561,6 +562,20 @@ def _service(
     )
 
 
+def _stage4_processor(
+    *,
+    config: AppConfig,
+    clock: AuthoritativeLifecycleClock,
+    registry: TaskRegistry,
+) -> Stage4TaskProcessor:
+    return Stage4TaskProcessor(
+        config=config,
+        clock=clock,
+        registry=registry,
+        result_finalizer=SuccessfulAcceptedResultFinalizer(),
+    )
+
+
 def _write_artifact(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"artifact")
@@ -725,6 +740,7 @@ def test_integrated_stage3_stage4_stage5_production_path(
         clock=lifecycle_clock,
         registry=registry,
         queue=queue,
+        result_finalizer=SuccessfulAcceptedResultFinalizer(),
     ).run_next()
 
     assert final is not None
@@ -828,7 +844,7 @@ def test_state_machine_and_registry_enforce_stage5_publication_order(
     registry.record_outcome(task.context.analysis_id, TaskExecutionOutcome.completed())
     with pytest.raises(LifecycleStateError):
         registry.append_stage5_analyzer_result(task, result)
-    final = Stage4TaskProcessor(
+    final = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,
@@ -1059,7 +1075,7 @@ def test_malformed_trusted_candidate_causes_safe_analysis_failure(
         monotonic=_ManualMonotonic(),
     )
 
-    final = Stage4TaskProcessor(
+    final = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,
@@ -1126,7 +1142,7 @@ def test_stage6_sibling_state_uses_canonical_bytes_and_detached_reads(tmp_path: 
         tuple(finding.model_dump(mode="json") for finding in registry._read_stage6_findings(task))
         == expected
     )
-    final = Stage4TaskProcessor(
+    final = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,
@@ -1368,7 +1384,7 @@ def test_stage7_usable_outcomes_cleanup_and_keep_detached_state(
     assert task.context.status is terminal_status
     assert task.context.stage is ProcessingStage.CLEANUP
 
-    final = Stage4TaskProcessor(
+    final = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,
@@ -1402,7 +1418,7 @@ def test_stage7_internal_failure_can_finish_without_assessment(tmp_path: Path) -
             )
         ),
     )
-    final = Stage4TaskProcessor(
+    final = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,
@@ -1496,7 +1512,7 @@ def test_authoritative_results_remain_immutable_through_terminal_settlement(
             )
             registry.record_outcome(task.context.analysis_id, outcome)
         elif phase is ProcessingStage.FINISHED:
-            Stage4TaskProcessor(
+            _stage4_processor(
                 config=config,
                 clock=AuthoritativeLifecycleClock(
                     _IncrementingClock(_CREATED_AT + timedelta(minutes=1))
@@ -1738,7 +1754,7 @@ def test_preprocessing_failure_uses_stage4_terminal_cleanup(
         _RecordingPreprocessing(fail=True),
         monotonic=_ManualMonotonic(),
     )
-    processor = Stage4TaskProcessor(
+    processor = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,
@@ -1930,7 +1946,7 @@ def test_fatal_analyzer_infrastructure_failure_cleans_after_safety_confirmation(
         runner=_SequencedRunner(fatal_barrier=barrier),
         monotonic=_ManualMonotonic(),
     )
-    final = Stage4TaskProcessor(
+    final = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,
@@ -2014,7 +2030,7 @@ def test_real_interrupted_child_preserves_settlement_ownership_and_recovery(
         monkeypatch.setattr(preprocessing_tools_module, "run_bounded_process", run_probe)
         preprocessing = _FFmpegTerminationPreprocessing()
     service = _service(config, registry, preprocessing, monotonic=_ManualMonotonic())
-    processor = Stage4TaskProcessor(
+    processor = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,
@@ -2102,7 +2118,7 @@ def test_response_decode_interruption_propagates_after_real_worker_reap(
         _RecordingPreprocessing(create_artifact=True),
         monotonic=_ManualMonotonic(),
     )
-    processor = Stage4TaskProcessor(
+    processor = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,
@@ -2134,7 +2150,7 @@ def test_unreapable_worker_defers_cleanup_until_recovery_confirms_safe(
         runner=_SequencedRunner(fatal_barrier=barrier),
         monotonic=_ManualMonotonic(),
     )
-    processor = Stage4TaskProcessor(
+    processor = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,
@@ -2226,7 +2242,7 @@ def test_cleanup_safety_confirmation_exception_defers_and_recovers(
         runner=_SequencedRunner(fatal_barrier=barrier),
         monotonic=_ManualMonotonic(),
     )
-    processor = Stage4TaskProcessor(
+    processor = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,
@@ -2291,7 +2307,7 @@ def test_ffmpeg_termination_barrier_defers_stage4_cleanup_and_beats_timeout(
         _FFmpegTerminationPreprocessing(),
         monotonic=_ManualMonotonic(),
     )
-    processor = Stage4TaskProcessor(
+    processor = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,
@@ -2352,7 +2368,7 @@ def test_overall_deadline_before_analysis_prevents_analyzer_and_cleans(
         runner=forbidden_runner,
         monotonic=monotonic,
     )
-    final = Stage4TaskProcessor(
+    final = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,
@@ -2365,6 +2381,67 @@ def test_overall_deadline_before_analysis_prevents_analyzer_and_cleans(
     assert registry.stage5_events == []
     assert task.stage5_data is None
     assert task.accepted_source.is_released
+
+
+def test_stage7_deadline_expiration_before_publication_remains_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "temp"
+    config = _config(root, processing_timeout_seconds=5)
+    task, registry = _claimed_task(root, config)
+    monotonic = _ManualMonotonic()
+    service = _service(
+        config,
+        registry,
+        _RecordingPreprocessing(),
+        monotonic=monotonic,
+    )
+    assess = service._assessment_service.assess
+
+    def expire_before_publication(*args: object, **kwargs: object):
+        assessment = assess(*args, **kwargs)
+        monotonic.advance(5)
+        return assessment
+
+    monkeypatch.setattr(service._assessment_service, "assess", expire_before_publication)
+
+    outcome = service.execute(task)
+
+    assert outcome.status is AnalysisStatus.FAILED
+    assert outcome.errors[0].code == "processing_timeout"
+    assert outcome.errors[0].safe_details == {"phase": "risk_assessment"}
+    assert registry._read_stage7_assessment(task) is None
+    _cleanup_task(task)
+
+
+def test_successful_stage7_publication_is_the_deadline_commit_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "temp"
+    config = _config(root, processing_timeout_seconds=5)
+    task, registry = _claimed_task(root, config)
+    monotonic = _ManualMonotonic()
+    service = _service(
+        config,
+        registry,
+        _RecordingPreprocessing(),
+        monotonic=monotonic,
+    )
+    publish = registry.publish_stage7_assessment
+
+    def publish_at_deadline(*args: object, **kwargs: object) -> None:
+        monotonic.advance(5)
+        publish(*args, **kwargs)
+
+    monkeypatch.setattr(registry, "publish_stage7_assessment", publish_at_deadline)
+
+    outcome = service.execute(task)
+
+    assert outcome == TaskExecutionOutcome.partial()
+    assert registry._read_stage7_assessment(task) is not None
+    _cleanup_task(task)
 
 
 def test_single_deadline_caps_analyzers_and_stops_launch_between_them(
@@ -2398,7 +2475,7 @@ def test_single_deadline_caps_analyzers_and_stops_launch_between_them(
         runner=analyzer_runner,
         monotonic=monotonic,
     )
-    final = Stage4TaskProcessor(
+    final = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,
@@ -2451,7 +2528,7 @@ def test_single_deadline_decreases_between_successful_analyzers(
         runner=analyzer_runner,
         monotonic=monotonic,
     )
-    final = Stage4TaskProcessor(
+    final = _stage4_processor(
         config=config,
         clock=AuthoritativeLifecycleClock(_IncrementingClock(_CREATED_AT + timedelta(minutes=1))),
         registry=registry,

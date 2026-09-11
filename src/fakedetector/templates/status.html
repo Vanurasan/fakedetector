@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="2;url={{ refresh_url }}">
+  <title>FakeDetector — статус</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="container">
+    <h1>Анализ выполняется</h1>
+    <p><strong>ID:</strong> <code>{{ status.analysis_id }}</code></p>
+    <p><strong>Статус:</strong> {{ status.status.value }}</p>
+    <p><strong>Этап:</strong> {{ status.stage.value }}</p>
+    <p>Страница обновится автоматически.</p>
+    {% if status.errors %}
+    <h2>Сообщения</h2>
+    <ul>{% for error in status.errors %}<li>{{ error.message }} ({{ error.code }})</li>{% endfor %}</ul>
+    {% endif %}
+  </main>
+</body>
+</html>

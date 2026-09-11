@@ -97,54 +97,105 @@ def make_result(
             },
             "file": validated_descriptor if validated_file else input_file,
             "processing": {
-                "queued_at": timestamp,
-                "started_at": timestamp,
+                "queued_at": timestamp if validated_file else None,
+                "started_at": timestamp if validated_file else None,
                 "finished_at": last_updated,
-                "duration_ms": 0,
+                "duration_ms": (
+                    (last_updated - timestamp) // timedelta(milliseconds=1)
+                    if validated_file
+                    else None
+                ),
                 "config_snapshot_id": "config-test",
                 "application_version": "0.1.0",
             },
-            "analyzers": [],
+            "analyzers": (
+                [
+                    {
+                        "analyzer_id": "repository_test",
+                        "analyzer_version": "1.0.0",
+                        "media_type": "image",
+                        "group": "image",
+                        "status": "completed",
+                        "applicable": True,
+                        "started_at": timestamp,
+                        "finished_at": timestamp,
+                        "duration_ms": 0,
+                        "score": 0,
+                        "score_name": "repository_score",
+                        "summary": "Тестовый анализатор завершён.",
+                        "raw_metrics": {},
+                        "candidate_findings": [],
+                        "warnings": [],
+                        "errors": [],
+                    }
+                ]
+                if validated_file
+                else []
+            ),
             "findings": [],
-            "completeness": {
-                "status": "complete" if validated_file else "not_assessed",
-                "planned_analyzers": 0,
-                "applicable_analyzers": 0,
-                "completed_analyzers": 0,
-                "failed_analyzers": 0,
-                "timed_out_analyzers": 0,
-                "skipped_analyzers": 0,
-                "not_applicable_analyzers": 0,
-                "coverage_ratio": 1.0,
-                "missing_capabilities": [],
-                "explanation": "Тестовый анализ завершён.",
-            },
-            "risk_assessment": {
-                "model_id": "score_model_v1",
-                "model_version": "0.1.0",
-                "score": 0,
-                "score_based_level": "low",
-                "critical_override_applied": False,
-                "critical_finding_ids": [],
-                "final_level": final_level if validated_file else None,
-                "probability": None,
-                "probability_method": None,
-                "summary": "Значимые признаки не выявлены.",
-                "explanation": "Тестовая объявленная оценка.",
-                "limitations": [],
-            },
-            "recommendation": {
-                "primary_action": "no_additional_action",
-                "additional_actions": [],
-                "text": "Дополнительные действия не требуются.",
-                "requires_manual_review": False,
-            },
+            "completeness": (
+                {
+                    "status": "complete",
+                    "planned_analyzers": 1,
+                    "applicable_analyzers": 1,
+                    "completed_analyzers": 1,
+                    "failed_analyzers": 0,
+                    "timed_out_analyzers": 0,
+                    "skipped_analyzers": 0,
+                    "not_applicable_analyzers": 0,
+                    "coverage_ratio": 1.0,
+                    "missing_capabilities": [],
+                    "explanation": "Тестовый анализ завершён.",
+                }
+                if validated_file
+                else {
+                    "status": "not_assessed",
+                    "planned_analyzers": None,
+                    "applicable_analyzers": None,
+                    "completed_analyzers": None,
+                    "failed_analyzers": None,
+                    "timed_out_analyzers": None,
+                    "skipped_analyzers": None,
+                    "not_applicable_analyzers": None,
+                    "coverage_ratio": None,
+                    "missing_capabilities": [],
+                    "explanation": "Полнота анализа не оценивалась.",
+                }
+            ),
+            "risk_assessment": (
+                {
+                    "model_id": "score_model_v1",
+                    "model_version": "0.1.0",
+                    "score": 0,
+                    "score_based_level": "low",
+                    "critical_override_applied": False,
+                    "critical_finding_ids": [],
+                    "final_level": final_level,
+                    "probability": None,
+                    "probability_method": None,
+                    "summary": "Значимые признаки не выявлены.",
+                    "explanation": "Тестовая объявленная оценка.",
+                    "limitations": [],
+                }
+                if validated_file
+                else None
+            ),
+            "recommendation": (
+                {
+                    "primary_action": "no_additional_action",
+                    "additional_actions": [],
+                    "text": "Дополнительные действия не требуются.",
+                    "requires_manual_review": False,
+                }
+                if validated_file
+                else None
+            ),
             "cleanup": {
                 "status": "completed",
                 "original_file_deleted": True,
                 "intermediate_files_deleted": True,
                 "quarantine_used": False,
-                "finished_at": timestamp,
+                "finished_at": last_updated if validated_file else timestamp,
                 "errors": [],
             },
             "warnings": [] if warning is None else [warning],
@@ -185,6 +236,23 @@ def test_save_get_exists_and_utf8_json_round_trip(tmp_path: Path) -> None:
     assert "проверка.jpg" in payload.decode("utf-8")
     assert json.loads(payload) == result.model_dump(mode="json")
     assert repository.get(result.analysis_id) == result
+
+
+def test_saved_json_uses_canonical_deterministic_serialization(tmp_path: Path) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    result = make_result()
+
+    repository.save(result)
+
+    payload = (tmp_path / f"{result.analysis_id}.json").read_bytes()
+    expected = json.dumps(
+        result.model_dump(mode="json"),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert payload == expected
 
 
 def test_repeated_save_atomically_replaces_result_for_same_id(tmp_path: Path) -> None:
@@ -302,6 +370,24 @@ def test_failed_first_save_leaves_no_partial_target_or_temp_file(
 
     assert list(tmp_path.iterdir()) == []
     assert repository.exists(result.analysis_id) is False
+
+
+def test_save_rejects_existing_symlink_target_without_mutation(tmp_path: Path) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    outside = tmp_path / "PRIVATE-outside.json"
+    outside.write_text("PRIVATE TARGET", encoding="utf-8")
+    link = tmp_path / "analysis-safe-001.json"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink creation is not available in this environment")
+
+    with pytest.raises(ResultRepositoryError, match="^Result could not be saved\\.$"):
+        repository.save(make_result())
+
+    assert link.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "PRIVATE TARGET"
+    assert not list(tmp_path.glob(".result-*.tmp"))
 
 
 def test_save_revalidates_mutated_result_before_any_filesystem_side_effect(
@@ -590,7 +676,7 @@ def test_list_recent_sorts_by_created_at_then_id_and_ignores_updated_at_and_mtim
         make_result(
             "newest",
             created_at=base_time + timedelta(minutes=1),
-            updated_at=base_time - timedelta(days=20),
+            updated_at=base_time + timedelta(minutes=2),
         ),
         make_result(
             "tie-a",
@@ -792,6 +878,30 @@ def test_list_recent_directory_enumeration_error_is_safe(
         repository.list_recent(1)
 
     assert str(error_info.value) == "Stored results could not be listed."
+    assert "PRIVATE" not in str(error_info.value)
+    assert str(tmp_path) not in str(error_info.value)
+
+
+@pytest.mark.parametrize("operation", ["get", "exists"])
+def test_addressed_metadata_error_is_safe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    repository = JsonFileResultRepository(tmp_path / "PRIVATE-DIRECTORY")
+
+    def fail_symlink_check(_path: Path) -> NoReturn:
+        raise OSError("PRIVATE OS METADATA ERROR")
+
+    monkeypatch.setattr(Path, "is_symlink", fail_symlink_check)
+
+    with pytest.raises(ResultRepositoryError) as error_info:
+        if operation == "get":
+            repository.get("private-entry")
+        else:
+            repository.exists("private-entry")
+
+    assert str(error_info.value) == "Stored result could not be read."
     assert "PRIVATE" not in str(error_info.value)
     assert str(tmp_path) not in str(error_info.value)
 

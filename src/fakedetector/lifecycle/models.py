@@ -220,6 +220,58 @@ class TerminalSettlementSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class TerminalTaskFacts:
+    """Detached immutable result inputs captured from one FACT_READY task."""
+
+    analysis_id: str
+    created_at: datetime
+    status: AnalysisStatus
+    config_snapshot_id: str
+    queued_at: datetime | None
+    started_at: datetime | None
+    source_json: bytes = field(repr=False)
+    file_json: bytes = field(repr=False)
+    analyzer_results_json: tuple[bytes, ...] = field(repr=False)
+    findings_json: tuple[bytes, ...] = field(repr=False)
+    completeness_json: bytes | None = field(repr=False)
+    risk_assessment_json: bytes | None = field(repr=False)
+    recommendation_json: bytes | None = field(repr=False)
+    cleanup_json: bytes = field(repr=False)
+    errors_json: tuple[bytes, ...] = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.analysis_id or not self.config_snapshot_id:
+            raise ValueError("terminal task identity is incomplete")
+        if self.status not in {
+            AnalysisStatus.COMPLETED,
+            AnalysisStatus.PARTIAL,
+            AnalysisStatus.FAILED,
+        }:
+            raise ValueError("accepted terminal facts require a terminal task status")
+        byte_values = (
+            self.source_json,
+            self.file_json,
+            self.cleanup_json,
+            *self.analyzer_results_json,
+            *self.findings_json,
+            *self.errors_json,
+        )
+        optional_byte_values = (
+            self.completeness_json,
+            self.risk_assessment_json,
+            self.recommendation_json,
+        )
+        if any(not isinstance(value, bytes) for value in byte_values) or any(
+            value is not None and not isinstance(value, bytes)
+            for value in optional_byte_values
+        ):
+            raise TypeError("terminal task facts require immutable canonical bytes")
+        object.__setattr__(self, "analyzer_results_json", tuple(self.analyzer_results_json))
+        object.__setattr__(self, "findings_json", tuple(self.findings_json))
+        object.__setattr__(self, "errors_json", tuple(self.errors_json))
+
+
+@dataclass(frozen=True, slots=True)
 class _StoredAnalyzerResult:
     """Immutable canonical result bytes and identity for registry publication checks."""
 

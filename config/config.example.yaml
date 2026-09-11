@@ -1,9 +1,9 @@
 # Полный пример канонической конфигурации.
 # Настройки Stage 7 зафиксированы как внутренняя детерминированная policy;
-# Stage 7 подключён к production execution path; возможности Stage 8 пока отсутствуют.
+# Stage 8 Macro 2 подключает асинхронный API и серверный WebUI к общему рабочему runtime.
 # Пороги и веса risk_assessment не являются статистически валидированной моделью.
 # Скопируйте этот файл в config.yaml и измените под своё окружение.
-# Секреты (токены, пароли) храните только в переменных окружения или .env.
+# Секреты (токены, пароли) передавайте только через переменные окружения.
 
 schema_version: "1.0"
 
@@ -17,6 +17,7 @@ access_channels:
   webui:
     enabled: true
     require_authentication: true
+    credentials_env_var: "MEDIA_ANALYZER_WEBUI_CREDENTIALS"
   api:
     enabled: true
     require_token: true

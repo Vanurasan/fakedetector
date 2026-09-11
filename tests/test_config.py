@@ -23,6 +23,7 @@ from fakedetector.config.models import (
     RiskAssessmentConfig,
     RiskThresholds,
     SeverityScores,
+    WebUIConfig,
 )
 
 _REQUIRED_TOP_LEVEL_FIELDS = (
@@ -160,6 +161,29 @@ external_systems:
         assert config.server.port == 9090
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "credentials_env_var",
+    ["MEDIA_ANALYZER_WEBUI_CREDENTIALS", "WEBUI_AUTH_2", "_PRIVATE_WEBUI"],
+)
+def test_valid_webui_credentials_env_var_name_is_preserved(
+    credentials_env_var: str,
+) -> None:
+    config = WebUIConfig(credentials_env_var=credentials_env_var)
+
+    assert config.credentials_env_var == credentials_env_var
+
+
+@pytest.mark.parametrize(
+    "credentials_env_var",
+    ["", "lowercase", "WEBUI-CREDENTIALS", "2_WEBUI", "WEBUI SECRET"],
+)
+def test_invalid_webui_credentials_env_var_name_is_rejected(
+    credentials_env_var: str,
+) -> None:
+    with pytest.raises(PydanticValidationError):
+        WebUIConfig(credentials_env_var=credentials_env_var)
 
 
 def test_stage7_policy_defaults_are_canonical() -> None:
@@ -675,6 +699,15 @@ def test_empty_allowed_formats_section_uses_canonical_mvp_matrix() -> None:
     assert config.allowed_formats.image.extensions == ["jpg", "jpeg", "png", "webp"]
     assert config.allowed_formats.audio.extensions == ["wav", "mp3", "flac", "m4a"]
     assert config.allowed_formats.video.extensions == ["mp4", "mov", "avi", "mkv"]
+
+
+@pytest.mark.parametrize("field", ["atomic_write", "store_original_name"])
+def test_result_mvp_requires_safe_storage_policy(field: str) -> None:
+    data = yaml.safe_load(_MINIMAL_YAML)
+    data["result"][field] = False
+
+    with pytest.raises(PydanticValidationError):
+        AppConfig.model_validate(data)
 
 
 def test_noncanonical_allowed_formats_are_rejected() -> None:

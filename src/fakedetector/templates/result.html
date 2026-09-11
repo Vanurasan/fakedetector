@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FakeDetector — результат</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="container">
+    <h1>Результат анализа</h1>
+    <div class="notice">Это автоматизированная оценка технических признаков. Она не заменяет окончательную экспертную экспертизу.</div>
+    <dl>
+      <dt>ID</dt><dd><code>{{ result.analysis_id }}</code></dd>
+      <dt>Статус</dt><dd>{{ result.status.value }}</dd>
+      {% if result.file %}
+      <dt>Имя файла</dt><dd>{{ result.file.original_name }}</dd>
+      {% if result.file.media_type is defined %}<dt>Тип медиа</dt><dd>{{ result.file.media_type.value }}</dd>{% endif %}
+      {% endif %}
+      <dt>Создан</dt><dd>{{ result.created_at }}</dd>
+      <dt>Завершён</dt><dd>{{ result.processing.finished_at }}</dd>
+      <dt>Полнота</dt><dd>{{ result.completeness.status.value }}</dd>
+      {% if result.risk_assessment and result.risk_assessment.final_level %}
+      <dt>Итоговый риск</dt><dd>{{ result.risk_assessment.final_level.value }}</dd>
+      {% else %}
+      <dt>Итоговый риск</dt><dd>Оценка отсутствует</dd>
+      {% endif %}
+      {% if result.cleanup %}<dt>Очистка</dt><dd>{{ result.cleanup.status.value }}</dd>{% endif %}
+    </dl>
+
+    <section>
+      <h2>Признаки</h2>
+      {% if result.findings %}
+      <ul>{% for finding in result.findings %}<li><strong>{{ finding.severity.value }}</strong>: {{ finding.description }}</li>{% endfor %}</ul>
+      {% else %}<p>Зафиксированные признаки отсутствуют.</p>{% endif %}
+    </section>
+
+    <section>
+      <h2>Полнота и ограничения</h2>
+      {% if result.completeness.explanation %}<p>{{ result.completeness.explanation }}</p>{% endif %}
+      {% if result.risk_assessment and result.risk_assessment.limitations %}
+      <ul>{% for limitation in result.risk_assessment.limitations %}<li>{{ limitation }}</li>{% endfor %}</ul>
+      {% else %}<p>Дополнительные ограничения оценки не указаны.</p>{% endif %}
+    </section>
+
+    {% if result.recommendation %}
+    <section><h2>Рекомендация</h2><p>{{ result.recommendation.text }}</p></section>
+    {% endif %}
+
+    <section>
+      <h2>Ошибки и предупреждения</h2>
+      {% if result.warnings %}<ul>{% for warning in result.warnings %}<li>{{ warning }}</li>{% endfor %}</ul>{% endif %}
+      {% if result.errors %}<ul>{% for error in result.errors %}<li>{{ error.message }} ({{ error.code }})</li>{% endfor %}</ul>{% endif %}
+      {% for analyzer in result.analyzers %}
+        {% for warning in analyzer.warnings %}<p>{{ analyzer.analyzer_id }}: {{ warning }}</p>{% endfor %}
+        {% for error in analyzer.errors %}<p>{{ analyzer.analyzer_id }}: {{ error.message }} ({{ error.code }})</p>{% endfor %}
+      {% endfor %}
+      {% if result.cleanup %}
+        {% for error in result.cleanup.errors %}<p>Очистка: {{ error.message }} ({{ error.code }})</p>{% endfor %}
+      {% endif %}
+      {% if not result.warnings and not result.errors %}<p>Ошибки и предупреждения верхнего уровня отсутствуют.</p>{% endif %}
+    </section>
+    <nav><a href="/">Проверить другой файл</a></nav>
+  </main>
+</body>
+</html>

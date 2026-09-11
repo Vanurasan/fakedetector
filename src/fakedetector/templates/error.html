@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FakeDetector — ошибка {{ status_code }}</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="container">
+    <h1>Запрос не выполнен</h1>
+    <p class="error">{{ error.message }}</p>
+    <p><strong>Код:</strong> <code>{{ error.code }}</code></p>
+    {% if analysis_id %}<p><strong>ID:</strong> <code>{{ analysis_id }}</code></p>{% endif %}
+    <nav>
+      {% if status_url %}<a href="{{ status_url }}">Открыть статус</a>{% endif %}
+      {% if result_url %}<a href="{{ result_url }}">Открыть сохранённый результат</a>{% endif %}
+      <a href="/">Вернуться к загрузке</a>
+    </nav>
+  </main>
+</body>
+</html>

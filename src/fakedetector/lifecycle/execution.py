@@ -25,6 +25,7 @@ from fakedetector.domain import (
     ProcessingStage,
     Recommendation,
     RiskAssessment,
+    SourceContext,
     ValidatedFileDescriptor,
 )
 from fakedetector.domain.models import validate_utc_datetime
@@ -39,6 +40,7 @@ from fakedetector.lifecycle.models import (
     TerminalSettlement,
     TerminalSettlementPhase,
     TerminalSettlementSnapshot,
+    TerminalTaskFacts,
     _StoredAnalyzerResult,
     _StoredFinding,
 )
@@ -141,12 +143,21 @@ class AnalysisStateMachine:
             (AnalysisStatus.FAILED, ProcessingStage.CLEANUP),
         },
         (AnalysisStatus.COMPLETED, ProcessingStage.CLEANUP): {
-            (AnalysisStatus.COMPLETED, ProcessingStage.FINISHED)
+            (AnalysisStatus.COMPLETED, ProcessingStage.PERSISTENCE)
         },
         (AnalysisStatus.FAILED, ProcessingStage.CLEANUP): {
-            (AnalysisStatus.FAILED, ProcessingStage.FINISHED)
+            (AnalysisStatus.FAILED, ProcessingStage.PERSISTENCE)
         },
         (AnalysisStatus.PARTIAL, ProcessingStage.CLEANUP): {
+            (AnalysisStatus.PARTIAL, ProcessingStage.PERSISTENCE)
+        },
+        (AnalysisStatus.COMPLETED, ProcessingStage.PERSISTENCE): {
+            (AnalysisStatus.COMPLETED, ProcessingStage.FINISHED)
+        },
+        (AnalysisStatus.FAILED, ProcessingStage.PERSISTENCE): {
+            (AnalysisStatus.FAILED, ProcessingStage.FINISHED)
+        },
+        (AnalysisStatus.PARTIAL, ProcessingStage.PERSISTENCE): {
             (AnalysisStatus.PARTIAL, ProcessingStage.FINISHED)
         },
     }
@@ -257,7 +268,7 @@ class TaskRegistry:
         finished_at: datetime | None = None,
     ) -> None:
         with self._lock:
-            if stage is ProcessingStage.FINISHED:
+            if stage in {ProcessingStage.PERSISTENCE, ProcessingStage.FINISHED}:
                 raise LifecycleStateError()
             task = self._get(analysis_id)
             if stage is ProcessingStage.ANALYSIS and task.stage5_data is None:
@@ -737,6 +748,120 @@ class TaskRegistry:
             )
             settlement.phase = TerminalSettlementPhase.FACT_READY
 
+    def terminal_task_facts(
+        self,
+        analysis_id: str,
+        owner_token: object,
+    ) -> TerminalTaskFacts:
+        """Capture detached canonical result inputs from authoritative FACT_READY state."""
+        with self._lock:
+            task = self._get(analysis_id)
+            settlement = self._owned_settlement(analysis_id, owner_token)
+            if (
+                task.context.stage is not ProcessingStage.CLEANUP
+                or settlement.phase is not TerminalSettlementPhase.FACT_READY
+                or settlement.facts is None
+            ):
+                raise LifecycleStateError()
+            cleanup = CleanupResult(
+                status=settlement.facts.status,
+                original_file_deleted=settlement.facts.original_file_deleted,
+                intermediate_files_deleted=settlement.facts.intermediate_files_deleted,
+                quarantine_used=settlement.facts.quarantine_used,
+                finished_at=None,
+                errors=[error.model_copy(deep=True) for error in settlement.facts.errors],
+            )
+            try:
+                source = SourceContext.model_validate(
+                    task.context.source.model_dump(mode="python", warnings="error")
+                )
+                validated_file = ValidatedFileDescriptor.model_validate(
+                    task.validated_file.model_dump(mode="python", warnings="error")
+                )
+                errors = tuple(
+                    ErrorDetail.model_validate(error.model_dump(mode="python", warnings="error"))
+                    for error in task.errors
+                )
+                stage5_data = task.stage5_data
+                stage6_data = task.stage6_data
+                stage7_data = task.stage7_data
+                return TerminalTaskFacts(
+                    analysis_id=task.context.analysis_id,
+                    created_at=task.context.created_at,
+                    status=task.context.status,
+                    config_snapshot_id=task.context.config_snapshot_id,
+                    queued_at=task.queued_at,
+                    started_at=task.context.started_at,
+                    source_json=_serialize_result_fact(source),
+                    file_json=_serialize_result_fact(validated_file),
+                    analyzer_results_json=(
+                        ()
+                        if stage5_data is None
+                        else tuple(
+                            stored.canonical_json for stored in stage5_data.analyzer_results
+                        )
+                    ),
+                    findings_json=(
+                        ()
+                        if stage6_data is None
+                        else tuple(stored.canonical_json for stored in stage6_data.findings)
+                    ),
+                    completeness_json=(
+                        None if stage7_data is None else stage7_data.completeness_json
+                    ),
+                    risk_assessment_json=(
+                        None if stage7_data is None else stage7_data.risk_assessment_json
+                    ),
+                    recommendation_json=(
+                        None if stage7_data is None else stage7_data.recommendation_json
+                    ),
+                    cleanup_json=_serialize_result_fact(cleanup),
+                    errors_json=tuple(_serialize_result_fact(error) for error in errors),
+                )
+            except (
+                AttributeError,
+                PydanticSerializationError,
+                ValidationError,
+                TypeError,
+                ValueError,
+            ):
+                raise LifecycleStateError() from None
+
+    def start_terminal_persistence(self, analysis_id: str, owner_token: object) -> None:
+        """Enter persistence only after terminal candidate facts are immutable."""
+        with self._lock:
+            task = self._get(analysis_id)
+            settlement = self._owned_settlement(analysis_id, owner_token)
+            if (
+                settlement.phase is not TerminalSettlementPhase.FACT_READY
+                or settlement.facts is None
+            ):
+                raise LifecycleStateError()
+            self._state_machine.transition(
+                task,
+                status=task.context.status,
+                stage=ProcessingStage.PERSISTENCE,
+            )
+
+    def record_result_persistence_failure(
+        self,
+        analysis_id: str,
+        owner_token: object,
+        error: ErrorDetail,
+    ) -> None:
+        """Retain one safe write failure without changing the primary outcome."""
+        with self._lock:
+            task = self._get(analysis_id)
+            settlement = self._owned_settlement(analysis_id, owner_token)
+            if (
+                task.context.stage is not ProcessingStage.PERSISTENCE
+                or settlement.phase is not TerminalSettlementPhase.FACT_READY
+                or error.code != "result_write_failed"
+                or any(existing.code == "result_write_failed" for existing in task.errors)
+            ):
+                raise LifecycleStateError()
+            task.errors.append(error.model_copy(deep=True))
+
     def finalize_terminal_settlement(
         self,
         analysis_id: str,
@@ -747,7 +872,10 @@ class TaskRegistry:
         with self._lock:
             task = self._get(analysis_id)
             settlement = self._owned_settlement(analysis_id, owner_token)
-            if settlement.phase is not TerminalSettlementPhase.FACT_READY:
+            if (
+                task.context.stage is not ProcessingStage.PERSISTENCE
+                or settlement.phase is not TerminalSettlementPhase.FACT_READY
+            ):
                 raise LifecycleStateError()
             facts = settlement.facts
             if facts is None or task.cleanup_result is not None:
@@ -795,7 +923,7 @@ class TaskRegistry:
         task = self._get(analysis_id)
         settlement = task.terminal_settlement
         if (
-            task.context.stage is not ProcessingStage.CLEANUP
+            task.context.stage not in {ProcessingStage.CLEANUP, ProcessingStage.PERSISTENCE}
             or settlement is None
             or settlement.owner_token is not owner_token
         ):
@@ -878,6 +1006,18 @@ def _serialize_stage6_finding(finding: Finding) -> bytes:
 
 def _serialize_stage7_value(
     value: AnalysisCompleteness | RiskAssessment | Recommendation,
+) -> bytes:
+    return json.dumps(
+        value.model_dump(mode="json", warnings="error"),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _serialize_result_fact(
+    value: SourceContext | ValidatedFileDescriptor | CleanupResult | ErrorDetail,
 ) -> bytes:
     return json.dumps(
         value.model_dump(mode="json", warnings="error"),
