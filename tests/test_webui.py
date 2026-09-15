@@ -16,6 +16,8 @@ from stage8_helpers import (
     make_status,
 )
 
+import fakedetector.webui as webui_module
+from fakedetector._http_upload import RequestBodyDeadlineError, multipart_body_limit_bytes
 from fakedetector.app import create_app
 from fakedetector.application import (
     AnalysisInternalError,
@@ -25,6 +27,7 @@ from fakedetector.application import (
     AnalysisSubmission,
 )
 from fakedetector.auth import WebUIBasicAuthenticator
+from fakedetector.config.models import AppConfig
 from fakedetector.domain import AnalysisStatus, ProcessingStage
 from fakedetector.webui import install_webui, is_same_origin
 
@@ -68,6 +71,7 @@ def _client(
     service: StubApplicationService,
     *,
     require_auth: bool = True,
+    config: AppConfig | None = None,
 ) -> TestClient:
     app = FastAPI()
     install_webui(
@@ -78,9 +82,16 @@ def _client(
             if require_auth
             else None
         ),
-        config=make_config(tmp_path),
+        config=config or make_config(tmp_path),
     )
     return TestClient(app)
+
+
+def _small_transport_config(tmp_path: Path) -> AppConfig:
+    config = make_config(tmp_path)
+    payload = config.model_dump(mode="python")
+    payload["limits"]["max_file_size_mb"] = {"image": 1, "audio": 1, "video": 1}
+    return AppConfig.model_validate(payload)
 
 
 def test_http_basic_missing_wrong_and_valid_credentials(tmp_path: Path) -> None:
@@ -342,6 +353,136 @@ def test_malformed_multipart_is_rejected_only_after_auth_and_origin_guards(
     assert same_origin.status_code == 400
     assert "invalid_multipart" in same_origin.text
     assert "Missing boundary" not in same_origin.text
+    assert service.sources == []
+
+
+def test_unauthenticated_oversized_body_does_not_enter_webui_parser(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StubApplicationService()
+    config = _small_transport_config(tmp_path)
+    body_limit = multipart_body_limit_bytes(config)
+
+    async def fail_parse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("transport parser must remain behind HTTP Basic")
+
+    monkeypatch.setattr(webui_module, "parse_bounded_multipart", fail_parse)
+
+    response = _client(tmp_path, service, config=config).post(
+        "/analyses",
+        content=b"x" * (body_limit + 1),
+        headers={"Content-Type": "multipart/form-data; boundary=unused"},
+    )
+
+    assert response.status_code == 401
+    assert "authentication_required" in response.text
+    assert service.sources == []
+
+
+def test_cross_origin_oversized_body_does_not_enter_webui_parser(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StubApplicationService()
+    config = _small_transport_config(tmp_path)
+    body_limit = multipart_body_limit_bytes(config)
+
+    async def fail_parse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("transport parser must remain behind same-origin guard")
+
+    monkeypatch.setattr(webui_module, "parse_bounded_multipart", fail_parse)
+
+    response = _client(tmp_path, service, config=config).post(
+        "/analyses",
+        content=b"x" * (body_limit + 1),
+        headers={
+            "Content-Type": "multipart/form-data; boundary=unused",
+            "Origin": "https://evil.example",
+        },
+        auth=AUTH,
+    )
+
+    assert response.status_code == 403
+    assert "same_origin_required" in response.text
+    assert service.sources == []
+
+
+def test_authenticated_same_origin_oversized_body_is_branded_413_before_submission(
+    tmp_path: Path,
+) -> None:
+    service = StubApplicationService()
+    config = _small_transport_config(tmp_path)
+    body_limit = multipart_body_limit_bytes(config)
+
+    response = _client(tmp_path, service, config=config).post(
+        "/analyses",
+        content=b"x" * (body_limit + 1),
+        headers={
+            "Content-Type": "multipart/form-data; boundary=unused",
+            **SAME_ORIGIN,
+        },
+        auth=AUTH,
+    )
+
+    assert response.status_code == 413
+    assert response.headers["content-type"].startswith("text/html")
+    assert "file_too_large" in response.text
+    assert "analysis-" not in response.text
+    assert service.sources == []
+
+
+def test_webui_receive_or_parse_deadline_is_branded_safe_400(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StubApplicationService()
+
+    async def timeout(*_args: object, **_kwargs: object) -> None:
+        raise RequestBodyDeadlineError
+
+    monkeypatch.setattr(webui_module, "parse_bounded_multipart", timeout)
+
+    response = _client(tmp_path, service).post(
+        "/analyses",
+        files={"file": ("sample.png", b"png", "image/png")},
+        headers=SAME_ORIGIN,
+        auth=AUTH,
+    )
+
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("text/html")
+    assert "invalid_multipart" in response.text
+    assert service.sources == []
+
+
+def test_webui_strict_multipart_structure_rejects_duplicates_and_unknown_fields(
+    tmp_path: Path,
+) -> None:
+    service = StubApplicationService()
+    client = _client(tmp_path, service)
+    cases = [
+        [
+            ("file", ("one.png", b"one", "image/png")),
+            ("file", ("two.png", b"two", "image/png")),
+        ],
+        [
+            ("file", ("one.png", b"one", "image/png")),
+            ("unexpected", (None, "value")),
+        ],
+        [("file", (None, "not-an-upload"))],
+    ]
+
+    for files in cases:
+        response = client.post(
+            "/analyses",
+            files=files,
+            headers=SAME_ORIGIN,
+            auth=AUTH,
+        )
+        assert response.status_code == 400
+        assert "invalid_multipart" in response.text
+
     assert service.sources == []
 
 

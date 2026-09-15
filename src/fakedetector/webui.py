@@ -15,9 +15,15 @@ from fastapi.templating import Jinja2Templates
 from python_multipart.exceptions import MultipartParseError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData, UploadFile
-from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.formparsers import MultiPartException
 from starlette.responses import Response
 
+from fakedetector._http_upload import (
+    RequestBodyDeadlineError,
+    RequestBodyTooLargeError,
+    multipart_body_limit_bytes,
+    parse_bounded_multipart,
+)
 from fakedetector.api import stage3_http_status
 from fakedetector.application import (
     AnalysisApplicationService,
@@ -71,6 +77,8 @@ def install_webui(
     dependencies = [Security(require_basic)] if authenticator is not None else []
     router = APIRouter(dependencies=dependencies)
     upload_context = _upload_context(config)
+    body_limit_bytes = multipart_body_limit_bytes(config)
+    request_timeout_seconds = config.server.request_timeout_seconds
 
     @router.get("/", include_in_schema=False)
     async def upload_page(request: Request) -> Response:
@@ -97,14 +105,39 @@ def install_webui(
         form: FormData | None = None
         try:
             try:
-                form = await request.form()
-            except (StarletteHTTPException, MultipartParseError):
+                form = await parse_bounded_multipart(
+                    request,
+                    body_limit_bytes=body_limit_bytes,
+                    timeout_seconds=request_timeout_seconds,
+                    max_files=2,
+                    max_fields=1,
+                )
+            except RequestBodyTooLargeError:
+                return _error_page(
+                    templates,
+                    request,
+                    status_code=413,
+                    error=ErrorDetail(
+                        code="file_too_large",
+                        category="resource_limit",
+                        message="Размер тела запроса превышает допустимый предел.",
+                        retryable=False,
+                        field="file",
+                        safe_details={"max_size_bytes": body_limit_bytes},
+                    ),
+                )
+            except RequestBodyDeadlineError:
+                return _malformed_form_page(templates, request)
+            except (MultiPartException, MultipartParseError):
                 return _malformed_form_page(templates, request)
             except Exception:
                 return _internal_error_page(templates, request)
 
-            file_value = form.get("file")
-            if not isinstance(file_value, UploadFile):
+            items = form.multi_items()
+            if any(name != "file" for name, _value in items):
+                return _invalid_form_structure_page(templates, request)
+            file_values = [value for name, value in items if name == "file"]
+            if not file_values:
                 return _error_page(
                     templates,
                     request,
@@ -117,7 +150,9 @@ def install_webui(
                         field="file",
                     ),
                 )
-            file = file_value
+            if len(file_values) != 1 or not isinstance(file_values[0], UploadFile):
+                return _invalid_form_structure_page(templates, request)
+            file = file_values[0]
             try:
                 upload_is_empty = file.size == 0
             except Exception:
@@ -396,6 +431,23 @@ def _malformed_form_page(templates: Jinja2Templates, request: Request) -> Respon
             code="invalid_multipart",
             category="validation",
             message="Форму загрузки не удалось безопасно разобрать.",
+            retryable=False,
+        ),
+    )
+
+
+def _invalid_form_structure_page(
+    templates: Jinja2Templates,
+    request: Request,
+) -> Response:
+    return _error_page(
+        templates,
+        request,
+        status_code=400,
+        error=ErrorDetail(
+            code="invalid_multipart",
+            category="validation",
+            message="Структура формы загрузки не соответствует контракту WebUI.",
             retryable=False,
         ),
     )

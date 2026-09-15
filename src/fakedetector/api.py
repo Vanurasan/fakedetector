@@ -16,9 +16,15 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from python_multipart.exceptions import MultipartParseError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData, UploadFile
-from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.formparsers import MultiPartException
 from starlette.responses import Response
 
+from fakedetector._http_upload import (
+    RequestBodyDeadlineError,
+    RequestBodyTooLargeError,
+    multipart_body_limit_bytes,
+    parse_bounded_multipart,
+)
 from fakedetector.application import (
     AnalysisApplicationService,
     AnalysisInternalError,
@@ -31,6 +37,7 @@ from fakedetector.application import (
     AnalysisSubmissionError,
 )
 from fakedetector.auth import APIBearerAuthenticator
+from fakedetector.config.models import AppConfig
 from fakedetector.domain import (
     AnalysisResult,
     AnalysisStatus,
@@ -103,8 +110,12 @@ def install_api(
     *,
     service: AnalysisApplicationService,
     authenticator: APIBearerAuthenticator | None,
+    config: AppConfig,
 ) -> None:
     """Install exactly the three Stage 8 MVP API routes."""
+
+    body_limit_bytes = multipart_body_limit_bytes(config)
+    request_timeout_seconds = config.server.request_timeout_seconds
 
     async def require_bearer(
         request: Request,
@@ -159,17 +170,43 @@ def install_api(
         form: FormData | None = None
         try:
             try:
-                form = await request.form()
-            except (StarletteHTTPException, MultipartParseError):
+                form = await parse_bounded_multipart(
+                    request,
+                    body_limit_bytes=body_limit_bytes,
+                    timeout_seconds=request_timeout_seconds,
+                    max_files=2,
+                    max_fields=2,
+                )
+            except RequestBodyTooLargeError:
+                return _error_response(
+                    request,
+                    413,
+                    _body_too_large_error(body_limit_bytes),
+                )
+            except RequestBodyDeadlineError:
+                return _error_response(request, 400, _malformed_multipart_error())
+            except (MultiPartException, MultipartParseError):
                 return _error_response(request, 400, _malformed_multipart_error())
             except Exception:
                 return _error_response(request, 500, _internal_error())
 
-            file_value = form.get("file")
-            if not isinstance(file_value, UploadFile):
+            items = form.multi_items()
+            if any(name not in {"file", "source_context"} for name, _value in items):
+                return _error_response(request, 400, _invalid_multipart_structure_error())
+            file_values = [value for name, value in items if name == "file"]
+            if not file_values:
                 return _error_response(request, 400, _file_missing_error())
-            file = file_value
-            source_context_value = form.get("source_context")
+            if len(file_values) != 1 or not isinstance(file_values[0], UploadFile):
+                return _error_response(request, 400, _invalid_multipart_structure_error())
+            file = file_values[0]
+            source_context_values = [
+                value for name, value in items if name == "source_context"
+            ]
+            if len(source_context_values) > 1:
+                return _error_response(request, 400, _invalid_multipart_structure_error())
+            source_context_value = (
+                source_context_values[0] if source_context_values else None
+            )
             if source_context_value is not None and not isinstance(
                 source_context_value,
                 str,
@@ -418,6 +455,26 @@ def _malformed_multipart_error() -> ErrorDetail:
         category="validation",
         message="Тело multipart/form-data не удалось безопасно разобрать.",
         retryable=False,
+    )
+
+
+def _invalid_multipart_structure_error() -> ErrorDetail:
+    return ErrorDetail(
+        code="invalid_multipart",
+        category="validation",
+        message="Структура multipart/form-data не соответствует контракту API.",
+        retryable=False,
+    )
+
+
+def _body_too_large_error(max_size_bytes: int) -> ErrorDetail:
+    return ErrorDetail(
+        code="file_too_large",
+        category="resource_limit",
+        message="Размер тела запроса превышает допустимый предел.",
+        retryable=False,
+        field="file",
+        safe_details={"max_size_bytes": max_size_bytes},
     )
 
 

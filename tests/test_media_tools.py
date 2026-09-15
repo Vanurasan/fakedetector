@@ -93,6 +93,7 @@ def test_probe_uses_bounded_safe_arguments_and_parses_only_required_json(
     arguments, kwargs = calls[0]
     assert arguments[0] == "trusted-ffprobe"
     assert arguments[-1] == str(source_path)
+    assert arguments[-3:-1] == ["-protocol_whitelist", "file"]
     assert "-show_entries" in arguments
     assert "tags" not in " ".join(arguments)
     assert kwargs == {
@@ -132,6 +133,9 @@ def test_bounded_decode_uses_null_sink_without_artifacts(
     arguments, kwargs = calls[0]
     assert arguments[0] == "trusted-ffmpeg"
     assert "-nostdin" in arguments
+    input_index = arguments.index("-i")
+    assert arguments[input_index - 2 : input_index] == ["-protocol_whitelist", "file"]
+    assert arguments[input_index + 1] == str(source_path)
     assert arguments[arguments.index("-t") + 1] == "1"
     assert arguments[-3:] == ["-f", "null", "-"]
     assert str(source_path) in arguments
@@ -316,9 +320,11 @@ def test_termination_infrastructure_failure_preserves_cleanup_safety_barrier(
     assert error_info.value._cleanup_safety_barrier is barrier
 
 
-def test_source_path_with_metacharacters_remains_one_argv_element(
+@pytest.mark.parametrize("original_name", ["-y.mp4", "http://evil", "concat:x"])
+def test_user_controlled_name_cannot_become_an_option_or_protocol_input(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    original_name: str,
 ) -> None:
     source_path = tmp_path / "trusted space & semicolon; dollar$(literal)" / "source"
     observed_arguments: list[str] = []
@@ -333,6 +339,8 @@ def test_source_path_with_metacharacters_remains_one_argv_element(
 
     assert observed_arguments[-1] == str(source_path.absolute())
     assert observed_arguments.count(str(source_path.absolute())) == 1
+    assert original_name not in observed_arguments
+    assert observed_arguments[-3:-1] == ["-protocol_whitelist", "file"]
 
 
 def test_attached_picture_does_not_make_audio_container_video() -> None:

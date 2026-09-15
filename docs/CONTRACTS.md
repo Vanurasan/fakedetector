@@ -877,6 +877,29 @@ Extension, declared MIME, `original_name` и `Content-Length` не выбира�
 фактический размер и SHA-256 рассчитываются в том же intake pass. Конкретные
 числовые лимиты остаются конфигурацией.
 
+До регистрации Stage 3 HTTP mutation boundary независимо ограничивает полный
+request body:
+
+```text
+GLOBAL_BODY_LIMIT =
+max(max_file_size_mb.image, max_file_size_mb.audio, max_file_size_mb.video)
+* 1_048_576
++ 1_048_576 bytes multipart envelope
+```
+
+Считаются фактически полученные body bytes; `Content-Length` допускается только
+как ранняя оптимизация отказа. Ровно `GLOBAL_BODY_LIMIT` байт разрешено передать
+parser, превышение возвращает transport `413 file_too_large` без `analysis_id`,
+result links, Stage 3 registration или workspace. Это не заменяет per-media
+проверку Stage 3: request ниже global cap может после определения `MediaType`
+получить канонический зарегистрированный `413` по более узкому лимиту с
+сохранённым терминальным результатом.
+
+Application boundary ограничивает только байты, уже переданные ASGI-приложению,
+и защищает multipart parser/spool. Она не заменяет отдельные deployment limits
+Uvicorn, reverse proxy или другого upstream transport, если такой слой
+используется.
+
 ### 6.5. Семантика безопасного чтения
 
 Для image `safe_read=true` означает полное безопасное декодирование и получение
@@ -1505,6 +1528,16 @@ bounded/discarded stderr, timeout и terminate/kill/reap с safe factual outcome
 Stage 3 и Stage 5 используют отдельные semantic adapters поверх primitive;
 существующие Stage 3 media rejection и infrastructure semantics не меняются.
 
+FFmpeg/ffprobe получают media input только как абсолютный канонический
+application-owned путь к `source` или зарегистрированному artifact. Значение
+`original_name` не участвует в argv и не может стать option или protocol input.
+Непосредственно перед каждым media input задаётся
+`-protocol_whitelist file`; intentional controlled output `pipe:1` не является
+пользовательским input. Executable name и все остальные аргументы задаёт
+trusted application code. Это запрещает user-controlled network/protocol input,
+но не является OS process sandbox, CPU/RAM quota или защитой от hostile process
+под той же account.
+
 Внутренний режим передачи stdout напрямую в приёмник сохраняет ту же процессную границу:
 stdout читается ограниченными блоками и потоково передаётся механизму записи без накопления
 полного медиавывода в Python. Приёмник не принимает байты сверх остатка бюджета созданных
@@ -1984,6 +2017,7 @@ internal
 |---|---|---|
 | `authentication_required` | authentication | Не предоставлен токен/сессия |
 | `authentication_failed` | authentication | Недействительные данные доступа |
+| `invalid_multipart` | validation | Multipart body или его структура не прошли безопасный разбор |
 | `file_missing` | validation | Файл не передан |
 | `file_empty` | validation | Пустой файл |
 | `file_too_large` | resource_limit | Превышен лимит |
@@ -2604,6 +2638,14 @@ external_systems
 - `request_timeout_seconds`;
 - `application_version`.
 
+`request_timeout_seconds` является deadline только для HTTP body receive и
+multipart parse mutation-запроса. Он начинается после обязательных transport
+security guards и заканчивается до вызова application intake. Истечение
+возвращает существующую безопасную семантику `400 invalid_multipart` без
+регистрации, ID и result links. Это поле не ограничивает очередь, Stage 3,
+analyzer, preprocessing, общий Stage 5 lifetime или сохранение результата;
+для них действуют отдельные существующие processing/subprocess limits.
+
 #### `access_channels.webui`
 
 - `enabled`;
@@ -2941,6 +2983,14 @@ Authorization: Bearer <token>
 - `file` — обязательный файл;
 - `source_context` — необязательная JSON-строка, валидируемая как `SourceContext`.
 
+Структура строгая: `file` присутствует ровно один раз как file part,
+`source_context` — не более одного раза, иные имена полей запрещены. Duplicate
+`file`, duplicate `source_context`, unknown field и строковый part вместо
+`UploadFile` для `file` возвращают `400 invalid_multipart`; отсутствующий `file`
+сохраняет `400 file_missing`. Единственный `source_context`, переданный не как
+строка, сохраняет существующую safe validation semantics `422
+invalid_source_context`.
+
 Успешный ответ:
 
 ```http
@@ -2967,10 +3017,16 @@ Authorization: Bearer <token>
 участвуют в аутентификации, авторизации, доверии маршрутизации или построении
 внутренних путей.
 
-Bearer проверяется до разбора тела запроса. Только после успешной аутентификации
-адаптер вызывает `request.form()` и извлекает `file` и `source_context`.
-Некорректное тело `multipart/form-data` возвращает `400` в модели
-`APIErrorResponse`; ответ обработчика FastAPI с полем `detail` наружу не выходит.
+Bearer проверяется до чтения тела запроса. Только после успешной аутентификации
+адаптер применяет early `Content-Length` optimization, потоковый actual-byte cap,
+общий `server.request_timeout_seconds` deadline, Starlette multipart parser и
+строгую проверку структуры, после чего извлекает `file` и `source_context`.
+Parser получает только уже ограниченный stream; полный upload не собирается
+через `request.body()`, file parts используют framework spool. Некорректное тело
+или истечение receive/parse deadline возвращает `400 invalid_multipart` в модели
+`APIErrorResponse`; private parser detail наружу не выходит. Превышение global
+body cap возвращает `413 file_too_large` до Stage 3 с тем же безопасным envelope,
+но без `analysis_id`, `status_url` и `result_url`.
 
 Принятый `Stage3Accepted` возвращает `202`. Успешно сохранённый
 `Stage3Terminal` использует смешанную семантику `413`/`415`/`422`/`500` и только
@@ -3047,11 +3103,11 @@ Authorization: Bearer <token>
 |---:|---|
 | `200` | Результат или статус успешно получен |
 | `202` | Задача принята или ещё выполняется |
-| `400` | Некорректный запрос |
+| `400` | Некорректный запрос, включая receive/parse deadline multipart body |
 | `401` | Требуется аутентификация |
 | `403` | Доступ запрещён |
 | `404` | Анализ не найден |
-| `413` | Файл превышает лимит |
+| `413` | Полный transport body либо определённый Stage 3 media file превышает свой лимит |
 | `415` | Формат/тип не поддерживается |
 | `422` | Структура параметров не прошла валидацию |
 | `429` | Превышено ограничение запросов, если оно включено |
@@ -3135,9 +3191,12 @@ GET  /analyses/{analysis_id}/result
 страницей `403`. Cookie, сеанс и CSRF-токен не вводятся.
 
 На `POST /analyses` HTTP Basic завершается до входа в обработчик, затем
-проверяется совпадение источника и только после этого вызывается
-`request.form()`. Некорректная форма после успешных проверок получает безопасную
-HTML-страницу `400`.
+проверяется совпадение источника и только после этого выполняются bounded receive,
+multipart parse и строгая проверка формы. Допустим ровно один file part `file`;
+duplicate, unknown, missing или строковый `file` получают branded безопасную
+HTML-страницу `400`. Истечение receive/parse deadline использует ту же страницу
+`400 invalid_multipart`; превышение global body cap — branded `413
+file_too_large`. Ни один такой transport outcome не регистрирует анализ.
 
 ### 18.3. Страница результата
 

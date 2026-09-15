@@ -57,6 +57,7 @@ def create_app(config: AppConfig) -> FastAPI:
             app,
             service=runtime.application_service,
             authenticator=api_authenticator,
+            config=config,
         )
     if config.access_channels.webui.enabled:
         install_webui(

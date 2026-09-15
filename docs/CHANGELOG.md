@@ -356,6 +356,26 @@ YYYY-MM-DD
   честно зафиксированы как deployment prerequisite/ограничение без pywin32,
   новых dependencies, config или domain schema.
 
+### Безопасность
+
+- **[Stage 9 Macro 3/HTTP transport] Добавлена bounded receive/parse boundary
+  до Stage 3 registration.** Полный mutation body потоково ограничен формулой
+  max configured per-media bytes + 1 MiB multipart envelope с независимым
+  actual-byte counting; `Content-Length` служит только ранней оптимизацией.
+  Bearer и HTTP Basic/same-origin guards остаются раньше body consumption,
+  `server.request_timeout_seconds` ограничивает receive+parse, partial framework
+  spool закрывается, а API/WebUI принимают только строгую структуру своих
+  multipart fields. Transport `413` и `400 invalid_multipart` не создают
+  analysis ID, result links или workspace; Stage 3 per-media `413` сохранён.
+
+- **[Stage 9 Macro 3/Media subprocess] Закрыт protocol/network input gap
+  FFmpeg/ffprobe.** Все Stage 3/5 media input ограничены
+  `-protocol_whitelist file` и остаются каноническими application-owned paths;
+  `original_name` не входит в argv. Существующий общий bounded process primitive
+  продолжает обеспечивать list argv, `shell=False`, disabled stdin,
+  bounded/discarded stdout/stderr, timeout и terminate/kill/reap без нового
+  process manager, dependency, config field или OS-level quota subsystem.
+
 ### 2026-09-14
 
 ### Исправлено

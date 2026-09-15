@@ -1394,8 +1394,10 @@ def test_media_process_timeout_is_capped_by_remaining_overall_budget(
     expected_timeout: float,
 ) -> None:
     captured_timeouts: list[float] = []
+    captured_arguments: list[list[str]] = []
 
-    def complete_process(*_args: object, **kwargs: object) -> ProcessResult:
+    def complete_process(arguments: list[str], **kwargs: object) -> ProcessResult:
+        captured_arguments.append(arguments)
         captured_timeouts.append(cast(float, kwargs["timeout_seconds"]))
         output = cast(BinaryIO, kwargs["stdout_sink"])
         output.write(
@@ -1424,6 +1426,47 @@ def test_media_process_timeout_is_capped_by_remaining_overall_budget(
     )
 
     assert captured_timeouts == [expected_timeout]
+    input_index = captured_arguments[0].index("-i")
+    assert captured_arguments[0][input_index - 2 : input_index] == [
+        "-protocol_whitelist",
+        "file",
+    ]
+    assert captured_arguments[0][input_index + 1] == str(source.absolute())
+    assert captured_arguments[0][-1] == "pipe:1"
+
+
+def test_streamed_flac_finalization_restricts_input_to_file_protocol(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_arguments: list[str] = []
+
+    def complete_process(arguments: list[str], **_kwargs: object) -> ProcessResult:
+        captured_arguments.extend(arguments)
+        return ProcessResult(
+            return_code=0,
+            stdout=b"out_time_us=1000000\nprogress=end\n",
+        )
+
+    monkeypatch.setattr(
+        "fakedetector.preprocessing._media_tools.run_bounded_process",
+        complete_process,
+    )
+    target = tmp_path / "controlled.flac"
+    header = bytearray(42)
+    header[:4] = b"fLaC"
+    header[5:8] = (34).to_bytes(3, "big")
+    header[18:26] = (8_000 << 44).to_bytes(8, "big")
+    target.write_bytes(header)
+
+    _media_tool()._finalize_streamed_flac(target, timeout_seconds=1.0)
+
+    input_index = captured_arguments.index("-i")
+    assert captured_arguments[input_index - 2 : input_index] == [
+        "-protocol_whitelist",
+        "file",
+    ]
+    assert captured_arguments[input_index + 1] == str(target.absolute())
 
 
 def test_prepared_media_contains_only_opaque_refs_and_bounded_values(

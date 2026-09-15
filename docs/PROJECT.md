@@ -1737,11 +1737,21 @@ symlink, junction и иной detectable Windows reparse point. Destructive reco
 deployment parent, который должен принадлежать и быть writable только доверенным
 account согласно эксплуатационной политике.
 
-Macro 3 установит transport boundary как максимум настроенных image/audio/video
-лимитов плюс 1 MiB multipart envelope, с подсчётом фактических байтов, ответом
-`413` до регистрации анализа и использованием
-`server.request_timeout_seconds` как deadline HTTP receive/parse. Macro 1 эту
-границу не реализует.
+Macro 3 устанавливает для mutation POST transport boundary как максимум
+настроенных image/audio/video лимитов плюс 1 MiB multipart envelope. HTTP-слой
+считает фактически полученные байты потоково до multipart parsing, отклоняет
+превышение с `413` до регистрации анализа и использует
+`server.request_timeout_seconds` как общий deadline receive/parse. Bearer и HTTP
+Basic/same-origin guards остаются перед чтением тела, а точные per-media лимиты
+по-прежнему применяются Stage 3 после transport boundary.
+
+Все production FFmpeg/ffprobe media input передаются только как канонический
+application-owned local path через общий bounded subprocess primitive и явно
+ограничены protocol whitelist `file`. Исходное имя пользователя не входит в
+filesystem path или argv. Primitive использует list argv, `shell=False`,
+отключённый stdin, bounded/discarded output, timeout и подтверждённый
+terminate/kill/reap; отдельная OS-level quota или process sandbox в Macro 3 не
+вводится.
 
 Для local MVP принимаются bounded algorithms, body guard и измеренный resource
 envelope. OS-level hard quotas CPU/RAM находятся вне Stage 9.

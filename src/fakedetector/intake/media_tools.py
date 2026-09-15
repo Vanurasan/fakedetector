@@ -118,6 +118,8 @@ class FFmpegMediaInspector:
             ),
             "-of",
             "json",
+            "-protocol_whitelist",
+            "file",
             str(controlled_source_path),
         ]
         output = self._run_probe(arguments, cwd=controlled_source_path.parent)
@@ -143,6 +145,8 @@ class FFmpegMediaInspector:
                 str(_PROBE_SIZE_BYTES),
                 "-analyzeduration",
                 str(_ANALYZE_DURATION_MICROSECONDS),
+                "-protocol_whitelist",
+                "file",
                 "-i",
                 str(controlled_source_path),
                 "-map",
@@ -177,6 +181,8 @@ class FFmpegMediaInspector:
                 str(_PROBE_SIZE_BYTES),
                 "-analyzeduration",
                 str(_ANALYZE_DURATION_MICROSECONDS),
+                "-protocol_whitelist",
+                "file",
                 "-i",
                 str(controlled_source_path),
                 *mappings,
