@@ -382,8 +382,9 @@ Stage 8 Macro 1 уточняет единую последовательност
 Ошибка `save()` не повторяет анализ или очистку, не меняет фактический основной
 статус и не публикует `FINISHED`. Задача остаётся в `PERSISTENCE`, расчёт — в
 `FACT_READY`, владение финализацией освобождается, а в авторитетный реестр
-добавляется безопасная ошибка `result_write_failed`. Автоматические повторная
-попытка и восстановление после перезапуска относятся к Stage 9.
+добавляется безопасная ошибка `result_write_failed`. Stage 9 Macro 1 не вводит
+автоматическую повторную попытку, durable recovery или восстановление после
+перезапуска; такое поведение возможно только как отдельное последующее решение.
 
 ### 3.2. Внутренний контекст задачи `AnalysisContext`
 
@@ -605,13 +606,24 @@ application-owned, строится только из validated system `analysis
 ```text
 workspace eligible for TTL cleanup
 ONLY IF
+analysis_id не защищён pre-handoff ownership temporary input owner
+AND
 analysis_id is NOT present as an active/non-terminal task in TaskRegistry
 ```
 
 Janitor запрещено cleanup или quarantine workspace живой задачи независимо от
-его filesystem mtime. Минимальный deterministic MVP sweep запускается при старте
-Stage 4 scheduler, после cleanup terminal task и при graceful shutdown; отдельный
-daemon или background timer не вводится.
+его filesystem mtime. Проверка pre-handoff protection и выдача разрешения на
+cleanup выполняются тем же temporary input owner: под короткой thread-safe
+state guard он атомарно проверяет pre-handoff protection и публикует janitor
+claim для конкретного `analysis_id`. Пока claim опубликован, создать новую
+pre-handoff protection того же `analysis_id` нельзя; затем
+`TaskRegistry.cleanup_if_inactive()` и физический cleanup выполняются без
+глобальной owner guard, а claim снимается в `finally`. Поэтому раздельное окно
+`check-active() → delete()` для одного `analysis_id` запрещено, но медленная
+операция одного analysis не блокирует unrelated analyses. Минимальный
+deterministic MVP sweep запускается при старте Stage 4 scheduler, после cleanup
+terminal task и при graceful shutdown; отдельный daemon или background timer не
+вводится.
 
 Для каждого непосредственного безопасного дочернего workspace sweep:
 
@@ -680,7 +692,9 @@ terminalizes active task и не восстанавливает primary outcome.
 
 Правила:
 
-- `original_name` используется только для отображения и диагностики;
+- `original_name` используется только для отображения и доменного результата;
+- `original_name` не включается в технический журнал без отдельного безопасного
+  sanitization contract;
 - имя не используется для формирования системного пути;
 - для MVP `original_name` обязан содержать расширение;
 - `file.mp4` и `archive.tar.mp4` дают нормализованное расширение `mp4`;
@@ -895,9 +909,9 @@ Temporary input owner создаёт `runtime/temp/<analysis_id>`, формир�
 выполняет cleanup.
 
 Каталог создаётся с минимально необходимой для текущего локального runtime
-политикой доступа и изолируется от workspace других `analysis_id`. Hardening
-против concurrent path substitution, TOCTOU и полный no-follow redesign
-относятся к Stage 9 и не являются частью этого контракта Stage 3.
+политикой доступа и изолируется от workspace других `analysis_id`. Targeted
+hardening против concurrent path substitution, TOCTOU и reparse hazards
+относится к Stage 9 Macro 2 и не является частью Macro 1.
 
 Успешный внутренний handoff логически содержит:
 
@@ -915,7 +929,26 @@ handle.
 До успешного handoff owner отвечает за cleanup при rejection и exception. После
 handoff Stage 4 принимает ownership и отвечает за дальнейший lifecycle и
 последующую очистку accepted input. Если handoff не состоялся, ownership остаётся
-у Stage 3.
+у Stage 3. Pre-handoff protection регистрируется у temporary input owner до
+появления workspace в файловой системе и сохраняется через move-style transfer.
+Во время `receiver.accept()` protection остаётся опубликованной без удержания
+глобальной owner guard и снимается коротким атомарным transition только после
+успешного receiver commit. При исключении receiver protection остаётся активной,
+пока Stage 3 выполняет свою единственную ordinary physical cleanup attempt.
+После завершения этой attempt Stage 3 workflow ownership заканчивается и
+protection снимается как при успехе, так и при обычном `OSError`; не удалённый
+residue становится eligible для существующего TTL/recovery после проверки
+`TaskRegistry`. Новый retry Stage 3 не выполняется.
+
+Операция subprocess/media, которая может оставить reader/process незавершённым,
+передаёт до Stage 3 внутренний cleanup safety barrier. Это private protocol, а не
+поле domain/API. Если `try_confirm_safe()` не вернул ровно `true` или сам завершился
+ошибкой, Stage 3 запрещены unlink source, удаление workspace и quarantine;
+`CleanupResult` фиксирует `failed`, а исходный ресурс остаётся под pre-handoff
+protection. После подтверждения barrier действует обычная cleanup policy. Ошибки
+validation, не имеющие активного reader/process, barrier не создают и очищаются
+как прежде. То же правило действует для `BaseException`/`finally`: safety barrier
+нельзя обойти best-effort cleanup.
 
 ### 6.7. Прикладной результат Stage 3
 
@@ -1007,7 +1040,14 @@ filesystem path, traceback или другие implementation details. Посл�
 handoff, выполняется ровно одна immediate cleanup attempt. Её фактический
 результат записывается в обязательный для этого случая `CleanupResult`.
 Cleanup retry, TTL и quarantine остаются ответственностью Stage 4 и не
-применяются Stage 3.
+применяются Stage 3. Исключение составляет safety refusal из раздела 6.6: он не
+является физической attempt и запрещает опасный cleanup, но всё равно даёт
+фактический `CleanupResult(status=failed)` без ложного заявления об удалении.
+При safety refusal pre-handoff protection не снимается. Ordinary physical
+attempt считается завершённой после success или преобразованного в
+`TemporaryInputCleanupError` `OSError`; при `BaseException`/interruption
+безопасность состояния автоматически не подтверждается, поэтому protection
+остаётся активной.
 
 Cleanup failure не меняет и не маскирует primary outcome:
 
@@ -1050,15 +1090,20 @@ owned
 ```
 
 Это implementation-private state, а не domain enum или сериализуемый контракт.
-Pre-handoff cleanup terminal outcome переводит `owned` непосредственно в
-`released`, не создавая ложного handoff.
+Успешный pre-handoff cleanup переводит `owned` непосредственно в `released`, не
+создавая ложного handoff. Неуспешная ordinary physical attempt сохраняет
+фактические признаки неудалённого ресурса, но завершает Stage 3 workflow
+ownership и снимает pre-handoff protection, чтобы residue обслуживался
+существующим janitor recovery; новый private/domain state для этого не вводится.
 Handoff имеет move-style semantics: исходная Stage 3 capability после transfer
 недействительна; double transfer, transfer released source и transfer foreign
 ownership запрещены. Успешный handoff запрещает последующий cleanup со стороны
 Stage 3. Если receiver не подтвердил handoff, ownership и cleanup obligation
 остаются у Stage 3 и выполняется одна immediate cleanup attempt. Receiver обязан
 откатить provisional Stage 4 state перед исключением; Stage 3 сохраняет safe
-primary receiver failure отдельно от cleanup outcome.
+primary receiver failure отдельно от cleanup outcome. Pre-handoff protection
+заменяется авторитетным Stage 4 ownership только внутри coordinated receiver
+commit; состояния без защиты одного из этих владельцев между ними нет.
 
 Узкий receiver port не является универсальным lease/capability framework и не
 реализует Stage 4. Stage 3 заканчивается либо accepted validated descriptor и
@@ -2152,7 +2197,8 @@ cleanup промежуточных файлов не осталось; это н
 безопасную типизированную ошибку с фактическим `analysis_id`, не создаёт
 фиктивный результат, URL результата, кеш или обещание последующего GET либо
 восстановления. `PreRegistrationError` не создаёт `AnalysisResult`. Повторная
-попытка и восстановление после неудачного сохранения Stage 3 относятся к Stage 9.
+попытка и восстановление после неудачного сохранения Stage 3 не вводятся Stage 9
+Macro 1 и требуют отдельного будущего решения.
 
 Stage 4 не формирует промежуточную или фиктивную версию `AnalysisResult` и не
 фабрикует результаты анализаторов, признаки, полноту, оценку риска или
@@ -2457,6 +2503,17 @@ external references, ошибки, findings, результаты и метри�
 - `get`, `exists` и `list_recent` отображают `OSError` в безопасный
   `ResultRepositoryError` без пути, данных и исходного текста ОС;
 - возможность позднее заменить реализацию без изменения ядра.
+
+Ошибка удаления созданного `.result-*.tmp` не скрывается: в доступной безопасной
+точке журналируется `cleanup_failed` с `phase=result_temp_cleanup` и
+`code=result_temp_cleanup_failed`, без абсолютного пути. Этот secondary failure
+не меняет основной persistence outcome и не запускает retry. Stage 9 Macro 1 не
+вводит автоматическую startup-очистку таких файлов и не обещает crash recovery.
+Безопасная ручная очистка допускается только после остановки runtime и
+подтверждения его исключительного владения каталогом результатов: оператор
+проверяет только непосредственные обычные файлы с точной формой
+`.result-*.tmp`, исключает symlink/junction/reparse entries и удаляет каждый
+явно проверенный residue отдельно. Массовый wildcard cleanup при старте запрещён.
 
 Перед сохранением `ResultFinalizationService` применяет политику
 `result.include_raw_metrics` к отделённой проекции результата: при `true`
@@ -3082,10 +3139,47 @@ HTML-страницу `400`.
   "analyzer_id": "metadata_analyzer",
   "duration_ms": 81,
   "status": "completed",
-  "error_type": null,
   "message": "Analyzer completed."
 }
 ```
+
+Каждая строка является самостоятельным валидным JSON object. Базовые поля:
+
+```text
+timestamp
+level
+logger
+module
+event
+message
+```
+
+`message` выбирается только из статического текста канонического `event` и не
+строится из exception message/repr или пользовательского ввода. Разрешённые
+structured fields:
+
+```text
+analysis_id
+request_id
+phase
+code
+error_type
+status
+stage
+analyzer_id
+duration_ms
+schema_version
+host
+port
+```
+
+`schema_version`, `host` и `port` относятся к уже существующим startup events.
+Formatter валидирует форму разрешённых значений и пропускает отсутствующие или
+небезопасные значения. Любой иной `extra` не сериализуется автоматически.
+Запрещены raw exception/traceback, `Authorization`, Bearer/Basic credentials,
+значения secrets из environment, полный `SourceContext`, raw headers,
+произвольный `original_name`, абсолютные temporary/workspace paths и иной
+user-controlled payload без отдельного sanitization contract.
 
 ### 19.2. Канонические события MVP
 
@@ -3106,6 +3200,10 @@ cleanup_started
 cleanup_completed
 cleanup_failed
 result_saved
+result_persistence_failed
+ownership_handoff_completed
+validation_failed
+api_error
 analysis_completed
 analysis_partial
 analysis_failed
@@ -3118,7 +3216,41 @@ analysis_failed
 подтверждает привязку Uvicorn к порту или готовность приложения принимать
 HTTP-запросы. HTTP readiness проверяется отдельно через `GET /health`.
 
-JSONL whitelist и обязательные поля события остаются без изменений.
+Фактически обязательные diagnostic boundaries Macro 1:
+
+- `analysis_registered` после появления известной identity;
+- `validation_failed` для internal Stage 3 failure;
+- `ownership_handoff_completed` только после успешного Stage 4 receiver commit;
+- `cleanup_failed` для cleanup/recovery issue, включая безопасную диагностику
+  residue временного result-файла;
+- `result_persistence_failed` при неуспешном `save()`;
+- `analysis_completed`, `analysis_partial` или `analysis_failed` только после
+  успешного сохранения и публикации `FINISHED`; для terminal Stage 3 rejection
+  используется утверждённое `validation_rejected` со `stage=finished`;
+- `api_error` для безопасного HTTP error envelope.
+
+Контрактно значимый порядок для принятой задачи:
+
+```text
+cleanup_completed | cleanup_failed
+→ result_saved
+→ analysis_completed | analysis_partial | analysis_failed
+```
+
+`result_saved` появляется только после успешного `ResultRepository.save()`, а
+terminal analysis event — после публикации `FINISHED`. При ошибке `save()`
+журналируется `result_persistence_failed`; ложные `result_saved` и terminal
+analysis event запрещены.
+
+`request_id` является только adapter/diagnostic correlation. Для каждого HTTP
+error значение `request_id` в response envelope обязано совпадать со значением в
+соответствующем `api_error`; оно не добавляется в `AnalysisResult`,
+`SourceContext`, task identity или success response.
+
+Diagnostic logging является secondary side effect. Ошибка formatter, emit,
+rotation или handler не повторяет анализ, cleanup или persistence, не меняет
+primary `completed`/`partial`/`failed`/`rejected`, не создаёт retry и не изменяет
+безопасный пользовательский ответ.
 
 События не являются пользовательским аудитом действий и не заменяют отдельную модель аудита, если она понадобится позднее.
 

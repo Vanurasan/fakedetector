@@ -603,9 +603,18 @@ def test_media_infrastructure_failure_is_validation_system_failure(
     tmp_path: Path,
     media_files: dict[str, Path],
 ) -> None:
+    class SafetyBarrier:
+        def try_confirm_safe(self) -> bool:
+            return False
+
+    barrier = SafetyBarrier()
+
     class FailingInspector:
         def probe(self, source_path: Path):
-            raise MediaToolSystemError("process_start")
+            raise MediaToolSystemError(
+                "process_wait",
+                _cleanup_safety_barrier=barrier,
+            )
 
         def decode_audio(self, source_path: Path) -> None:
             raise AssertionError("decode must not run")
@@ -627,6 +636,7 @@ def test_media_infrastructure_failure_is_validation_system_failure(
             media_inspector=FailingInspector(),  # type: ignore[arg-type]
         ).validate(controlled)
 
-    assert error_info.value.phase == "process_start"
+    assert error_info.value.phase == "process_wait"
+    assert error_info.value._cleanup_safety_barrier is barrier
     assert not controlled.owned_source.is_released
     owner.cleanup(controlled.owned_source)

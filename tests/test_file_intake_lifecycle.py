@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import NoReturn
@@ -15,6 +15,7 @@ import fakedetector.core._bounded_process as bounded_process_module
 import fakedetector.intake.temporary_input as temporary_input_module
 from fakedetector.config.models import AppConfig
 from fakedetector.core import AuthoritativeLifecycleClock, Clock
+from fakedetector.core._cleanup_safety import _CleanupSafetyInterruption
 from fakedetector.domain import (
     AnalysisStatus,
     CleanupStatus,
@@ -35,6 +36,7 @@ from fakedetector.intake import (
     Stage3Terminal,
     ValidationSystemError,
 )
+from fakedetector.lifecycle import TaskRegistry, WorkspaceJanitor
 
 _REGISTERED_AT = datetime(2026, 8, 13, 10, 30, tzinfo=UTC)
 
@@ -87,6 +89,16 @@ class PartialThenFailStream:
         if self.calls == 1:
             return b"partial"[:size]
         raise OSError("PRIVATE STREAM FAILURE")
+
+
+class ControlledSafetyBarrier:
+    def __init__(self, confirmed: bool) -> None:
+        self.confirmed = confirmed
+        self.calls = 0
+
+    def try_confirm_safe(self) -> bool:
+        self.calls += 1
+        return self.confirmed
 
 
 def make_config(
@@ -617,6 +629,146 @@ def test_validation_system_failure_is_failed_and_cleans_owned_source(tmp_path: P
     assert receiver.calls == 0
 
 
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_validation_process_failure_obeys_cleanup_safety_barrier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    confirmed: bool,
+) -> None:
+    barrier = ControlledSafetyBarrier(confirmed)
+
+    class FailingValidator:
+        def validate(self, _controlled) -> NoReturn:
+            raise ValidationSystemError(
+                "process_wait",
+                _cleanup_safety_barrier=barrier,
+            )
+
+    service, owner, receiver = make_service(tmp_path, validator=FailingValidator())
+    cleanup_calls = 0
+    quarantine_calls = 0
+    real_cleanup = owner.cleanup
+
+    def tracking_cleanup(owned_source) -> None:
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        real_cleanup(owned_source)
+
+    def track_quarantine(*_args: object, **_kwargs: object) -> None:
+        nonlocal quarantine_calls
+        quarantine_calls += 1
+
+    monkeypatch.setattr(owner, "cleanup", tracking_cleanup)
+    monkeypatch.setattr(owner, "_quarantine", track_quarantine)
+
+    outcome = service.process(
+        BytesIO(b"content"),
+        original_name="sample.wav",
+        declared_content_type=None,
+        source=source_context(),
+    )
+
+    workspace = tmp_path / "PRIVATE-TEMP" / "integrated-stage3"
+    assert isinstance(outcome, Stage3Terminal)
+    assert outcome.status is AnalysisStatus.FAILED
+    assert barrier.calls == 1
+    assert quarantine_calls == 0
+    assert outcome.cleanup is not None
+    if confirmed:
+        assert cleanup_calls == 1
+        assert outcome.cleanup.status is CleanupStatus.COMPLETED
+        assert not workspace.exists()
+    else:
+        assert cleanup_calls == 0
+        assert outcome.cleanup.status is CleanupStatus.FAILED
+        assert (workspace / "source").is_file()
+
+
+def test_unconfirmed_cleanup_safety_keeps_workspace_protected_from_janitor(
+    tmp_path: Path,
+) -> None:
+    analysis_id = "a" * 32
+    barrier = ControlledSafetyBarrier(False)
+
+    class FailingValidator:
+        def validate(self, _controlled) -> NoReturn:
+            raise ValidationSystemError(
+                "process_wait",
+                _cleanup_safety_barrier=barrier,
+            )
+
+    service, owner, _receiver = make_service(
+        tmp_path,
+        analysis_id_generator=FixedIdGenerator(analysis_id),
+        validator=FailingValidator(),
+    )
+    outcome = service.process(
+        BytesIO(b"content"),
+        original_name="sample.wav",
+        declared_content_type=None,
+        source=source_context(),
+    )
+    root = tmp_path / "PRIVATE-TEMP"
+    workspace = root / analysis_id
+    stale_at = _REGISTERED_AT - timedelta(days=1)
+    os.utime(workspace, (stale_at.timestamp(),) * 2)
+
+    result = WorkspaceJanitor(
+        config=make_config(root).temporary_storage,
+        clock=AuthoritativeLifecycleClock(FixedClock()),
+        registry=TaskRegistry(),
+        temporary_input_owner=owner,
+    ).sweep()
+
+    assert isinstance(outcome, Stage3Terminal)
+    assert outcome.cleanup is not None
+    assert outcome.cleanup.status is CleanupStatus.FAILED
+    assert result.workspaces_deleted == ()
+    assert result.workspaces_quarantined == ()
+    assert (workspace / "source").is_file()
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_base_exception_process_failure_obeys_cleanup_safety_barrier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    confirmed: bool,
+) -> None:
+    barrier = ControlledSafetyBarrier(confirmed)
+
+    class TerminatingValidator:
+        def validate(self, _controlled) -> NoReturn:
+            raise _CleanupSafetyInterruption(KeyboardInterrupt(), barrier)
+
+    service, owner, _receiver = make_service(tmp_path, validator=TerminatingValidator())
+    cleanup_calls = 0
+    real_cleanup = owner.cleanup
+
+    def tracking_cleanup(owned_source) -> None:
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        real_cleanup(owned_source)
+
+    monkeypatch.setattr(owner, "cleanup", tracking_cleanup)
+
+    with pytest.raises(KeyboardInterrupt):
+        service.process(
+            BytesIO(b"content"),
+            original_name="sample.wav",
+            declared_content_type=None,
+            source=source_context(),
+        )
+
+    workspace = tmp_path / "PRIVATE-TEMP" / "integrated-stage3"
+    assert barrier.calls == 1
+    if confirmed:
+        assert cleanup_calls == 1
+        assert not workspace.exists()
+    else:
+        assert cleanup_calls == 0
+        assert (workspace / "source").is_file()
+
+
 def test_ffprobe_stdout_read_failure_is_failed_and_cleans_owned_source(
     tmp_path: Path,
     media_files: dict[str, Path],
@@ -807,6 +959,46 @@ def test_rejection_cleanup_failure_remains_rejected_and_preserves_both_errors(
     assert outcome.cleanup.status is CleanupStatus.FAILED
     assert outcome.cleanup.errors[0].code == "cleanup_failed"
     assert not outcome.cleanup.original_file_deleted
+
+
+def test_failed_stage3_cleanup_residue_becomes_eligible_for_janitor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analysis_id = "b" * 32
+    service, owner, _receiver = make_service(
+        tmp_path,
+        analysis_id_generator=FixedIdGenerator(analysis_id),
+    )
+
+    def fail_unlink(self: Path, *, missing_ok: bool = False) -> NoReturn:
+        raise OSError(f"PRIVATE CLEANUP FAILURE {self} {missing_ok}")
+
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+    outcome = service.process(
+        BytesIO(b""),
+        original_name="empty.png",
+        declared_content_type=None,
+        source=source_context(),
+    )
+    root = tmp_path / "PRIVATE-TEMP"
+    workspace = root / analysis_id
+    stale_at = _REGISTERED_AT - timedelta(days=1)
+    os.utime(workspace, (stale_at.timestamp(),) * 2)
+
+    result = WorkspaceJanitor(
+        config=make_config(root).temporary_storage,
+        clock=AuthoritativeLifecycleClock(FixedClock()),
+        registry=TaskRegistry(),
+        temporary_input_owner=owner,
+    ).sweep()
+
+    assert isinstance(outcome, Stage3Terminal)
+    assert outcome.status is AnalysisStatus.REJECTED
+    assert outcome.cleanup is not None
+    assert outcome.cleanup.status is CleanupStatus.FAILED
+    assert result.workspaces_deleted == (analysis_id,)
+    assert not workspace.exists()
 
 
 def test_system_cleanup_failure_remains_failed_and_preserves_both_errors(

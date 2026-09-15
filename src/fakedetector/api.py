@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import suppress
 from datetime import datetime
 from typing import Annotated
@@ -38,6 +39,9 @@ from fakedetector.domain import (
     SourceChannel,
     SourceContext,
 )
+from fakedetector.logging_setup import emit_diagnostic
+
+_LOGGER = logging.getLogger(__name__)
 
 _BEARER_SCHEME = HTTPBearer(
     auto_error=False,
@@ -353,12 +357,22 @@ def _error_response(
     result_url: str | None = None,
     headers: dict[str, str] | None = None,
 ) -> Response:
+    request_id = f"req_{uuid4().hex}"
     response = APIErrorResponse(
         error=error,
-        request_id=f"req_{uuid4().hex}",
+        request_id=request_id,
         analysis_id=analysis_id,
         status_url=status_url,
         result_url=result_url,
+    )
+    emit_diagnostic(
+        _LOGGER,
+        logging.WARNING if status_code < 500 else logging.ERROR,
+        "api_error",
+        analysis_id=analysis_id,
+        request_id=request_id,
+        phase="http",
+        code=error.code,
     )
     return JSONResponse(
         status_code=status_code,

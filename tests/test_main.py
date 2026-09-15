@@ -47,13 +47,17 @@ def test_main_loads_default_config_and_runs_uvicorn(monkeypatch) -> None:
     uvicorn_calls: list[tuple[FastAPI, str, int]] = []
     events: list[object] = []
 
-    class FakeLogger:
-        def info(self, message: str, *, extra: dict[str, object]) -> None:
-            events.append(("log", message, extra))
-
     def fake_configure_logging(logging_config) -> logging.Logger:
         events.append(("configure", logging_config))
-        return FakeLogger()  # type: ignore[return-value]
+        return logging.Logger("fakedetector-test")
+
+    def fake_emit_diagnostic(
+        _logger: logging.Logger,
+        level: int,
+        event: str,
+        **fields: object,
+    ) -> None:
+        events.append(("log", level, event, fields))
 
     def fake_runtime_setup(runtime_config: AppConfig) -> None:
         events.append(("runtime", runtime_config))
@@ -76,6 +80,7 @@ def test_main_loads_default_config_and_runs_uvicorn(monkeypatch) -> None:
     monkeypatch.setattr(main_module, "load_config", fake_load_config)
     monkeypatch.setattr(main_module, "ensure_runtime_directories", fake_runtime_setup)
     monkeypatch.setattr(main_module, "configure_logging", fake_configure_logging)
+    monkeypatch.setattr(main_module, "emit_diagnostic", fake_emit_diagnostic)
     monkeypatch.setattr(main_module, "create_app", fake_create_app)
     monkeypatch.setattr(main_module.uvicorn, "run", fake_uvicorn_run)
 
@@ -93,9 +98,9 @@ def test_main_loads_default_config_and_runs_uvicorn(monkeypatch) -> None:
     assert events[3] == ("create_app", config)
     assert events[4] == (
         "log",
-        "Application is starting.",
+        logging.INFO,
+        "application_starting",
         {
-            "event": "application_starting",
             "schema_version": "1.0",
             "host": "0.0.0.0",
             "port": 9090,
@@ -111,21 +116,26 @@ def test_config_argument_is_passed_to_loader(monkeypatch) -> None:
     loaded_paths: list[str | Path] = []
     log_extras: list[dict[str, object]] = []
 
-    class FakeLogger:
-        def info(self, message: str, *, extra: dict[str, object]) -> None:
-            log_extras.append(extra)
-
     def fake_load_config(config_path: str | Path) -> AppConfig:
         loaded_paths.append(config_path)
         return config
+
+    def fake_emit_diagnostic(
+        _logger: logging.Logger,
+        _level: int,
+        event: str,
+        **fields: object,
+    ) -> None:
+        log_extras.append({"event": event, **fields})
 
     monkeypatch.setattr(main_module, "load_config", fake_load_config)
     monkeypatch.setattr(main_module, "ensure_runtime_directories", lambda config: None)
     monkeypatch.setattr(
         main_module,
         "configure_logging",
-        lambda config: FakeLogger(),
+        lambda config: logging.Logger("fakedetector-test"),
     )
+    monkeypatch.setattr(main_module, "emit_diagnostic", fake_emit_diagnostic)
     monkeypatch.setattr(main_module.uvicorn, "run", lambda *args, **kwargs: None)
 
     result = main_module.main(["--config", "custom/settings.yaml"])

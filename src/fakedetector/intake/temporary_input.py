@@ -11,6 +11,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PureWindowsPath
+from threading import RLock
 from typing import BinaryIO, Literal, Protocol, TypeVar
 
 _SOURCE_NAME = "source"
@@ -79,7 +80,14 @@ class IntakeMeasurements:
 class _OwnedResource:
     """Shared private lifecycle state for capabilities referencing one source."""
 
-    __slots__ = ("analysis_id", "owner_token", "source_path", "state", "workspace_path")
+    __slots__ = (
+        "analysis_id",
+        "operation_lock",
+        "owner_token",
+        "source_path",
+        "state",
+        "workspace_path",
+    )
 
     def __init__(
         self,
@@ -93,6 +101,7 @@ class _OwnedResource:
         self.workspace_path = workspace_path
         self.source_path = source_path
         self.owner_token = owner_token
+        self.operation_lock = RLock()
         self.state: Literal["owned", "handed_off", "quarantined", "released"] = "owned"
 
 
@@ -170,6 +179,10 @@ class AcceptedSource:
         """Release the downstream source without exposing physical storage."""
         self._owner.cleanup(self._owned_source)
 
+    def _commit_handoff(self, accept: Callable[[], _OperationResult]) -> _OperationResult:
+        """Keep pre-handoff protection through the receiver's logical commit."""
+        return self._owner._commit_handoff(self._owned_source, accept)
+
     def _quarantine(self, modified_at: datetime) -> None:
         """Move the remaining workspace to the owner's fixed recovery location."""
         self._owner._quarantine(self._owned_source, modified_at)
@@ -217,14 +230,27 @@ class LocalTemporaryInputOwner:
         self._root_path = Path(root_path)
         self._chunk_size = chunk_size
         self._owner_token = object()
+        self._ownership_lock = RLock()
+        self._pre_handoff_analysis_ids: set[str] = set()
+        self._janitor_cleanup_claims: set[str] = set()
 
     def create(self, analysis_id: str) -> OwnedSource:
         """Create and take ownership of a new isolated workspace."""
         workspace_path = self._safe_workspace_path(analysis_id)
+        with self._ownership_lock:
+            if (
+                analysis_id in self._pre_handoff_analysis_ids
+                or analysis_id in self._janitor_cleanup_claims
+            ):
+                raise IntakeSystemError("ownership")
+            self._pre_handoff_analysis_ids.add(analysis_id)
+
         try:
             self._root_path.mkdir(mode=0o700, parents=True, exist_ok=True)
             workspace_path.mkdir(mode=0o700, exist_ok=False)
         except OSError:
+            with self._ownership_lock:
+                self._pre_handoff_analysis_ids.remove(analysis_id)
             raise IntakeSystemError("workspace") from None
 
         return OwnedSource(
@@ -312,55 +338,102 @@ class LocalTemporaryInputOwner:
 
     def transfer(self, owned_source: OwnedSource) -> AcceptedSource:
         """Move one active Stage 3 handle into a downstream capability."""
-        self._require_active_handle(owned_source)
-        transferred = OwnedSource(
-            analysis_id=owned_source._resource.analysis_id,
-            workspace_path=owned_source._resource.workspace_path,
-            source_path=owned_source._resource.source_path,
-            owner_token=self._owner_token,
-            resource=owned_source._resource,
-        )
-        owned_source._resource.state = "handed_off"
-        owned_source._active = False
-        return AcceptedSource(self, transferred)
+        with owned_source._resource.operation_lock, self._ownership_lock:
+            self._require_active_handle(owned_source)
+            if owned_source.analysis_id not in self._pre_handoff_analysis_ids:
+                raise IntakeSystemError("ownership")
+            transferred = OwnedSource(
+                analysis_id=owned_source._resource.analysis_id,
+                workspace_path=owned_source._resource.workspace_path,
+                source_path=owned_source._resource.source_path,
+                owner_token=self._owner_token,
+                resource=owned_source._resource,
+            )
+            owned_source._resource.state = "handed_off"
+            owned_source._active = False
+            return AcceptedSource(self, transferred)
+
+    def _commit_handoff(
+        self,
+        owned_source: OwnedSource,
+        accept: Callable[[], _OperationResult],
+    ) -> _OperationResult:
+        """Atomically replace pre-handoff protection with Stage 4 ownership."""
+        with owned_source._resource.operation_lock:
+            with self._ownership_lock:
+                self._require_active_handle(owned_source)
+                analysis_id = owned_source.analysis_id
+                if (
+                    owned_source._resource.state != "handed_off"
+                    or analysis_id not in self._pre_handoff_analysis_ids
+                ):
+                    raise IntakeSystemError("ownership")
+            result = accept()
+            with self._ownership_lock:
+                self._pre_handoff_analysis_ids.remove(analysis_id)
+            return result
+
+    def _cleanup_if_unprotected(
+        self,
+        analysis_id: str,
+        cleanup: Callable[[], _OperationResult],
+    ) -> _OperationResult | None:
+        """Claim one unprotected identity before running janitor cleanup unlocked."""
+        with self._ownership_lock:
+            if (
+                analysis_id in self._pre_handoff_analysis_ids
+                or analysis_id in self._janitor_cleanup_claims
+            ):
+                return None
+            self._janitor_cleanup_claims.add(analysis_id)
+
+        try:
+            return cleanup()
+        finally:
+            with self._ownership_lock:
+                self._janitor_cleanup_claims.remove(analysis_id)
 
     def cleanup(self, owned_source: OwnedSource) -> None:
         """Remove only the fixed source and its now-empty owned workspace."""
-        self._require_own_handle(owned_source)
-        if not owned_source._active:
-            raise IntakeSystemError("ownership")
-        resource = owned_source._resource
-        if resource.state == "released":
-            return
-        if resource.state == "quarantined":
-            self._cleanup_quarantined_resource(resource)
-            return
-        if resource.state not in {"owned", "handed_off"}:
-            raise IntakeSystemError("ownership")
+        with owned_source._resource.operation_lock:
+            self._require_own_handle(owned_source)
+            if not owned_source._active:
+                raise IntakeSystemError("ownership")
+            resource = owned_source._resource
+            if resource.state == "released":
+                return
+            if resource.state == "quarantined":
+                self._cleanup_quarantined_resource(resource)
+                return
+            if resource.state not in {"owned", "handed_off"}:
+                raise IntakeSystemError("ownership")
 
-        original_file_deleted = False
-        try:
-            resource.source_path.unlink(missing_ok=True)
-            original_file_deleted = True
-            with suppress(FileNotFoundError):
-                resource.workspace_path.rmdir()
-        except OSError:
-            raise TemporaryInputCleanupError(
-                original_file_deleted=original_file_deleted,
-                intermediate_files_deleted=False,
-            ) from None
+            original_file_deleted = False
+            try:
+                resource.source_path.unlink(missing_ok=True)
+                original_file_deleted = True
+                with suppress(FileNotFoundError):
+                    resource.workspace_path.rmdir()
+            except OSError:
+                self._finish_pre_handoff_cleanup_attempt(resource.analysis_id)
+                raise TemporaryInputCleanupError(
+                    original_file_deleted=original_file_deleted,
+                    intermediate_files_deleted=False,
+                ) from None
 
-        resource.state = "released"
+            resource.state = "released"
+            self._finish_pre_handoff_cleanup_attempt(resource.analysis_id)
 
     def _cleanup_quarantine(self, owned_source: OwnedSource) -> bool:
         """Clean the canonical quarantine item only when this capability owns it."""
-        self._require_own_handle(owned_source)
-        if not owned_source._active:
-            raise IntakeSystemError("ownership")
-        if owned_source._resource.state != "quarantined":
-            return False
-        self.cleanup(owned_source)
-        return True
+        with owned_source._resource.operation_lock:
+            self._require_own_handle(owned_source)
+            if not owned_source._active:
+                raise IntakeSystemError("ownership")
+            if owned_source._resource.state != "quarantined":
+                return False
+            self.cleanup(owned_source)
+            return True
 
     def _cleanup_quarantined_resource(self, resource: _OwnedResource) -> None:
         quarantine_root = self._root_path.parent / "quarantine"
@@ -378,6 +451,7 @@ class LocalTemporaryInputOwner:
                 workspace_path.lstat()
             except FileNotFoundError:
                 resource.state = "released"
+                self._finish_pre_handoff_cleanup_attempt(resource.analysis_id)
                 return
             if quarantine_root.is_symlink() or not quarantine_root.is_dir():
                 raise OSError
@@ -389,6 +463,7 @@ class LocalTemporaryInputOwner:
                 workspace_path.lstat()
             except FileNotFoundError:
                 resource.state = "released"
+                self._finish_pre_handoff_cleanup_attempt(resource.analysis_id)
                 return
             raise TemporaryInputCleanupError(
                 original_file_deleted=False,
@@ -396,50 +471,59 @@ class LocalTemporaryInputOwner:
             ) from None
 
         resource.state = "released"
+        self._finish_pre_handoff_cleanup_attempt(resource.analysis_id)
 
     def _quarantine(self, owned_source: OwnedSource, modified_at: datetime) -> None:
         """Move one remaining direct workspace to the fixed sibling quarantine."""
-        self._require_own_handle(owned_source)
-        resource = owned_source._resource
-        if (
-            not owned_source._active
-            or resource.state != "handed_off"
-            or _SYSTEM_ANALYSIS_ID.fullmatch(resource.analysis_id) is None
-        ):
-            raise TemporaryInputQuarantineError()
-
-        workspace_path = self._safe_workspace_path(resource.analysis_id)
-        quarantine_root = self._root_path.parent / "quarantine"
-        destination = quarantine_root / resource.analysis_id
-        if (
-            resource.workspace_path != workspace_path
-            or workspace_path.parent != self._root_path
-            or destination.parent != quarantine_root
-        ):
-            raise TemporaryInputQuarantineError()
-
-        try:
-            if workspace_path.is_symlink() or not workspace_path.is_dir():
-                raise TemporaryInputQuarantineError()
-            if quarantine_root.exists():
-                if quarantine_root.is_symlink() or not quarantine_root.is_dir():
+        with owned_source._resource.operation_lock:
+            self._require_own_handle(owned_source)
+            resource = owned_source._resource
+            with self._ownership_lock:
+                if (
+                    not owned_source._active
+                    or resource.state != "handed_off"
+                    or resource.analysis_id in self._pre_handoff_analysis_ids
+                    or _SYSTEM_ANALYSIS_ID.fullmatch(resource.analysis_id) is None
+                ):
                     raise TemporaryInputQuarantineError()
-            else:
-                quarantine_root.mkdir()
-            if destination.exists() or destination.is_symlink():
-                raise TemporaryInputQuarantineError()
-            workspace_path.rename(destination)
-        except TemporaryInputQuarantineError:
-            raise
-        except OSError:
-            raise TemporaryInputQuarantineError() from None
 
-        resource.workspace_path = destination
-        resource.source_path = destination / _SOURCE_NAME
-        resource.state = "quarantined"
-        with suppress(OSError):
-            timestamp = modified_at.timestamp()
-            os.utime(destination, (timestamp, timestamp))
+            workspace_path = self._safe_workspace_path(resource.analysis_id)
+            quarantine_root = self._root_path.parent / "quarantine"
+            destination = quarantine_root / resource.analysis_id
+            if (
+                resource.workspace_path != workspace_path
+                or workspace_path.parent != self._root_path
+                or destination.parent != quarantine_root
+            ):
+                raise TemporaryInputQuarantineError()
+
+            try:
+                if workspace_path.is_symlink() or not workspace_path.is_dir():
+                    raise TemporaryInputQuarantineError()
+                if quarantine_root.exists():
+                    if quarantine_root.is_symlink() or not quarantine_root.is_dir():
+                        raise TemporaryInputQuarantineError()
+                else:
+                    quarantine_root.mkdir()
+                if destination.exists() or destination.is_symlink():
+                    raise TemporaryInputQuarantineError()
+                workspace_path.rename(destination)
+            except TemporaryInputQuarantineError:
+                raise
+            except OSError:
+                raise TemporaryInputQuarantineError() from None
+
+            resource.workspace_path = destination
+            resource.source_path = destination / _SOURCE_NAME
+            resource.state = "quarantined"
+            with suppress(OSError):
+                timestamp = modified_at.timestamp()
+                os.utime(destination, (timestamp, timestamp))
+
+    def _finish_pre_handoff_cleanup_attempt(self, analysis_id: str) -> None:
+        """End active Stage 3 ownership after one completed physical attempt."""
+        with self._ownership_lock:
+            self._pre_handoff_analysis_ids.discard(analysis_id)
 
     def _safe_workspace_path(self, analysis_id: str) -> Path:
         """Build one unchanged direct child after cross-platform lexical checks."""

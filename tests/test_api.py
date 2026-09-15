@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from stage8_helpers import (
     make_status,
 )
 
+import fakedetector.api as api_module
 from fakedetector.api import install_api
 from fakedetector.app import create_app
 from fakedetector.application import (
@@ -197,6 +199,52 @@ def test_malformed_multipart_is_rejected_only_after_bearer_guard() -> None:
     assert valid.json()["error"]["code"] == "invalid_multipart"
     assert set(valid.json()) == {"error", "request_id"}
     assert service.sources == []
+
+
+def test_api_error_request_id_matches_safe_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StubApplicationService()
+    diagnostics: list[dict[str, object]] = []
+
+    def capture_diagnostic(
+        _logger: logging.Logger,
+        _level: int,
+        event: str,
+        **fields: object,
+    ) -> None:
+        diagnostics.append({"event": event, **fields})
+
+    monkeypatch.setattr(api_module, "emit_diagnostic", capture_diagnostic)
+
+    response = _malformed_multipart(
+        _client(service),
+        authorization=f"Bearer {TOKEN}",
+    )
+
+    assert response.status_code == 400
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["event"] == "api_error"
+    assert diagnostics[0]["request_id"] == response.json()["request_id"]
+    assert diagnostics[0]["code"] == "invalid_multipart"
+
+
+def test_api_logging_failure_does_not_change_error_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_log(*_args: object, **_kwargs: object) -> None:
+        raise OSError("PRIVATE logging path")
+
+    monkeypatch.setattr(api_module._LOGGER, "log", fail_log)
+
+    response = _malformed_multipart(
+        _client(StubApplicationService()),
+        authorization=f"Bearer {TOKEN}",
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_multipart"
+    assert response.json()["request_id"].startswith("req_")
 
 
 def test_missing_and_empty_file_are_transport_400_without_analysis_id() -> None:

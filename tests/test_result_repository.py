@@ -372,6 +372,53 @@ def test_failed_first_save_leaves_no_partial_target_or_temp_file(
     assert repository.exists(result.analysis_id) is False
 
 
+def test_failed_temp_result_cleanup_emits_safe_diagnostic_and_retains_residue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    result = make_result()
+    diagnostics: list[dict[str, object]] = []
+    real_unlink = Path.unlink
+
+    def fail_replace(_source: object, _target: object) -> NoReturn:
+        raise OSError("PRIVATE replace failure")
+
+    def fail_temporary_unlink(path: Path, *, missing_ok: bool = False) -> None:
+        if path.name.startswith(".result-"):
+            raise OSError(f"PRIVATE residue {path}")
+        real_unlink(path, missing_ok=missing_ok)
+
+    def capture_diagnostic(
+        _logger: object,
+        _level: object,
+        event: str,
+        **fields: object,
+    ) -> None:
+        diagnostics.append({"event": event, **fields})
+
+    monkeypatch.setattr(repository_module.os, "replace", fail_replace)
+    monkeypatch.setattr(Path, "unlink", fail_temporary_unlink)
+    monkeypatch.setattr(repository_module, "emit_diagnostic", capture_diagnostic)
+
+    with pytest.raises(ResultRepositoryError):
+        repository.save(result)
+
+    residues = list(tmp_path.glob(".result-*.tmp"))
+    assert len(residues) == 1
+    assert diagnostics == [
+        {
+            "event": "cleanup_failed",
+            "analysis_id": result.analysis_id,
+            "phase": "result_temp_cleanup",
+            "code": "result_temp_cleanup_failed",
+            "status": result.status.value,
+            "stage": "persistence",
+        }
+    ]
+    assert str(tmp_path) not in repr(diagnostics)
+
+
 def test_save_rejects_existing_symlink_target_without_mutation(tmp_path: Path) -> None:
     repository = JsonFileResultRepository(tmp_path)
     outside = tmp_path / "PRIVATE-outside.json"

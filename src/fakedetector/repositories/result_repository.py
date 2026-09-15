@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
-from contextlib import suppress
 from pathlib import Path, PureWindowsPath
 from typing import Protocol, runtime_checkable
 
@@ -13,6 +13,9 @@ from pydantic import ValidationError
 from pydantic_core import PydanticSerializationError
 
 from fakedetector.domain import AnalysisResult, AnalysisResultSummary
+from fakedetector.logging_setup import emit_diagnostic
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class ResultRepositoryError(Exception):
@@ -97,8 +100,19 @@ class JsonFileResultRepository:
             raise ResultRepositoryError("Result could not be saved.") from None
         finally:
             if temporary_path is not None:
-                with suppress(OSError):
+                try:
                     temporary_path.unlink(missing_ok=True)
+                except OSError:
+                    emit_diagnostic(
+                        _LOGGER,
+                        logging.WARNING,
+                        "cleanup_failed",
+                        analysis_id=validated_result.analysis_id,
+                        phase="result_temp_cleanup",
+                        code="result_temp_cleanup_failed",
+                        status=validated_result.status.value,
+                        stage="persistence",
+                    )
 
     def get(self, analysis_id: str) -> AnalysisResult | None:
         """Read and validate only the expected UTF-8 result JSON file."""

@@ -593,8 +593,8 @@ Settlement claim создаётся до первого physical cleanup side ef
 
 При ошибке сохранения фактические основной исход и очистка сохраняются, задача
 остаётся в `PERSISTENCE` с безопасной ошибкой `result_write_failed`, `FINISHED` не
-публикуется, анализ и очистка не повторяются. Автоматические повторная попытка и
-восстановление после перезапуска относятся к Stage 9.
+публикуется, анализ и очистка не повторяются. Stage 9 Macro 1 не добавляет
+automatic retry, durable recovery или восстановление после перезапуска.
 
 **Статус terminal settlement architecture: FIXED.**
 
@@ -615,6 +615,20 @@ Settlement claim создаётся до первого physical cleanup side ef
 том же проходе, предоставляет validator непрозрачную внутреннюю ссылку и
 поддерживает явную передачу ownership. Это не универсальный storage framework и
 не orchestrator жизненного цикла.
+
+Temporary input owner также является единой in-process coordination authority
+для pre-handoff workspace: protection создаётся до доступности workspace для
+janitor, удерживается через receiver commit и атомарно заменяется Stage 4
+ownership. Короткая общая state guard публикует protection и janitor claim для
+конкретного `analysis_id`, а `receiver.accept()` и filesystem operations идут без
+неё; private per-resource lock сохраняет атомарность операций одного controlled
+resource, не блокируя unrelated analyses. После завершённой ordinary Stage 3
+cleanup attempt protection снимается даже при физическом `OSError`, и residue
+переходит в существующий TTL/recovery path без нового retry. При unresolved
+reader/process safety barrier protection остаётся активной.
+Внутренний cleanup safety barrier media operation запрещает Stage 3 unlink,
+удаление workspace и quarantine, пока остановка reader/process не подтверждена;
+новый domain state или публичное поле для этого не вводятся.
 
 ### 6.8. Предварительная обработка
 
@@ -1446,8 +1460,14 @@ runtime/results/<analysis_id>.json
 временный файл в том же каталоге, `flush`, `fsync`, затем `os.replace`. Каталог
 создаётся лениво при первом `save()`; операции чтения не создают его.
 Существующая прямая символическая ссылка на целевой файл отклоняется. Более
-широкое устранение TOCTOU на основе дескрипторов и запрета следования по ссылкам
-остаётся задачей Stage 9.
+широкое targeted устранение TOCTOU/reparse hazards остаётся задачей Stage 9
+Macro 2; полный Win32 handle-based redesign не требуется.
+
+Crash может оставить `.result-*.tmp`. Macro 1 журналирует доступный безопасный
+сбой удаления, но не выполняет автоматическую startup-очистку и не обещает
+recovery. Единственная допустимая ручная процедура определена в
+`CONTRACTS.md`: runtime предварительно останавливается, подтверждается exclusive
+ownership, а каждый direct regular residue проверяется и удаляется отдельно.
 
 ### 12.4. Условия перехода на SQLite
 
@@ -1686,6 +1706,27 @@ FFmpeg и другие внешние инструменты вызываютс�
 - статический токен из переменной окружения допустим для MVP;
 - управление выпуском, отзывом и сроком токенов относится к последующим требованиям;
 - rate limiting добавляется после определения реального сценария интеграции.
+
+### 15.6. Зафиксированные границы Stage 9
+
+Runtime считается приватным для account приложения. Stage 9 не обещает защиту
+от hostile process под той же Windows account или с Administrator privileges.
+
+Macro 2 выполняет только targeted filesystem hardening: новые sensitive runtime
+roots создаются максимально приватно средствами stdlib/Python 3.12,
+существующие ACL автоматически не переписываются, pywin32 и новые dependencies
+не добавляются, а symlink/junction/reparse hazards должны завершаться безопасным
+отказом. ACL, которые stdlib нельзя надёжно проверить, являются deployment
+prerequisite.
+
+Macro 3 установит transport boundary как максимум настроенных image/audio/video
+лимитов плюс 1 MiB multipart envelope, с подсчётом фактических байтов, ответом
+`413` до регистрации анализа и использованием
+`server.request_timeout_seconds` как deadline HTTP receive/parse. Macro 1 эту
+границу не реализует.
+
+Для local MVP принимаются bounded algorithms, body guard и измеренный resource
+envelope. OS-level hard quotas CPU/RAM находятся вне Stage 9.
 
 ---
 

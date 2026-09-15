@@ -277,6 +277,7 @@ def test_quarantined_accepted_source_remains_readable_and_cleanup_releases_it(
     owned_source = owner.create(analysis_id)
     owner.ingest(owned_source, BytesIO(b"quarantined-content"), 100)
     accepted_source = owner.transfer(owned_source)
+    accepted_source._commit_handoff(lambda: None)
     accepted_source._quarantine(datetime(2026, 8, 15, tzinfo=UTC))
     quarantine_item = tmp_path / "quarantine" / analysis_id
 
@@ -309,7 +310,7 @@ def test_transfer_rejects_foreign_and_released_handles(tmp_path: Path) -> None:
     foreign_owner.cleanup(foreign_source)
 
 
-def test_cleanup_failure_keeps_ownership_active_and_does_not_remove_foreign_data(
+def test_cleanup_failure_releases_pre_handoff_protection_and_preserves_foreign_data(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "temp"
@@ -325,6 +326,28 @@ def test_cleanup_failure_keeps_ownership_active_and_does_not_remove_foreign_data
     assert not owned_source.is_released
     assert foreign_file.read_text(encoding="utf-8") == "do-not-delete"
     assert not (root / "foreign-data" / "source").exists()
+    assert owner._cleanup_if_unprotected("foreign-data", lambda: "eligible") == "eligible"
+
+
+def test_interrupted_physical_cleanup_keeps_pre_handoff_protection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analysis_id = "a" * 32
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    owned_source = owner.create(analysis_id)
+    owner.ingest(owned_source, BytesIO(b"owned"), 100)
+
+    def interrupt_unlink(self: Path, *, missing_ok: bool = False) -> NoReturn:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Path, "unlink", interrupt_unlink)
+
+    with pytest.raises(KeyboardInterrupt):
+        owner.cleanup(owned_source)
+
+    assert owner._cleanup_if_unprotected(analysis_id, lambda: "unsafe") is None
+    assert (tmp_path / "temp" / analysis_id / "source").is_file()
 
 
 def test_stream_read_failure_closes_output_descriptor(tmp_path: Path, monkeypatch) -> None:

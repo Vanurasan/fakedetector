@@ -114,10 +114,10 @@ AFTER_MVP
 Последний закрытый этап: Этап 8 — JSON, API и WebUI
 Статус Stage 8: DONE / CLOSED
 Следующий этап: Этап 9 — Надёжность, безопасность и сквозные тесты
-Статус Stage 9: NOT_STARTED
-Ближайшее действие: планирование Stage 9 без начала реализации
+Статус Stage 9: IN_PROGRESS
+Ближайшее действие: owner review реализации Stage 9 Macro 1; Macro 2 не начат
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–8 завершены; Stage 8 Macro 1 и Macro 2, независимый финальный аудит, remediation S8-A01–S8-A03 и post-remediation closure audit завершены
+Реализация программы: Этапы 1–8 завершены; Stage 9 Macro 1 реализован и ожидает owner review; Macro 2–4 не начаты
 Документационная база: сформирована
 ```
 
@@ -154,7 +154,7 @@ AFTER_MVP
 | 6 | Базовые анализаторы и формирование признаков | DONE | Реальные нормализованные признаки |
 | 7 | Полнота, риск и рекомендации | DONE | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | DONE | Реализация и независимые аудиты завершены; этап закрыт |
-| 9 | Надёжность, безопасность и сквозные тесты | NOT_STARTED | Проверенный MVP |
+| 9 | Надёжность, безопасность и сквозные тесты | IN_PROGRESS | Macro 1 реализован; Macro 2–4 не начаты |
 | 10 | Сборка и демонстрация MVP | NOT_STARTED | Воспроизводимый прототип |
 | 11+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
 
@@ -1476,18 +1476,51 @@ Macro 1 и Macro 2 реализованы и покрыты контрактны
 завершены; независимый финальный аудит выполнен, findings `S8-A01`, `S8-A02` и
 `S8-A03` исправлены в remediation commit `7093922`. Post-remediation independent
 closure audit завершён с `PASS`, новых findings нет. Stage 8 имеет статус
-`DONE / CLOSED`; Stage 9 имеет статус `NOT_STARTED`.
+`DONE / CLOSED`; Stage 9 имеет статус `IN_PROGRESS` после реализации Macro 1.
 
 Quality barrier closure audit: `1687 passed, 3 skipped`, coverage `90%`;
 `ruff`, `mypy`, `pre-commit`, lock, CLI/import и `git diff --check` — `PASS`.
 
 ---
 
-# Этап 9. Надёжность, безопасность и сквозные тесты — NOT_STARTED
+# Этап 9. Надёжность, безопасность и сквозные тесты — IN_PROGRESS
 
 ## Цель
 
 Доказать работоспособность полного цикла в штатных и аварийных сценариях.
+
+## Декомпозиция Stage 9
+
+- [x] Macro 1 — lifecycle safety и JSONL diagnostics: cleanup safety barrier
+  Stage 3, per-analysis pre-handoff coordination с janitor, безопасные
+  диагностические события и `request_id` correlation; findings `S9-M1-R01` и
+  `S9-M1-R02` устранены, реализация завершена и ожидает owner review;
+- [ ] Macro 2 — targeted filesystem TOCTOU/reparse и runtime-root hardening;
+- [ ] Macro 3 — HTTP multipart body limit и receive/parse deadline;
+- [ ] Macro 4 — Profile B E2E, измерения и performance/resource envelope.
+
+Macro 2–4 не входят в Macro 1 и не начаты.
+
+## Зафиксированные owner decisions
+
+- `S9-D01`: runtime приватен для account приложения; защита от hostile process
+  той же Windows account или Administrator не обещается; Macro 2 остаётся
+  targeted, полный Win32 handle-based redesign не требуется.
+- `S9-D02`: Macro 2 создаёт новые sensitive runtime roots максимально приватно
+  средствами stdlib/Python 3.12, не переписывает существующие ACL, не добавляет
+  pywin32/dependency, fail-safe обрабатывает reparse hazards; непроверяемые stdlib
+  ACL являются deployment prerequisite.
+- `S9-D03`: Macro 3 использует max per-media limit + 1 MiB envelope, actual-byte
+  counting, `413` до регистрации и `server.request_timeout_seconds` как HTTP
+  receive/parse deadline.
+- `S9-D04`: JSONL использует только утверждённый safe allowlist; raw exception,
+  credentials, secrets, `SourceContext`, headers, filename, paths и иной
+  user-controlled payload запрещены без sanitization contract.
+- `S9-D05`: durable recovery, persistence/analysis retry и startup cleanup
+  `.result-*.tmp` не вводятся; pre-handoff cleanup barrier обязателен, residue
+  получает diagnostic и ручную safe maintenance procedure.
+- `S9-D06`: local MVP опирается на bounded algorithms, body guard и измеренный
+  resource envelope; OS-level CPU/RAM hard quotas вне Stage 9.
 
 ## Обязательные задачи
 
@@ -1495,7 +1528,7 @@ Quality barrier closure audit: `1687 passed, 3 skipped`, coverage `90%`;
 
 - [ ] классифицировать ошибки;
 - [ ] обеспечить безопасные пользовательские сообщения;
-- [ ] сохранять диагностику в JSONL;
+- [x] сохранять утверждённую Macro 1 диагностику в JSONL;
 - [ ] проверить частичный сбой;
 - [ ] проверить системный сбой;
 - [ ] проверить timeout;
@@ -1510,7 +1543,7 @@ Quality barrier closure audit: `1687 passed, 3 skipped`, coverage `90%`;
   необходимости;
 - [ ] проверить command injection для FFmpeg;
 - [ ] ограничить время и ресурсы;
-- [ ] проверить отсутствие секретов в логах;
+- [x] проверить отсутствие секретов и private payload в JSONL Macro 1;
 - [ ] проверить отсутствие runtime в Git;
 - [ ] проверить MIME/signature mismatch;
 - [ ] ограничить доступ к runtime;

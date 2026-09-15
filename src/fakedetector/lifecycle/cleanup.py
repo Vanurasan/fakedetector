@@ -17,9 +17,10 @@ from fakedetector.config.models import TemporaryStorageConfig
 from fakedetector.core import AuthoritativeLifecycleClock
 from fakedetector.core.clock import AuthoritativeClockError
 from fakedetector.domain import CleanupStatus, ErrorDetail
-from fakedetector.intake import TemporaryInputCleanupError
+from fakedetector.intake import LocalTemporaryInputOwner, TemporaryInputCleanupError
 from fakedetector.lifecycle.execution import TaskRegistry
 from fakedetector.lifecycle.models import AnalysisTask, CleanupFacts, TerminalSettlementSnapshot
+from fakedetector.logging_setup import emit_diagnostic
 
 _SYSTEM_ANALYSIS_ID = re.compile(r"^[0-9a-f]{32}$")
 _LOGGER = logging.getLogger(__name__)
@@ -181,10 +182,12 @@ class WorkspaceJanitor:
         config: TemporaryStorageConfig,
         clock: AuthoritativeLifecycleClock,
         registry: TaskRegistry,
+        temporary_input_owner: LocalTemporaryInputOwner,
     ) -> None:
         self._config = config
         self._clock = clock
         self._registry = registry
+        self._temporary_input_owner = temporary_input_owner
         self._root = Path(config.root_path)
         self._quarantine_root = self._root.parent / "quarantine"
         self._sweep_lock = Lock()
@@ -200,9 +203,14 @@ class WorkspaceJanitor:
             quarantine_deleted, quarantine_issues = self._sweep_quarantine(now)
             issues = (*workspace_issues, *quarantine_issues)
             for issue in issues:
-                _LOGGER.warning(
-                    "Stage 4 cleanup recovery did not complete.",
-                    extra={"analysis_id": issue.analysis_id, "cleanup_code": issue.code},
+                emit_diagnostic(
+                    _LOGGER,
+                    logging.WARNING,
+                    "cleanup_failed",
+                    analysis_id=issue.analysis_id,
+                    phase="recovery",
+                    code=issue.code,
+                    stage="cleanup",
                 )
             return SweepResult(
                 workspaces_deleted=tuple(deleted),
@@ -238,9 +246,17 @@ class WorkspaceJanitor:
             ) -> str:
                 return self._recover_workspace(entry, analysis_id)
 
-            outcome = self._registry.cleanup_if_inactive(
+            def cleanup_if_inactive(
+                analysis_id: str = analysis_id,
+            ) -> str | None:
+                return self._registry.cleanup_if_inactive(
+                    analysis_id,
+                    recover_workspace,
+                )
+
+            outcome = self._temporary_input_owner._cleanup_if_unprotected(
                 analysis_id,
-                recover_workspace,
+                cleanup_if_inactive,
             )
             if outcome == "deleted":
                 deleted.append(analysis_id)

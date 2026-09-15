@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path, PureWindowsPath
 
 from fakedetector.config._snapshot import _ConfigSnapshot
@@ -27,10 +28,13 @@ from fakedetector.lifecycle.models import (
     TaskSnapshot,
     TerminalSettlementPhase,
 )
+from fakedetector.logging_setup import emit_diagnostic
 from fakedetector.result_finalization import (
     AcceptedResultFinalizer,
     ResultFinalizationError,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class Stage4ReceiverError(Exception):
@@ -240,11 +244,29 @@ class Stage4TaskProcessor:
                 analysis_id,
                 owner_token,
             ):
+                emit_diagnostic(
+                    _LOGGER,
+                    logging.ERROR,
+                    "cleanup_failed",
+                    analysis_id=analysis_id,
+                    phase="safety_confirmation",
+                    code="cleanup_safety_unconfirmed",
+                    status=task.context.status.value,
+                    stage=ProcessingStage.CLEANUP.value,
+                )
                 snapshot = self._registry.snapshot(analysis_id)
                 self._registry.release_terminal_settlement(analysis_id, owner_token)
                 return snapshot
             settlement = self._registry.terminal_settlement(analysis_id, owner_token)
             if settlement.phase is TerminalSettlementPhase.CLAIMED:
+                emit_diagnostic(
+                    _LOGGER,
+                    logging.INFO,
+                    "cleanup_started",
+                    analysis_id=analysis_id,
+                    status=task.context.status.value,
+                    stage=ProcessingStage.CLEANUP.value,
+                )
                 self._registry.start_terminal_cleanup(analysis_id, owner_token)
                 settlement = self._registry.terminal_settlement(analysis_id, owner_token)
             if settlement.phase is TerminalSettlementPhase.CLEANUP_IN_PROGRESS:
@@ -258,6 +280,16 @@ class Stage4TaskProcessor:
                     ),
                 )
                 self._registry.mark_terminal_facts_ready(analysis_id, owner_token, facts)
+                cleanup_completed = facts.status.value == "completed"
+                emit_diagnostic(
+                    _LOGGER,
+                    logging.INFO if cleanup_completed else logging.ERROR,
+                    "cleanup_completed" if cleanup_completed else "cleanup_failed",
+                    analysis_id=analysis_id,
+                    code=None if cleanup_completed else "cleanup_failed",
+                    status=facts.status.value,
+                    stage=ProcessingStage.CLEANUP.value,
+                )
                 settlement = self._registry.terminal_settlement(analysis_id, owner_token)
             if settlement.phase is not TerminalSettlementPhase.FACT_READY:
                 raise RuntimeError("terminal settlement is not fact-ready")
@@ -294,6 +326,20 @@ class Stage4TaskProcessor:
                 analysis_id,
                 owner_token,
                 finished_at,
+            )
+            event = {
+                AnalysisStatus.COMPLETED: "analysis_completed",
+                AnalysisStatus.PARTIAL: "analysis_partial",
+                AnalysisStatus.FAILED: "analysis_failed",
+            }.get(task.context.status, "analysis_failed")
+            emit_diagnostic(
+                _LOGGER,
+                logging.INFO if task.context.status is not AnalysisStatus.FAILED else logging.ERROR,
+                event,
+                analysis_id=analysis_id,
+                code=task.errors[0].code if task.errors else None,
+                status=task.context.status.value,
+                stage=ProcessingStage.FINISHED.value,
             )
         except BaseException:
             self._registry.release_terminal_settlement(analysis_id, owner_token)

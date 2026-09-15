@@ -14,6 +14,7 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import JsonValue
 
 from fakedetector.config.models import AppConfig
+from fakedetector.core._cleanup_safety import _CleanupSafetyBarrier
 from fakedetector.domain import (
     AudioTechnicalParameters,
     ErrorDetail,
@@ -48,9 +49,15 @@ _ErrorCategory = Literal["validation", "unsupported_media", "resource_limit"]
 class ValidationSystemError(Exception):
     """Safe internal failure that Increment 3 will classify as terminal failed."""
 
-    def __init__(self, phase: str) -> None:
+    def __init__(
+        self,
+        phase: str,
+        *,
+        _cleanup_safety_barrier: _CleanupSafetyBarrier | None = None,
+    ) -> None:
         super().__init__("Primary validation failed internally.")
         self.phase = phase
+        self._cleanup_safety_barrier = _cleanup_safety_barrier
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +163,10 @@ class FileValidator:
         except MediaRejectedError:
             return _unreadable_rejection(checks, "file_signature_valid")
         except MediaToolSystemError as error:
-            raise ValidationSystemError(error.phase) from None
+            raise ValidationSystemError(
+                error.phase,
+                _cleanup_safety_barrier=error._cleanup_safety_barrier,
+            ) from None
 
         if detected is None:
             return _rejection(
@@ -223,7 +233,10 @@ class FileValidator:
         except MediaRejectedError:
             return _unreadable_rejection(checks, "safe_read_completed")
         except MediaToolSystemError as error:
-            raise ValidationSystemError(error.phase) from None
+            raise ValidationSystemError(
+                error.phase,
+                _cleanup_safety_barrier=error._cleanup_safety_barrier,
+            ) from None
         except IntakeSystemError as error:
             raise ValidationSystemError(error.phase) from None
 

@@ -295,6 +295,27 @@ def test_decode_infrastructure_failure_maps_to_safe_system_phase(
     assert error_info.value.__cause__ is None
 
 
+def test_termination_infrastructure_failure_preserves_cleanup_safety_barrier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    barrier = _UnconfirmedSafetyBarrier()
+
+    def fail_run(arguments: list[str], **kwargs: object) -> ProcessResult:
+        raise ProcessInfrastructureError(
+            "termination",
+            _cleanup_safety_barrier=barrier,
+        )
+
+    monkeypatch.setattr(media_tools_module, "run_bounded_process", fail_run)
+
+    with pytest.raises(MediaToolSystemError) as error_info:
+        FFmpegMediaInspector().probe(tmp_path / "source")
+
+    assert error_info.value.phase == "process_wait"
+    assert error_info.value._cleanup_safety_barrier is barrier
+
+
 def test_source_path_with_metacharacters_remains_one_argv_element(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

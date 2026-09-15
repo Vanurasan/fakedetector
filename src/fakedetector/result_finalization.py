@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Protocol
@@ -28,7 +29,10 @@ from fakedetector.domain import (
 from fakedetector.domain.models import AnalysisProcessing
 from fakedetector.intake.lifecycle import Stage3Terminal
 from fakedetector.lifecycle.models import TerminalTaskFacts
+from fakedetector.logging_setup import emit_diagnostic
 from fakedetector.repositories import ResultRepository
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class ResultFinalizationError(Exception):
@@ -271,7 +275,21 @@ class ResultFinalizationService:
         prepared = self._prepare(
             self._assembler.assemble_stage3(terminal, finished_at=finished_at)
         )
-        return self._save(prepared)
+        result = self._save(prepared)
+        emit_diagnostic(
+            _LOGGER,
+            logging.ERROR if result.status is AnalysisStatus.FAILED else logging.INFO,
+            (
+                "analysis_failed"
+                if result.status is AnalysisStatus.FAILED
+                else "validation_rejected"
+            ),
+            analysis_id=result.analysis_id,
+            code=result.errors[0].code if result.errors else None,
+            status=result.status.value,
+            stage=ProcessingStage.FINISHED.value,
+        )
+        return result
 
     def _prepare(self, result: AnalysisResult) -> AnalysisResult:
         validated = AnalysisResult.model_validate(
@@ -297,15 +315,36 @@ class ResultFinalizationService:
 
     def _save(self, result: AnalysisResult) -> AnalysisResult:
         analysis_id = result.analysis_id
+        saved = False
         try:
             validated = AnalysisResult.model_validate(
                 result.model_dump(mode="python", round_trip=True, warnings="error")
             )
             self._repository.save(validated)
+            saved = True
+            emit_diagnostic(
+                _LOGGER,
+                logging.INFO,
+                "result_saved",
+                analysis_id=analysis_id,
+                status=validated.status.value,
+                stage=ProcessingStage.PERSISTENCE.value,
+            )
             return AnalysisResult.model_validate(
                 validated.model_dump(mode="python", round_trip=True, warnings="error")
             )
         except Exception:
+            if not saved:
+                emit_diagnostic(
+                    _LOGGER,
+                    logging.ERROR,
+                    "result_persistence_failed",
+                    analysis_id=analysis_id,
+                    phase="save",
+                    code="result_write_failed",
+                    status=result.status.value,
+                    stage=ProcessingStage.PERSISTENCE.value,
+                )
             raise ResultFinalizationError(analysis_id) from None
 
 

@@ -27,6 +27,7 @@ _STARTUP_LOG_FIELDS = {
     "timestamp",
     "level",
     "logger",
+    "module",
     "event",
     "message",
     "schema_version",

@@ -340,6 +340,40 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-14
+
+### Исправлено
+
+- **[Stage 9 Macro 1/Lifecycle safety] Сохранён cleanup safety barrier Stage 3 и
+  закрыта pre-handoff race с janitor.** Причина: преобразование media-tool errors
+  теряло признак незавершённого reader/process, а workspace появлялся до
+  регистрации Stage 4 task. Теперь private barrier проходит до владельца cleanup,
+  неподтверждённая безопасность запрещает unlink/quarantine, а temporary input
+  owner координирует janitor и receiver commit короткими per-analysis claims и
+  private per-resource lock без глобальной блокировки медленных callbacks или
+  filesystem operations. Завершённая ordinary Stage 3 cleanup attempt снимает
+  pre-handoff protection даже при `OSError`, оставляя residue существующему
+  TTL/recovery; unresolved safety и interrupted physical operation продолжают
+  сохранять protection. Domain/API lifecycle не изменён.
+
+### Добавлено
+
+- **[Stage 9 Macro 1/JSONL] Реализована безопасная структурная диагностика
+  Stage 3–8.** Formatter пропускает только утверждённые поля и статические
+  сообщения событий; зарегистрированы identity, terminal failure, handoff,
+  cleanup/recovery, persistence, `FINISHED` и API errors. `request_id` HTTP error
+  совпадает с `api_error`, а сбой emit/handler остаётся secondary side effect и
+  не меняет business outcome.
+
+### Решения
+
+- **[Stage 9/Границы] Stage 9 разделён на четыре Macro и зафиксированы решения
+  `S9-D01`–`S9-D06`.** Macro 1 не вводит filesystem hardening, HTTP body guard,
+  E2E/performance envelope, durable recovery, retry или startup cleanup
+  `.result-*.tmp`; для crash residue определена только безопасная диагностика и
+  ручная maintenance procedure. Stage 9 имеет статус `IN_PROGRESS`, Macro 2 не
+  начат.
+
 ### 2026-09-11
 
 ### Добавлено
