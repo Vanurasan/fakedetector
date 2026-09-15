@@ -1,7 +1,8 @@
-"""Small deterministic legal media fixtures generated without network access."""
+"""Shared deterministic test fixtures that require no network access."""
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from collections.abc import Callable, Iterator
@@ -14,6 +15,41 @@ import pytest
 from PIL import Image
 
 from fakedetector.analyzers._worker import _MultiprocessingSpawnBackend
+
+
+@pytest.fixture
+def directory_symlink_factory() -> Callable[[Path, Path], None]:
+    """Create a directory symlink or skip when the host cannot construct one."""
+
+    def create(link: Path, target: Path) -> None:
+        try:
+            link.symlink_to(target, target_is_directory=True)
+        except OSError:
+            pytest.skip("directory symlink creation is unavailable on this host")
+
+    return create
+
+
+@pytest.fixture
+def directory_junction_factory() -> Callable[[Path, Path], None]:
+    """Create a native Windows junction or skip where junctions are unavailable."""
+    if os.name != "nt":
+        pytest.skip("native directory junctions are specific to Windows")
+
+    def create(link: Path, target: Path) -> None:
+        result = subprocess.run(
+            ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target)],
+            shell=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5.0,
+            check=False,
+        )
+        if result.returncode != 0 or not link.is_junction():
+            pytest.skip("native directory junction creation is unavailable on this host")
+
+    return create
 
 
 @pytest.fixture(autouse=True)

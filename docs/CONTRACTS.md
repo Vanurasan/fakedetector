@@ -635,8 +635,12 @@ terminal task и при graceful shutdown; отдельный daemon или back
 
 Symlink и suspicious/unknown entries не follow и не интерпретируются как trusted
 workspace. Они обрабатываются консервативно, и система не заявляет cleanup
-success без фактического безопасного удаления. Полный TOCTOU/no-follow hardening
-остаётся задачей Stage 9.
+success без фактического безопасного удаления. Stage 9 Macro 2 требует перед
+destructive recovery повторно подтвердить root, direct-child identity и всё
+удаляемое дерево как набор ordinary directories/regular files без symlink,
+junction или иного detectable reparse point. Подозрительный объект остаётся на
+месте и создаёт safe recovery issue; `shutil.rmtree()` и quarantine rename для
+него запрещены.
 
 После `quarantine_ttl_hours` eligible quarantined item получает cleanup attempt
 во время sweep. При success item удаляется. При failure item остаётся в
@@ -909,9 +913,23 @@ Temporary input owner создаёт `runtime/temp/<analysis_id>`, формир�
 выполняет cleanup.
 
 Каталог создаётся с минимально необходимой для текущего локального runtime
-политикой доступа и изолируется от workspace других `analysis_id`. Targeted
-hardening против concurrent path substitution, TOCTOU и reparse hazards
-относится к Stage 9 Macro 2 и не является частью Macro 1.
+политикой доступа и изолируется от workspace других `analysis_id`. Temporary root
+и каждый workspace должны быть ordinary directories без symlink, junction или
+иного detectable reparse point; workspace обязан оставаться точным direct child
+root. Эти инварианты повторно проверяются перед ingest, controlled read/local-path
+callback, cleanup и quarantine. Canonical `source`, если он существует, обязан
+быть ordinary regular file без detectable reparse; suspicious source не
+читается, не удаляется и не помещается в quarantine. Создание source использует
+exclusive create и доступный на платформе `O_NOFOLLOW`; controlled read сверяет
+identity открытого descriptor с проверенным path object.
+
+Новые sensitive directories запрашивают `mode=0o700`; source и временный result
+создаются с stdlib exclusive/private file semantics, а JSONL handler полагается
+на private log directory и стандартную политику создания `logging`. На Windows
+это не является проверкой или гарантией ACL: существующие ACL не переписываются,
+а deployment parent обязан принадлежать и быть writable только доверенным
+account. Stdlib-недоступная проверка ACL является эксплуатационной prerequisite,
+а не подтверждённым runtime invariant.
 
 Успешный внутренний handoff логически содержит:
 
@@ -1188,6 +1206,13 @@ creation/write. Partial или ещё не созданный после сбо�
 регистре и запрещает повторное резервирование той же цели другим ref.
 Точное сравнение компонентов сохраняет допустимые соседние и вложенные пути,
 включая имена с общим текстовым префиксом; идентичность реестра/ref не меняется.
+
+Перед каждым trusted artifact path callback registry повторно подтверждает
+workspace и все уже существующие intermediate parents как ordinary directories
+без detectable reparse, а существующий target — как ordinary regular file.
+Cleanup применяет ту же проверку и не unlink/rmdir suspicious target или parent.
+Enforcement находится на общей artifact capability boundary и не дублируется в
+каждом analyzer/preprocessor.
 
 Для созданных артефактов Stage 5 одной задачи установлен единый внутренний предел
 количества `_MAX_STAGE5_ARTIFACTS = 256`. Производитель аудио вычисляет
@@ -2450,7 +2475,7 @@ external references, ошибки, findings, результаты и метри�
 - `limit <= 0` отклоняется с `ValueError` до обращения к файловой системе;
 - отсутствующий каталог результатов означает пустой список и не создаётся;
 - рассматриваются только непосредственные дочерние обычные файлы без перехода
-  по symlink;
+  по symlink/junction/иному detectable reparse;
 - имя кандидата имеет точный lowercase-вид `<analysis_id>.json`, а
   `analysis_id` проходит те же проверки безопасного компонента пути, что и
   остальные операции repository;
@@ -2496,6 +2521,18 @@ external references, ошибки, findings, результаты и метри�
   зарезервированных имён Windows;
 - существующая прямая символическая ссылка на целевой JSON отклоняется до записи
   временного файла;
+- существующий result root обязан быть ordinary directory без symlink, junction
+  или иного detectable reparse point; его непосредственная значимая lexical
+  parent boundary также проверяется, а отсутствующий root создаётся с
+  `mode=0o700` как stdlib best effort;
+- адресные `get`/`exists` отклоняют safe typed `ResultRepositoryError` как
+  suspicious root, так и symlink/junction/reparse/non-regular target; отсутствие
+  безопасного root/target сохраняет прежнюю семантику `None`/`false`;
+- созданный `.result-*.tmp`, result root и существующий destination повторно
+  проверяются непосредственно перед `os.replace`; temp cleanup не удаляет
+  suspicious residue;
+- regular-file reads открываются после no-follow metadata check и до разбора
+  payload сверяют descriptor identity с проверенным file object;
 - отсутствие прямой записи из анализаторов;
 - безопасное формирование пути;
 - отсутствие исходного мультимедиа в результате;
@@ -3215,6 +3252,13 @@ analysis_failed
 управления `uvicorn.run()`. Событие означает начало серверного запуска, но не
 подтверждает привязку Uvicorn к порту или готовность приложения принимать
 HTTP-запросы. HTTP readiness проверяется отдельно через `GET /health`.
+
+До создания или повторного использования JSONL handler log directory обязан
+быть ordinary non-reparse directory, а существующий canonical log target —
+ordinary non-reparse regular file. Новый каталог создаётся с `mode=0o700` как
+stdlib best effort; открытый handler descriptor сверяется с проверенным target.
+Нарушение является безопасным `RuntimeSetupError`/`LoggingSetupError` без пути и
+raw OS details.
 
 Фактически обязательные diagnostic boundaries Macro 1:
 

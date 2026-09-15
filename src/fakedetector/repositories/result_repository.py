@@ -12,6 +12,13 @@ from typing import Protocol, runtime_checkable
 from pydantic import ValidationError
 from pydantic_core import PydanticSerializationError
 
+from fakedetector._filesystem import (
+    FilesystemSafetyError,
+    ensure_private_directory,
+    open_regular_file_for_read,
+    require_regular_file,
+    require_safe_directory,
+)
 from fakedetector.domain import AnalysisResult, AnalysisResultSummary
 from fakedetector.logging_setup import emit_diagnostic
 
@@ -80,9 +87,8 @@ class JsonFileResultRepository:
         temporary_path: Path | None = None
 
         try:
-            self._result_directory.mkdir(parents=True, exist_ok=True)
-            if target_path.is_symlink():
-                raise OSError("result target is a symbolic link")
+            ensure_private_directory(self._result_directory)
+            require_regular_file(target_path, missing_ok=True)
             with tempfile.NamedTemporaryFile(
                 mode="wb",
                 dir=self._result_directory,
@@ -95,13 +101,18 @@ class JsonFileResultRepository:
                 temporary_file.flush()
                 os.fsync(temporary_file.fileno())
 
+            require_safe_directory(self._result_directory)
+            require_regular_file(temporary_path)
+            require_regular_file(target_path, missing_ok=True)
             os.replace(temporary_path, target_path)
         except OSError:
             raise ResultRepositoryError("Result could not be saved.") from None
         finally:
             if temporary_path is not None:
                 try:
-                    temporary_path.unlink(missing_ok=True)
+                    require_safe_directory(self._result_directory)
+                    if require_regular_file(temporary_path, missing_ok=True):
+                        temporary_path.unlink()
                 except OSError:
                     emit_diagnostic(
                         _LOGGER,
@@ -118,13 +129,17 @@ class JsonFileResultRepository:
         """Read and validate only the expected UTF-8 result JSON file."""
         target_path = self._target_path(analysis_id)
         try:
-            if target_path.is_symlink() or not target_path.is_file():
+            if not require_safe_directory(self._result_directory, missing_ok=True):
                 return None
+            if not require_regular_file(target_path, missing_ok=True):
+                return None
+            source = open_regular_file_for_read(target_path)
         except OSError:
             raise ResultRepositoryError("Stored result could not be read.") from None
 
         try:
-            payload = target_path.read_text(encoding="utf-8")
+            with source:
+                payload = source.read().decode("utf-8")
         except UnicodeError:
             raise CorruptedResultError("Stored result is corrupted or invalid.") from None
         except OSError:
@@ -143,7 +158,10 @@ class JsonFileResultRepository:
         """Check only the expected regular result file for an analysis ID."""
         target_path = self._target_path(analysis_id)
         try:
-            return not target_path.is_symlink() and target_path.is_file()
+            return require_safe_directory(
+                self._result_directory,
+                missing_ok=True,
+            ) and require_regular_file(target_path, missing_ok=True)
         except OSError:
             raise ResultRepositoryError("Stored result could not be read.") from None
 
@@ -153,18 +171,18 @@ class JsonFileResultRepository:
             raise ValueError("limit must be greater than zero")
 
         try:
+            if not require_safe_directory(self._result_directory, missing_ok=True):
+                return []
             entries = list(self._result_directory.iterdir())
-        except FileNotFoundError:
-            return []
         except OSError:
             raise ResultRepositoryError("Stored results could not be listed.") from None
 
         summaries: list[AnalysisResultSummary] = []
         for entry in entries:
             try:
-                is_candidate_file = not entry.is_symlink() and entry.is_file()
-            except OSError:
-                raise ResultRepositoryError("Stored results could not be listed.") from None
+                is_candidate_file = require_regular_file(entry, missing_ok=True)
+            except FilesystemSafetyError:
+                continue
             if not is_candidate_file or entry.suffix != ".json":
                 continue
 
@@ -177,7 +195,10 @@ class JsonFileResultRepository:
                 continue
 
             try:
-                payload = entry.read_text(encoding="utf-8")
+                require_safe_directory(self._result_directory)
+                source = open_regular_file_for_read(entry)
+                with source:
+                    payload = source.read().decode("utf-8")
             except UnicodeError:
                 continue
             except OSError:

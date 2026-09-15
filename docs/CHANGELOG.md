@@ -340,6 +340,22 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-15
+
+### Исправлено
+
+- **[Stage 9 Macro 2/Filesystem] Реализован targeted runtime-root и reparse
+  hardening.** Sensitive temp/quarantine/result/log roots, direct workspace,
+  source, result/log targets и artifact parents теперь проверяются на ordinary
+  object type, symlink, junction и detectable Windows reparse point в безопасных
+  checkpoints. Janitor и quarantine retain/report suspicious objects до
+  `shutil.rmtree()`/rename; result repository сохраняет atomic same-directory
+  write, дополнительно проверяя root/temp/destination и descriptor identity.
+  Новые directories запрашивают private stdlib mode, существующие ACL не
+  переписываются; Windows ACL isolation и residual hostile-same-account races
+  честно зафиксированы как deployment prerequisite/ограничение без pywin32,
+  новых dependencies, config или domain schema.
+
 ### 2026-09-14
 
 ### Исправлено

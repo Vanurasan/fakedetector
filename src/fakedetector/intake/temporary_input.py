@@ -14,6 +14,15 @@ from pathlib import Path, PureWindowsPath
 from threading import RLock
 from typing import BinaryIO, Literal, Protocol, TypeVar
 
+from fakedetector._filesystem import (
+    ensure_private_directory,
+    open_regular_file_for_read,
+    require_direct_child_directory,
+    require_missing_path,
+    require_regular_file,
+    require_safe_tree,
+)
+
 _SOURCE_NAME = "source"
 _DEFAULT_CHUNK_SIZE = 64 * 1024
 _SYSTEM_ANALYSIS_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -246,8 +255,9 @@ class LocalTemporaryInputOwner:
             self._pre_handoff_analysis_ids.add(analysis_id)
 
         try:
-            self._root_path.mkdir(mode=0o700, parents=True, exist_ok=True)
+            ensure_private_directory(self._root_path)
             workspace_path.mkdir(mode=0o700, exist_ok=False)
+            require_direct_child_directory(self._root_path, workspace_path)
         except OSError:
             with self._ownership_lock:
                 self._pre_handoff_analysis_ids.remove(analysis_id)
@@ -320,7 +330,8 @@ class LocalTemporaryInputOwner:
         """Open an active controlled source without exposing its filesystem path."""
         self._require_active_handle(owned_source)
         try:
-            source = owned_source._resource.source_path.open("rb")
+            self._require_resource_workspace(owned_source._resource)
+            source = open_regular_file_for_read(owned_source._resource.source_path)
         except OSError:
             raise IntakeSystemError("controlled_source_read") from None
 
@@ -334,6 +345,11 @@ class LocalTemporaryInputOwner:
     ) -> _OperationResult:
         """Run a trusted seekable-file operation without publishing the source path."""
         self._require_active_handle(owned_source)
+        try:
+            self._require_resource_workspace(owned_source._resource)
+            require_regular_file(owned_source._resource.source_path)
+        except OSError:
+            raise IntakeSystemError("controlled_source_read") from None
         return trusted_operation(owned_source._resource.source_path)
 
     def transfer(self, owned_source: OwnedSource) -> AcceptedSource:
@@ -410,9 +426,12 @@ class LocalTemporaryInputOwner:
 
             original_file_deleted = False
             try:
+                self._require_resource_workspace(resource)
+                require_regular_file(resource.source_path, missing_ok=True)
                 resource.source_path.unlink(missing_ok=True)
                 original_file_deleted = True
                 with suppress(FileNotFoundError):
+                    require_direct_child_directory(self._root_path, resource.workspace_path)
                     resource.workspace_path.rmdir()
             except OSError:
                 self._finish_pre_handoff_cleanup_attempt(resource.analysis_id)
@@ -453,10 +472,8 @@ class LocalTemporaryInputOwner:
                 resource.state = "released"
                 self._finish_pre_handoff_cleanup_attempt(resource.analysis_id)
                 return
-            if quarantine_root.is_symlink() or not quarantine_root.is_dir():
-                raise OSError
-            if workspace_path.is_symlink() or not workspace_path.is_dir():
-                raise OSError
+            require_direct_child_directory(quarantine_root, workspace_path)
+            require_safe_tree(workspace_path)
             shutil.rmtree(workspace_path)
         except OSError:
             try:
@@ -498,16 +515,13 @@ class LocalTemporaryInputOwner:
                 raise TemporaryInputQuarantineError()
 
             try:
-                if workspace_path.is_symlink() or not workspace_path.is_dir():
-                    raise TemporaryInputQuarantineError()
-                if quarantine_root.exists():
-                    if quarantine_root.is_symlink() or not quarantine_root.is_dir():
-                        raise TemporaryInputQuarantineError()
-                else:
-                    quarantine_root.mkdir()
-                if destination.exists() or destination.is_symlink():
-                    raise TemporaryInputQuarantineError()
+                require_direct_child_directory(self._root_path, workspace_path)
+                require_safe_tree(workspace_path)
+                ensure_private_directory(quarantine_root)
+                require_missing_path(destination)
                 workspace_path.rename(destination)
+                require_direct_child_directory(quarantine_root, destination)
+                require_safe_tree(destination)
             except TemporaryInputQuarantineError:
                 raise
             except OSError:
@@ -546,8 +560,16 @@ class LocalTemporaryInputOwner:
         return workspace_path
 
     def _open_output(self, owned_source: OwnedSource) -> int:
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+        flags = (
+            os.O_CREAT
+            | os.O_EXCL
+            | os.O_WRONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
         try:
+            self._require_resource_workspace(owned_source._resource)
+            require_regular_file(owned_source._resource.source_path, missing_ok=True)
             return os.open(owned_source._resource.source_path, flags, 0o600)
         except OSError:
             raise IntakeSystemError("output_open") from None
@@ -572,3 +594,16 @@ class LocalTemporaryInputOwner:
         self._require_own_handle(owned_source)
         if not owned_source._active or owned_source._resource.state == "released":
             raise IntakeSystemError("ownership")
+
+    def _require_resource_workspace(self, resource: _OwnedResource) -> None:
+        if resource.state == "quarantined":
+            root = self._root_path.parent / "quarantine"
+        else:
+            root = self._root_path
+        expected_workspace = root / resource.analysis_id
+        if (
+            resource.workspace_path != expected_workspace
+            or resource.source_path != expected_workspace / _SOURCE_NAME
+        ):
+            raise IntakeSystemError("ownership")
+        require_direct_child_directory(root, resource.workspace_path)

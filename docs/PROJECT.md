@@ -1719,6 +1719,24 @@ roots создаются максимально приватно средств�
 отказом. ACL, которые stdlib нельзя надёжно проверить, являются deployment
 prerequisite.
 
+Sensitive runtime roots local MVP — temporary storage, sibling quarantine,
+result repository и каталог JSONL logs; direct workspace каждого `analysis_id`
+является owned child temporary/quarantine root, а отдельного artifact storage root
+нет. Runtime проверяет эти объекты и их непосредственную значимую lexical parent
+boundary через stdlib metadata и отклоняет обычный файл вместо directory,
+symlink, junction и иной detectable Windows reparse point. Destructive recovery
+работает консервативно: подозрительный workspace или элемент quarantine
+сохраняется и получает safe diagnostic, а не передаётся в `shutil.rmtree()`.
+
+Проверки выполняются в узких checkpoints перед open/write/replace/rename/delete
+и подтверждают identity открытого regular file descriptor там, где stdlib это
+позволяет. Это устраняет avoidable application-owned check/use gaps, но не
+является полной Win32 handle-based/no-follow архитектурой и не обещает устранение
+всех races с hostile process той же Windows account. На Windows `mode=0o700` и
+`mode=0o600` являются best effort; фактическая изоляция ACL наследуется от
+deployment parent, который должен принадлежать и быть writable только доверенным
+account согласно эксплуатационной политике.
+
 Macro 3 установит transport boundary как максимум настроенных image/audio/video
 лимитов плюс 1 MiB multipart envelope, с подсчётом фактических байтов, ответом
 `413` до регистрации анализа и использованием

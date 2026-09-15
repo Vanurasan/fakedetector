@@ -969,9 +969,11 @@ def test_artifact_registry_rejects_windows_alias_before_write(
 
     assert registry.cleanup_obligations() == (workspace / original,)
     assert not workspace.exists()
+    workspace.mkdir()
     assert (
         registry.with_local_artifact_path(original_ref, lambda path: path) == workspace / original
     )
+    workspace.rmdir()
     # A rejected target must not consume the ID or create a cleanup obligation.
     registry.register("alias", "distinct.png")
     assert registry.cleanup_once().completed
@@ -1066,6 +1068,35 @@ def test_artifact_obligation_survives_failure_during_physical_creation(tmp_path:
     assert registry.cleanup_obligations() == (artifact,)
     assert registry.cleanup_once().completed
     assert not artifact.exists()
+
+
+def test_artifact_registry_rejects_substituted_intermediate_symlink(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    frames = workspace / "frames"
+    try:
+        frames.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlink creation is unavailable on this host")
+    registry = WorkspaceArtifactRegistry(workspace)
+    artifact_ref = registry.register("frame", "frames/output.png")
+
+    with pytest.raises(ArtifactRegistrationError):
+        registry.with_local_artifact_path(
+            artifact_ref,
+            lambda path: path.write_bytes(b"unsafe"),
+        )
+
+    assert frames.is_symlink()
+    assert sentinel.read_bytes() == b"outside"
+    assert not (outside / "output.png").exists()
+    assert not registry.cleanup_once().completed
 
 
 def test_preconfirmation_missing_route_rolls_back_and_stage3_cleans(

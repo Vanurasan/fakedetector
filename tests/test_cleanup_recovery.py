@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -1282,6 +1283,62 @@ def test_suspicious_entries_are_retained_and_symlink_is_not_followed(tmp_path: P
     assert outside_file.read_bytes() == b"keep"
     assert len(result.issues) == 3
     assert all(issue.analysis_id is None for issue in result.issues)
+
+
+def test_stale_junction_workspace_is_retained_without_following_target(
+    tmp_path: Path,
+    directory_junction_factory: Callable[[Path, Path], None],
+) -> None:
+    root = tmp_path / "temp"
+    root.mkdir()
+    analysis_id = "1" * 32
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    junction = root / analysis_id
+    directory_junction_factory(junction, outside)
+
+    result = WorkspaceJanitor(
+        config=make_config(root).temporary_storage,
+        clock=authoritative_clock(),
+        registry=TaskRegistry(),
+        temporary_input_owner=LocalTemporaryInputOwner(root),
+    ).sweep()
+
+    assert junction.is_junction()
+    assert sentinel.read_bytes() == b"outside"
+    assert result.workspaces_deleted == ()
+    assert result.workspaces_quarantined == ()
+    assert [issue.code for issue in result.issues] == ["workspace_entry_unsafe"]
+
+
+def test_suspicious_quarantine_symlink_is_retained_without_following_target(
+    tmp_path: Path,
+    directory_symlink_factory: Callable[[Path, Path], None],
+) -> None:
+    root = tmp_path / "temp"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    analysis_id = "2" * 32
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    link = quarantine / analysis_id
+    directory_symlink_factory(link, outside)
+
+    result = WorkspaceJanitor(
+        config=make_config(root).temporary_storage,
+        clock=authoritative_clock(),
+        registry=TaskRegistry(),
+        temporary_input_owner=LocalTemporaryInputOwner(root),
+    ).sweep()
+
+    assert link.is_symlink()
+    assert sentinel.read_bytes() == b"outside"
+    assert result.quarantine_deleted == ()
+    assert [issue.code for issue in result.issues] == ["quarantine_entry_unsafe"]
 
 
 def test_scheduler_invokes_startup_post_terminal_and_shutdown_sweeps(

@@ -115,9 +115,9 @@ AFTER_MVP
 Статус Stage 8: DONE / CLOSED
 Следующий этап: Этап 9 — Надёжность, безопасность и сквозные тесты
 Статус Stage 9: IN_PROGRESS
-Ближайшее действие: owner review реализации Stage 9 Macro 1; Macro 2 не начат
+Ближайшее действие: owner review реализации Stage 9 Macro 2
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–8 завершены; Stage 9 Macro 1 реализован и ожидает owner review; Macro 2–4 не начаты
+Реализация программы: Этапы 1–8 завершены; Stage 9 Macro 1 завершён и committed at `ad6050c`; Macro 2 реализован и ожидает owner review; Macro 3–4 не начаты
 Документационная база: сформирована
 ```
 
@@ -154,7 +154,7 @@ AFTER_MVP
 | 6 | Базовые анализаторы и формирование признаков | DONE | Реальные нормализованные признаки |
 | 7 | Полнота, риск и рекомендации | DONE | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | DONE | Реализация и независимые аудиты завершены; этап закрыт |
-| 9 | Надёжность, безопасность и сквозные тесты | IN_PROGRESS | Macro 1 реализован; Macro 2–4 не начаты |
+| 9 | Надёжность, безопасность и сквозные тесты | IN_PROGRESS | Macro 1 завершён; Macro 2 реализован pending owner review; Macro 3–4 не начаты |
 | 10 | Сборка и демонстрация MVP | NOT_STARTED | Воспроизводимый прототип |
 | 11+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
 
@@ -1491,15 +1491,20 @@ Quality barrier closure audit: `1687 passed, 3 skipped`, coverage `90%`;
 
 ## Декомпозиция Stage 9
 
-- [x] Macro 1 — lifecycle safety и JSONL diagnostics: cleanup safety barrier
+- [x] Macro 1 — DONE / committed at `ad6050c`: lifecycle safety и JSONL diagnostics: cleanup safety barrier
   Stage 3, per-analysis pre-handoff coordination с janitor, безопасные
   диагностические события и `request_id` correlation; findings `S9-M1-R01` и
-  `S9-M1-R02` устранены, реализация завершена и ожидает owner review;
-- [ ] Macro 2 — targeted filesystem TOCTOU/reparse и runtime-root hardening;
-- [ ] Macro 3 — HTTP multipart body limit и receive/parse deadline;
-- [ ] Macro 4 — Profile B E2E, измерения и performance/resource envelope.
+  `S9-M1-R02` устранены;
+- [x] Macro 2 — targeted filesystem TOCTOU/reparse и runtime-root hardening
+  реализован pending owner review: sensitive roots/direct workspace проверяются
+  на symlink/junction/detectable reparse, destructive recovery retained/reports
+  suspicious objects, а private runtime ACL остаётся documented deployment
+  prerequisite stdlib/Windows;
+- [ ] Macro 3 — NOT STARTED: HTTP multipart body limit и receive/parse deadline;
+- [ ] Macro 4 — NOT STARTED: Profile B E2E, измерения и performance/resource envelope.
 
-Macro 2–4 не входят в Macro 1 и не начаты.
+Macro 2 не входит в Macro 1 и реализован pending owner review. Macro 3–4 не
+начаты.
 
 ## Зафиксированные owner decisions
 
@@ -1537,8 +1542,8 @@ Macro 2–4 не входят в Macro 1 и не начаты.
 
 ### Безопасность
 
-- [ ] проверить path traversal;
-- [ ] проверить и усилить runtime storage против concurrent symlink
+- [x] проверить path traversal в sensitive runtime ownership boundaries;
+- [x] проверить и усилить runtime storage против concurrent symlink
   substitution / TOCTOU, включая descriptor-based/no-follow подход при
   необходимости;
 - [ ] проверить command injection для FFmpeg;
@@ -1546,7 +1551,8 @@ Macro 2–4 не входят в Macro 1 и не начаты.
 - [x] проверить отсутствие секретов и private payload в JSONL Macro 1;
 - [ ] проверить отсутствие runtime в Git;
 - [ ] проверить MIME/signature mismatch;
-- [ ] ограничить доступ к runtime;
+- [x] ограничить доступ к новым runtime roots средствами stdlib и зафиксировать
+  Windows ACL deployment prerequisite;
 - [ ] проверить токен API;
 - [ ] проверить CSRF при cookie-аутентификации WebUI, если она выбрана.
 

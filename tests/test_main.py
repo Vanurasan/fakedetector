@@ -405,9 +405,9 @@ def test_yaml_directory_log_target_exits_safely_before_application_start(
         result = main_module.main(["--config", str(config_path)])
         captured = capsys.readouterr()
 
-        assert result == 4
+        assert result == 3
         assert captured.out == ""
-        assert captured.err == "Logging initialization failed.\n"
+        assert captured.err == "Runtime initialization failed.\n"
         assert str(log_target) not in captured.err
         assert foreign_stream.getvalue() == ""
     finally:

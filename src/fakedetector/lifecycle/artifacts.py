@@ -8,6 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path, PurePath, PureWindowsPath
 from typing import TypeVar
 
+from fakedetector._filesystem import (
+    require_relative_directory,
+    require_relative_file_target,
+    require_safe_directory,
+)
+
 _SAFE_ID = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _SAFE_COMPONENT = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$")
 _OperationResult = TypeVar("_OperationResult")
@@ -90,7 +96,12 @@ class WorkspaceArtifactRegistry:
     ) -> _OperationResult:
         """Run one trusted operation for an active registered artifact target."""
         artifact_id = self._require_active_ref(artifact_ref)
-        return trusted_operation(self._obligations[artifact_id])
+        target = self._obligations[artifact_id]
+        try:
+            require_relative_file_target(self._workspace_path, target, missing_ok=True)
+        except OSError:
+            raise ArtifactRegistrationError from None
+        return trusted_operation(target)
 
     def cleanup_obligations(self) -> tuple[Path, ...]:
         """Return deterministic internal paths for lifecycle-owned cleanup."""
@@ -100,12 +111,29 @@ class WorkspaceArtifactRegistry:
         """Attempt each registered file exactly once without following directories."""
         completed = True
         parent_directories = set(self._pending_directories)
+        try:
+            workspace_exists = require_safe_directory(
+                self._workspace_path,
+                missing_ok=True,
+            )
+        except OSError:
+            return ArtifactCleanupOutcome(completed=False)
+        if not workspace_exists:
+            self._completed.update(self._obligations)
+            self._pending_directories.clear()
+            return ArtifactCleanupOutcome(completed=True)
         for artifact_id in sorted(self._obligations):
             if artifact_id in self._completed:
                 continue
             path = self._obligations[artifact_id]
             try:
-                path.unlink(missing_ok=True)
+                exists = require_relative_file_target(
+                    self._workspace_path,
+                    path,
+                    missing_ok=True,
+                )
+                if exists:
+                    path.unlink()
                 self._completed.add(artifact_id)
                 parent_directories.update(
                     parent
@@ -116,6 +144,13 @@ class WorkspaceArtifactRegistry:
                 completed = False
         for directory in sorted(parent_directories, key=lambda path: len(path.parts), reverse=True):
             try:
+                if not require_relative_directory(
+                    self._workspace_path,
+                    directory,
+                    missing_ok=True,
+                ):
+                    self._pending_directories.discard(directory)
+                    continue
                 directory.rmdir()
             except FileNotFoundError:
                 self._pending_directories.discard(directory)

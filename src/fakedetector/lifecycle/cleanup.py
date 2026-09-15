@@ -13,6 +13,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Lock
 
+from fakedetector._filesystem import (
+    ensure_private_directory,
+    require_direct_child_directory,
+    require_missing_path,
+    require_safe_directory,
+    require_safe_tree,
+)
 from fakedetector.config.models import TemporaryStorageConfig
 from fakedetector.core import AuthoritativeLifecycleClock
 from fakedetector.core.clock import AuthoritativeClockError
@@ -320,6 +327,8 @@ class WorkspaceJanitor:
     @staticmethod
     def _remove_quarantine(entry: Path) -> bool:
         try:
+            require_direct_child_directory(entry.parent, entry)
+            require_safe_tree(entry)
             shutil.rmtree(entry)
         except OSError:
             return False
@@ -328,6 +337,8 @@ class WorkspaceJanitor:
     def _recover_workspace(self, entry: Path, analysis_id: str) -> str:
         for _attempt in range(1 + self._config.cleanup_retries):
             try:
+                require_direct_child_directory(self._root, entry)
+                require_safe_tree(entry)
                 shutil.rmtree(entry)
             except OSError:
                 continue
@@ -345,26 +356,22 @@ class WorkspaceJanitor:
         destination = self._quarantine_root / analysis_id
         if entry.parent != self._root or destination.parent != self._quarantine_root:
             raise OSError
-        if self._quarantine_root.exists():
-            if self._quarantine_root.is_symlink() or not self._quarantine_root.is_dir():
-                raise OSError
-        else:
-            self._quarantine_root.mkdir()
-        if destination.exists() or destination.is_symlink():
-            raise OSError
+        require_direct_child_directory(self._root, entry)
+        require_safe_tree(entry)
+        ensure_private_directory(self._quarantine_root)
+        require_missing_path(destination)
         entry.rename(destination)
+        require_direct_child_directory(self._quarantine_root, destination)
+        require_safe_tree(destination)
         timestamp = self._clock.now().timestamp()
         with suppress(OSError):
             os.utime(destination, (timestamp, timestamp))
 
     @staticmethod
     def _safe_entries(root: Path, issues: list[SweepIssue], code: str) -> tuple[Path, ...]:
-        if not root.exists():
-            return ()
-        if root.is_symlink() or not root.is_dir():
-            issues.append(SweepIssue(None, code))
-            return ()
         try:
+            if not require_safe_directory(root, missing_ok=True):
+                return ()
             return tuple(sorted(root.iterdir(), key=lambda entry: entry.name))
         except OSError:
             issues.append(SweepIssue(None, code))
@@ -372,11 +379,14 @@ class WorkspaceJanitor:
 
     @staticmethod
     def _trusted_directory(entry: Path, analysis_id: str) -> bool:
-        return (
-            _SYSTEM_ANALYSIS_ID.fullmatch(analysis_id) is not None
-            and not entry.is_symlink()
-            and entry.is_dir()
-        )
+        if _SYSTEM_ANALYSIS_ID.fullmatch(analysis_id) is None:
+            return False
+        try:
+            require_direct_child_directory(entry.parent, entry)
+            require_safe_tree(entry)
+        except OSError:
+            return False
+        return True
 
     @staticmethod
     def _expired(entry: Path, now: datetime, ttl: timedelta) -> bool | None:

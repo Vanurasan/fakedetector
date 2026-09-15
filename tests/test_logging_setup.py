@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import traceback
+from collections.abc import Callable
 from io import StringIO
 from pathlib import Path
 
@@ -74,7 +75,13 @@ def test_mkdir_oserror_preserves_foreign_handlers(
     application_logger.addHandler(foreign_handler)
     log_path = tmp_path / "private" / "application.jsonl"
 
-    def fail_mkdir(self: Path, *, parents: bool, exist_ok: bool) -> None:
+    def fail_mkdir(
+        self: Path,
+        mode: int = 0o777,
+        *,
+        parents: bool,
+        exist_ok: bool,
+    ) -> None:
         raise OSError("unsafe directory detail")
 
     monkeypatch.setattr(Path, "mkdir", fail_mkdir)
@@ -128,3 +135,67 @@ def test_partially_configured_handler_is_closed_and_not_registered(
     assert len(created_handlers) == 1
     assert created_handlers[0] not in application_logger.handlers
     assert created_handlers[0].stream is None
+
+
+def test_symlink_log_parent_is_rejected_without_external_write(
+    tmp_path: Path,
+    directory_symlink_factory: Callable[[Path, Path], None],
+    application_logger: logging.Logger,
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    log_directory = tmp_path / "logs"
+    directory_symlink_factory(log_directory, outside)
+
+    with pytest.raises(LoggingSetupError, match="^Logging initialization failed\\.$"):
+        configure_logging(
+            LoggingConfig(jsonl_path=str(log_directory / "application.jsonl"))
+        )
+
+    assert sentinel.read_bytes() == b"outside"
+    assert not (outside / "application.jsonl").exists()
+
+
+def test_symlink_log_target_is_rejected_without_external_overwrite(
+    tmp_path: Path,
+    application_logger: logging.Logger,
+) -> None:
+    log_directory = tmp_path / "logs"
+    log_directory.mkdir()
+    outside = tmp_path / "outside.jsonl"
+    outside.write_bytes(b"outside")
+    log_path = log_directory / "application.jsonl"
+    try:
+        log_path.symlink_to(outside)
+    except OSError:
+        pytest.skip("file symlink creation is unavailable on this host")
+
+    with pytest.raises(LoggingSetupError, match="^Logging initialization failed\\.$"):
+        configure_logging(LoggingConfig(jsonl_path=str(log_path)))
+
+    assert log_path.is_symlink()
+    assert outside.read_bytes() == b"outside"
+
+
+def test_junction_log_parent_is_rejected_without_external_write(
+    tmp_path: Path,
+    directory_junction_factory: Callable[[Path, Path], None],
+    application_logger: logging.Logger,
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    log_directory = tmp_path / "logs"
+    directory_junction_factory(log_directory, outside)
+
+    with pytest.raises(LoggingSetupError, match="^Logging initialization failed\\.$"):
+        configure_logging(
+            LoggingConfig(jsonl_path=str(log_directory / "application.jsonl"))
+        )
+
+    assert log_directory.is_junction()
+    assert sentinel.read_bytes() == b"outside"
+    assert not (outside / "application.jsonl").exists()

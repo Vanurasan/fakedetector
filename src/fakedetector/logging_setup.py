@@ -11,6 +11,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from fakedetector._filesystem import (
+    ensure_private_directory,
+    require_file_descriptor_identity,
+    require_regular_file,
+    require_safe_directory,
+)
 from fakedetector.config.models import LoggingConfig
 
 _LOGGER_NAME = "fakedetector"
@@ -230,7 +236,8 @@ def configure_logging(config: LoggingConfig) -> logging.Logger:
     try:
         logger.setLevel(config.level)
         log_path = Path(config.jsonl_path)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_directory(log_path.parent)
+        require_regular_file(log_path, missing_ok=True)
         handler = _remove_configured_handlers(
             logger,
             str(log_path),
@@ -248,15 +255,28 @@ def configure_logging(config: LoggingConfig) -> logging.Logger:
             new_handler.setFormatter(_JsonlFormatter())
             setattr(new_handler, _HANDLER_MARKER, True)
             logger.addHandler(new_handler)
+            handler = new_handler
         else:
             handler.setLevel(logging.NOTSET)
             handler.setFormatter(_JsonlFormatter())
+        require_safe_directory(log_path.parent)
+        require_regular_file(log_path)
+        if handler.stream is None:
+            raise OSError
+        require_file_descriptor_identity(log_path, handler.stream.fileno())
     except (OSError, ValueError):
         setup_failed = True
 
     if setup_failed:
+        for configured_handler in list(logger.handlers):
+            if not getattr(configured_handler, _HANDLER_MARKER, False):
+                continue
+            logger.removeHandler(configured_handler)
+            with suppress(OSError):
+                configured_handler.close()
+            if configured_handler is new_handler:
+                new_handler = None
         if new_handler is not None:
-            logger.removeHandler(new_handler)
             with suppress(OSError):
                 new_handler.close()
         raise LoggingSetupError() from None
