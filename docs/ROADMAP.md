@@ -115,9 +115,9 @@ AFTER_MVP
 Статус Stage 8: DONE / CLOSED
 Следующий этап: Этап 9 — Надёжность, безопасность и сквозные тесты
 Статус Stage 9: IN_PROGRESS
-Ближайшее действие: owner review реализации Stage 9 Macro 3
+Ближайшее действие: owner review реализации Stage 9 Macro 4, затем отдельный independent final audit
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–8 завершены; Stage 9 Macro 1 committed at `ad6050c`; Macro 2 committed at `4e4ba3c`; Macro 3 реализован pending owner review; Macro 4 не начат
+Реализация программы: Этапы 1–8 завершены; Stage 9 Macro 1 committed at `ad6050c`; Macro 2 committed at `4e4ba3c`; Macro 3 committed at `bddcedb`; Macro 4 реализован pending owner review
 Документационная база: сформирована
 ```
 
@@ -154,7 +154,7 @@ AFTER_MVP
 | 6 | Базовые анализаторы и формирование признаков | DONE | Реальные нормализованные признаки |
 | 7 | Полнота, риск и рекомендации | DONE | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | DONE | Реализация и независимые аудиты завершены; этап закрыт |
-| 9 | Надёжность, безопасность и сквозные тесты | IN_PROGRESS | Macro 1–2 committed; Macro 3 реализован pending owner review; Macro 4 не начат |
+| 9 | Надёжность, безопасность и сквозные тесты | IN_PROGRESS | Macro 1–3 committed; Macro 4 реализован pending owner review и independent final audit |
 | 10 | Сборка и демонстрация MVP | NOT_STARTED | Воспроизводимый прототип |
 | 11+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
 
@@ -1476,8 +1476,8 @@ Macro 1 и Macro 2 реализованы и покрыты контрактны
 завершены; независимый финальный аудит выполнен, findings `S8-A01`, `S8-A02` и
 `S8-A03` исправлены в remediation commit `7093922`. Post-remediation independent
 closure audit завершён с `PASS`, новых findings нет. Stage 8 имеет статус
-`DONE / CLOSED`; Stage 9 имеет статус `IN_PROGRESS`, Macro 3 реализован pending
-owner review.
+`DONE / CLOSED`; Stage 9 имеет статус `IN_PROGRESS`, Macro 1–3 committed, Macro 4
+реализован pending owner review и independent final audit.
 
 Quality barrier closure audit: `1687 passed, 3 skipped`, coverage `90%`;
 `ruff`, `mypy`, `pre-commit`, lock, CLI/import и `git diff --check` — `PASS`.
@@ -1501,12 +1501,15 @@ Quality barrier closure audit: `1687 passed, 3 skipped`, coverage `90%`;
   на symlink/junction/detectable reparse, destructive recovery retained/reports
   suspicious objects, а private runtime ACL остаётся documented deployment
   prerequisite stdlib/Windows;
-- [x] Macro 3 — реализован pending owner review: bounded actual HTTP multipart
+- [x] Macro 3 — DONE / committed at `bddcedb`: bounded actual HTTP multipart
   body, receive/parse deadline, strict multipart structure и FFmpeg/process
   security;
-- [ ] Macro 4 — NOT STARTED: Profile B E2E, измерения и performance/resource envelope.
+- [x] Macro 4 — IMPLEMENTED / pending owner review: Profile B full-path E2E,
+  restart/failure/security/concurrency/shutdown proof и измеренный
+  performance/resource envelope.
 
-Macro 1–2 committed. Macro 3 реализован pending owner review. Macro 4 не начат.
+Macro 1–3 committed. Macro 4 реализован pending owner review. Stage 9 остаётся
+`IN_PROGRESS` до owner review и отдельного independent final audit.
 
 ## Зафиксированные owner decisions
 
@@ -1533,14 +1536,14 @@ Macro 1–2 committed. Macro 3 реализован pending owner review. Macro 
 
 ### Ошибки
 
-- [ ] классифицировать ошибки;
-- [ ] обеспечить безопасные пользовательские сообщения;
+- [x] классифицировать ошибки;
+- [x] обеспечить безопасные пользовательские сообщения;
 - [x] сохранять утверждённую Macro 1 диагностику в JSONL;
-- [ ] проверить частичный сбой;
-- [ ] проверить системный сбой;
-- [ ] проверить timeout;
-- [ ] проверить сбой сохранения;
-- [ ] проверить сбой очистки.
+- [x] проверить частичный сбой;
+- [x] проверить системный сбой;
+- [x] проверить timeout;
+- [x] проверить сбой сохранения;
+- [x] проверить сбой очистки.
 
 ### Безопасность
 
@@ -1551,33 +1554,91 @@ Macro 1–2 committed. Macro 3 реализован pending owner review. Macro 
 - [x] проверить command/option injection и protocol abuse для FFmpeg/ffprobe;
 - [x] ограничить subprocess time/output и HTTP body receive/parse;
 - [x] проверить отсутствие секретов и private payload в JSONL Macro 1;
-- [ ] проверить отсутствие runtime в Git;
-- [ ] проверить MIME/signature mismatch;
+- [x] проверить отсутствие runtime в Git;
+- [x] проверить MIME/signature mismatch;
 - [x] ограничить доступ к новым runtime roots средствами stdlib и зафиксировать
   Windows ACL deployment prerequisite;
-- [ ] проверить токен API;
-- [ ] проверить CSRF при cookie-аутентификации WebUI, если она выбрана.
+- [x] проверить токен API;
+- [x] проверить CSRF при cookie-аутентификации WebUI, если она выбрана.
 
 ### Сквозные сценарии
 
-- [ ] валидное изображение;
-- [ ] валидное аудио;
-- [ ] валидное видео;
-- [ ] отклонённый файл;
-- [ ] один анализатор ошибся;
-- [ ] несколько анализаторов недоступны;
-- [ ] insufficient completeness;
-- [ ] ошибка очистки;
-- [ ] повторный запрос результата;
-- [ ] параллельные задачи в пределах лимита.
+- [x] валидное изображение;
+- [x] валидное аудио;
+- [x] валидное видео;
+- [x] отклонённый файл;
+- [x] один анализатор ошибся;
+- [x] несколько анализаторов недоступны;
+- [x] insufficient completeness;
+- [x] ошибка очистки;
+- [x] повторный запрос результата;
+- [x] параллельные задачи в пределах лимита.
 
 ### Производительность
 
-- [ ] измерить время базовых сценариев;
-- [ ] измерить память для видео;
-- [ ] проверить отсутствие загрузки крупного видео целиком;
-- [ ] проверить очередь при нескольких задачах;
-- [ ] откорректировать EXAMPLE-лимиты по результатам.
+- [x] измерить время базовых сценариев;
+- [x] измерить память для видео;
+- [x] проверить отсутствие загрузки крупного видео целиком;
+- [x] проверить очередь при нескольких задачах;
+- [x] проверить необходимость корректировки EXAMPLE-лимитов по результатам:
+  `DEFERRED_WITH_REASON` — informational baseline малых deterministic fixtures
+  не обосновывает изменение deployment limits или введение SLA.
+
+## Macro 4 — фактическая E2E-матрица
+
+| Media | Fixture | Активные analyzers | Ожидаемый итог | Внешний путь | Persistence/restart |
+|---|---|---|---|---|---|
+| image | generated seeded copy-move PNG 512×512 | `image_metadata_consistency`, `image_copy_move_correspondence` | `completed`, findings, complete risk/recommendation | API и representative WebUI | persisted result; отдельный restart proof |
+| audio | generated PCM WAV 8 kHz с bounded saturation observations | `audio_pcm_quality` | `completed`, finding, complete risk/recommendation | API | persisted result |
+| video | generated MP4 64×64, 2 fps, repeated frames, 3.2 s | `video_sampled_frame_quality` | `completed`, finding, complete risk/recommendation | API | persisted result |
+
+Full-path тесты используют настоящий `create_app`, production composition,
+Stage 3 validation, scheduler/registry, Stages 5–7, финализатор,
+`JsonFileResultRepository`, API/WebUI и временные каталоги pytest. Отдельно
+проверены restart без старого `TaskRegistry`, Stage 3 mismatch, media-tool
+infrastructure failure, persistence failure без retry/ложного `FINISHED`, cleanup
+residue, auth/body guards assembled app, одновременные image-задачи и graceful
+shutdown со startup/shutdown sweep.
+
+## Macro 4 — классификация оставшегося checklist
+
+| Область | Классификация | Основание |
+|---|---|---|
+| Error taxonomy, safe messages, partial/timeout/insufficient paths | VERIFIED | существующие Stage 5/7 targeted tests и новые full-path terminal tests |
+| System, persistence и cleanup failures | IMPLEMENTED | representative deterministic E2E через production boundaries |
+| Runtime not in Git | VERIFIED | `.gitignore`, `git ls-files` и итоговый status проверяются barrier |
+| MIME/signature mismatch и API token | VERIFIED | assembled-app E2E плюс targeted transport/auth tests |
+| WebUI CSRF | NOT_APPLICABLE | cookie/session architecture не выбрана; строгий same-origin guard проверен |
+| Bounded deterministic behavior | VERIFIED | artifact/process/body limits, Profile B E2E и measurement sanity |
+| OS CPU/RAM hard quotas | DEFERRED_WITH_REASON | `S9-D06`: вне local MVP и Stage 9 |
+| Изменение EXAMPLE deployment limits | DEFERRED_WITH_REASON | получен informational reference baseline, но нет данных для нормативной коррекции |
+
+## Macro 4 — reference measurement 2026-09-16
+
+Команда воспроизведения:
+
+```powershell
+uv run python scripts/measure_stage9_profile_b.py --runs 3
+```
+
+Среда: Windows 11 `10.0.26200`, AMD64, Python 3.12.10,
+Intel64 Family 6 Model 198 Stepping 2, 24 logical CPU. Каждый media run выполнен
+в свежем process; wallclock охватывает scheduler start, полный application
+workflow, persisted result retrieval и graceful shutdown.
+
+| Media | Fixture bytes | Runs | Median wall, s | Max wall, s | Result bytes | Max runner peak RSS, MiB |
+|---|---:|---:|---:|---:|---:|---:|
+| image | 80 483 | 3 | 1.047 | 1.077 | 6 862 | 73.08 |
+| audio | 16 044 | 3 | 0.633 | 0.666 | 4 621 | 67.70 |
+| video | 1 101 | 3 | 0.644 | 0.654 | 4 775 | 67.52 |
+
+Полный wallclock девяти изолированных запусков с созданием child process составил
+`11.590 s`. RSS на этой Windows-среде измерен stdlib `ctypes` через Win32
+`GetProcessMemoryInfo / PeakWorkingSetSize` для свежего workflow runner process.
+Метрика включает baseline Python/import/runtime, но не суммирует RSS spawned
+analyzer и FFmpeg/ffprobe processes; на POSIX harness использует `ru_maxrss`, а
+при недоступности корректной метрики возвращает `null`. Числа являются reference
+measurement этой среды, не SLA и не deployment guarantee.
 
 ## Критерий завершения
 

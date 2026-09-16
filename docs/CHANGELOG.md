@@ -340,6 +340,25 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-16
+
+### Добавлено
+
+- **[Stage 9 Macro 4/E2E] Добавлено полное production-composed доказательство
+  Profile B.** Generated network-free image/audio/video fixtures проходят API
+  через Stage 3–8 до сохранённого `AnalysisResult`; representative WebUI,
+  restart без старого `TaskRegistry`, rejection, infrastructure/persistence/
+  cleanup failures, auth/body guards, deterministic concurrency и graceful
+  shutdown проверяются отдельными full-path сценариями. Публичная схема,
+  маршруты и production behavior не расширялись.
+
+- **[Stage 9 Macro 4/Measurement] Добавлен воспроизводимый informational
+  resource harness.** `scripts/measure_stage9_profile_b.py` выполняет каждый
+  Profile B workflow в свежем process и публикует structured JSON с wallclock,
+  fixture/result sizes и доступной RSS metric без новой зависимости. Reference
+  Windows measurement зафиксирован в `PROJECT.md` и `ROADMAP.md`; произвольный
+  SLA, OS-level CPU/RAM quotas и изменение deployment limits не введены.
+
 ### 2026-09-15
 
 ### Исправлено

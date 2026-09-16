@@ -1756,6 +1756,53 @@ terminate/kill/reap; отдельная OS-level quota или process sandbox в
 Для local MVP принимаются bounded algorithms, body guard и измеренный resource
 envelope. OS-level hard quotas CPU/RAM находятся вне Stage 9.
 
+### 15.7. Сквозное доказательство и измеренный baseline local MVP
+
+Stage 9 Macro 4 проверяет Profile B через production composition, а не через
+альтернативный тестовый pipeline. Матрица включает:
+
+- image: `image_metadata_consistency` и `image_copy_move_correspondence` на
+  generated seeded copy-move PNG;
+- audio: `audio_pcm_quality` на generated PCM WAV с bounded saturation
+  observations;
+- video: `video_sampled_frame_quality` на generated MP4 с повторяющимися
+  sampled frames.
+
+Для каждой модальности фактически проходят HTTP upload, Stage 3, локальная
+очередь и registry, preprocessing/analyzer orchestration, Stages 6/7,
+терминальная очистка, `ResultFinalizationService`, `JsonFileResultRepository` и
+API result retrieval. Representative WebUI upload использует тот же
+`AnalysisApplicationService`; restart test создаёт новый application instance и
+читает опубликованный результат только из общего result directory, не обещая
+recovery незавершённой задачи.
+
+Воспроизводимый informational harness запускается командой:
+
+```powershell
+uv run python scripts/measure_stage9_profile_b.py --runs 3
+```
+
+Он генерирует bounded network-free fixtures, выполняет каждый workflow в свежем
+process и выдаёт JSON с fixture/result size, числом запусков, wallclock и
+доступной process RSS metric. Windows использует stdlib `ctypes` и
+`GetProcessMemoryInfo / PeakWorkingSetSize`, POSIX — `resource.getrusage()`;
+неподдерживаемая метрика остаётся `null`. RSS относится к workflow runner process
+и не суммирует отдельные analyzer/FFmpeg processes.
+
+Reference measurement 2026-09-16 на Windows 11 `10.0.26200`, AMD64, Python
+3.12.10, Intel64 Family 6 Model 198 Stepping 2, 24 logical CPU:
+
+| Media | Fixture bytes | Runs | Median wall, s | Result bytes | Max runner peak RSS, MiB |
+|---|---:|---:|---:|---:|---:|
+| image | 80 483 | 3 | 1.047 | 6 862 | 73.08 |
+| audio | 16 044 | 3 | 0.633 | 4 621 | 67.70 |
+| video | 1 101 | 3 | 0.644 | 4 775 | 67.52 |
+
+Это описание фактического reference environment, а не SLA, minimum hardware
+requirement или основание для OS-level quota. Автоматическая проверка требует
+только корректных конечных неотрицательных измерений и завершённых workflow; она
+не падает из-за произвольного порога времени или RSS.
+
 ---
 
 ## 16. Технологический стек первой версии
