@@ -111,13 +111,13 @@ AFTER_MVP
 
 ```text
 Общий статус: IN_PROGRESS
-Последний закрытый этап: Этап 8 — JSON, API и WebUI
-Статус Stage 8: DONE / CLOSED
-Следующий этап: Этап 9 — Надёжность, безопасность и сквозные тесты
-Статус Stage 9: NOT_STARTED
-Ближайшее действие: планирование Stage 9 без начала реализации
+Последний закрытый этап: Этап 9 — Надёжность, безопасность и сквозные тесты
+Статус Stage 9: DONE / CLOSED
+Следующий этап: Этап 10 — Сборка и демонстрация MVP
+Статус Stage 10: NOT_STARTED
+Ближайшее действие: Stage 10 — сборка и демонстрация MVP
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–8 завершены; Stage 8 Macro 1 и Macro 2, независимый финальный аудит, remediation S8-A01–S8-A03 и post-remediation closure audit завершены
+Реализация программы: Этапы 1–9 завершены; Stage 9 закрыт после independent post-remediation audit с PASS
 Документационная база: сформирована
 ```
 
@@ -137,7 +137,7 @@ AFTER_MVP
 
 1. Stage 7 формирует полноту, риск и рекомендации без псевдовероятности.
 2. Stage 8 собирает итоговый JSON и внешние границы API/WebUI.
-3. Stage 9 завершает повышение надёжности и сквозную проверку MVP.
+3. Stage 9 завершил повышение надёжности и сквозную проверку MVP.
 
 ---
 
@@ -154,7 +154,7 @@ AFTER_MVP
 | 6 | Базовые анализаторы и формирование признаков | DONE | Реальные нормализованные признаки |
 | 7 | Полнота, риск и рекомендации | DONE | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | DONE | Реализация и независимые аудиты завершены; этап закрыт |
-| 9 | Надёжность, безопасность и сквозные тесты | NOT_STARTED | Проверенный MVP |
+| 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
 | 10 | Сборка и демонстрация MVP | NOT_STARTED | Воспроизводимый прототип |
 | 11+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
 
@@ -1476,71 +1476,215 @@ Macro 1 и Macro 2 реализованы и покрыты контрактны
 завершены; независимый финальный аудит выполнен, findings `S8-A01`, `S8-A02` и
 `S8-A03` исправлены в remediation commit `7093922`. Post-remediation independent
 closure audit завершён с `PASS`, новых findings нет. Stage 8 имеет статус
-`DONE / CLOSED`; Stage 9 имеет статус `NOT_STARTED`.
+`DONE / CLOSED`; Stage 9 также завершён и закрыт после independent
+post-remediation audit с `PASS`: findings `S9-A01` и `S9-A02` закрыты, новых
+findings нет. Stage 10 остаётся `NOT_STARTED`.
 
-Quality barrier closure audit: `1687 passed, 3 skipped`, coverage `90%`;
+Quality barrier closure audit Stage 8: `1687 passed, 3 skipped`, coverage `90%`;
 `ruff`, `mypy`, `pre-commit`, lock, CLI/import и `git diff --check` — `PASS`.
 
 ---
 
-# Этап 9. Надёжность, безопасность и сквозные тесты — NOT_STARTED
+# Этап 9. Надёжность, безопасность и сквозные тесты — DONE / CLOSED
 
 ## Цель
 
 Доказать работоспособность полного цикла в штатных и аварийных сценариях.
 
+## Декомпозиция Stage 9
+
+- [x] Macro 1 — DONE / committed at `ad6050c`: lifecycle safety и JSONL diagnostics: cleanup safety barrier
+  Stage 3, per-analysis pre-handoff coordination с janitor, безопасные
+  диагностические события и `request_id` correlation; findings `S9-M1-R01` и
+  `S9-M1-R02` устранены;
+- [x] Macro 2 — DONE / committed at `4e4ba3c`: targeted filesystem
+  TOCTOU/reparse и runtime-root hardening; sensitive roots/direct workspace проверяются
+  на symlink/junction/detectable reparse, destructive recovery retained/reports
+  suspicious objects, а private runtime ACL остаётся documented deployment
+  prerequisite stdlib/Windows;
+- [x] Macro 3 — DONE / committed at `bddcedb`: bounded actual HTTP multipart
+  body, receive/parse deadline, strict multipart structure и FFmpeg/process
+  security;
+- [x] Macro 4 — DONE / committed at `2ef98a3`: Profile B full-path E2E,
+  restart/failure/security/concurrency/shutdown proof и измеренный
+  performance/resource envelope.
+- [x] Final audit remediation — DONE / committed at `111a832`: `S9-A01` и
+  `S9-A02` устранены; multipart completeness подтверждается closing-boundary
+  callback и завершением ASGI stream; receive/parse deadline дополнен
+  synchronous monotonic checkpoints и финальной проверкой до возврата формы.
+
+Macro 1–4 и remediation committed. Independent final audit вернул `REMEDIATE`
+по `S9-A01` и `S9-A02`. Independent post-remediation audit завершён с `PASS`:
+`S9-A01` — `CLOSED`, `S9-A02` — `CLOSED`; новых findings нет.
+
+Финальное состояние findings:
+
+```text
+BLOCKER 0
+HIGH 0
+MEDIUM 0
+LOW 0
+```
+
+## Зафиксированные owner decisions
+
+- `S9-D01`: runtime приватен для account приложения; защита от hostile process
+  той же Windows account или Administrator не обещается; Macro 2 остаётся
+  targeted, полный Win32 handle-based redesign не требуется.
+- `S9-D02`: Macro 2 создаёт новые sensitive runtime roots максимально приватно
+  средствами stdlib/Python 3.12, не переписывает существующие ACL, не добавляет
+  pywin32/dependency, fail-safe обрабатывает reparse hazards; непроверяемые stdlib
+  ACL являются deployment prerequisite.
+- `S9-D03`: Macro 3 использует max per-media limit + 1 MiB envelope, actual-byte
+  counting, `413` до регистрации и `server.request_timeout_seconds` как HTTP
+  receive/parse deadline.
+- `S9-D04`: JSONL использует только утверждённый safe allowlist; raw exception,
+  credentials, secrets, `SourceContext`, headers, filename, paths и иной
+  user-controlled payload запрещены без sanitization contract.
+- `S9-D05`: durable recovery, persistence/analysis retry и startup cleanup
+  `.result-*.tmp` не вводятся; pre-handoff cleanup barrier обязателен, residue
+  получает diagnostic и ручную safe maintenance procedure.
+- `S9-D06`: local MVP опирается на bounded algorithms, body guard и измеренный
+  resource envelope; OS-level CPU/RAM hard quotas вне Stage 9.
+
 ## Обязательные задачи
 
 ### Ошибки
 
-- [ ] классифицировать ошибки;
-- [ ] обеспечить безопасные пользовательские сообщения;
-- [ ] сохранять диагностику в JSONL;
-- [ ] проверить частичный сбой;
-- [ ] проверить системный сбой;
-- [ ] проверить timeout;
-- [ ] проверить сбой сохранения;
-- [ ] проверить сбой очистки.
+- [x] классифицировать ошибки;
+- [x] обеспечить безопасные пользовательские сообщения;
+- [x] сохранять утверждённую Macro 1 диагностику в JSONL;
+- [x] проверить частичный сбой;
+- [x] проверить системный сбой;
+- [x] проверить timeout;
+- [x] проверить сбой сохранения;
+- [x] проверить сбой очистки.
 
 ### Безопасность
 
-- [ ] проверить path traversal;
-- [ ] проверить и усилить runtime storage против concurrent symlink
+- [x] проверить path traversal в sensitive runtime ownership boundaries;
+- [x] проверить и усилить runtime storage против concurrent symlink
   substitution / TOCTOU, включая descriptor-based/no-follow подход при
   необходимости;
-- [ ] проверить command injection для FFmpeg;
-- [ ] ограничить время и ресурсы;
-- [ ] проверить отсутствие секретов в логах;
-- [ ] проверить отсутствие runtime в Git;
-- [ ] проверить MIME/signature mismatch;
-- [ ] ограничить доступ к runtime;
-- [ ] проверить токен API;
-- [ ] проверить CSRF при cookie-аутентификации WebUI, если она выбрана.
+- [x] проверить command/option injection и protocol abuse для FFmpeg/ffprobe;
+- [x] ограничить subprocess time/output и HTTP body receive/parse;
+- [x] проверить отсутствие секретов и private payload в JSONL Macro 1;
+- [x] проверить отсутствие runtime в Git;
+- [x] проверить MIME/signature mismatch;
+- [x] ограничить доступ к новым runtime roots средствами stdlib и зафиксировать
+  Windows ACL deployment prerequisite;
+- [x] проверить токен API;
+- [x] проверить CSRF при cookie-аутентификации WebUI, если она выбрана.
 
 ### Сквозные сценарии
 
-- [ ] валидное изображение;
-- [ ] валидное аудио;
-- [ ] валидное видео;
-- [ ] отклонённый файл;
-- [ ] один анализатор ошибся;
-- [ ] несколько анализаторов недоступны;
-- [ ] insufficient completeness;
-- [ ] ошибка очистки;
-- [ ] повторный запрос результата;
-- [ ] параллельные задачи в пределах лимита.
+- [x] валидное изображение;
+- [x] валидное аудио;
+- [x] валидное видео;
+- [x] отклонённый файл;
+- [x] один анализатор ошибся;
+- [x] несколько анализаторов недоступны;
+- [x] insufficient completeness;
+- [x] ошибка очистки;
+- [x] повторный запрос результата;
+- [x] параллельные задачи в пределах лимита.
 
 ### Производительность
 
-- [ ] измерить время базовых сценариев;
-- [ ] измерить память для видео;
-- [ ] проверить отсутствие загрузки крупного видео целиком;
-- [ ] проверить очередь при нескольких задачах;
-- [ ] откорректировать EXAMPLE-лимиты по результатам.
+- [x] измерить время базовых сценариев;
+- [x] измерить память для видео;
+- [x] проверить отсутствие загрузки крупного видео целиком;
+- [x] проверить очередь при нескольких задачах;
+- [x] проверить необходимость корректировки EXAMPLE-лимитов по результатам:
+  `DEFERRED_WITH_REASON` — informational baseline малых deterministic fixtures
+  не обосновывает изменение deployment limits или введение SLA.
+
+## Macro 4 — фактическая E2E-матрица
+
+| Media | Fixture | Активные analyzers | Ожидаемый итог | Внешний путь | Persistence/restart |
+|---|---|---|---|---|---|
+| image | generated seeded copy-move PNG 512×512 | `image_metadata_consistency`, `image_copy_move_correspondence` | `completed`, findings, complete risk/recommendation | API и representative WebUI | persisted result; отдельный restart proof |
+| audio | generated PCM WAV 8 kHz с bounded saturation observations | `audio_pcm_quality` | `completed`, finding, complete risk/recommendation | API | persisted result |
+| video | generated MP4 64×64, 2 fps, repeated frames, 3.2 s | `video_sampled_frame_quality` | `completed`, finding, complete risk/recommendation | API | persisted result |
+
+Full-path тесты используют настоящий `create_app`, production composition,
+Stage 3 validation, scheduler/registry, Stages 5–7, финализатор,
+`JsonFileResultRepository`, API/WebUI и временные каталоги pytest. Отдельно
+проверены restart без старого `TaskRegistry`, Stage 3 mismatch, media-tool
+infrastructure failure, persistence failure без retry/ложного `FINISHED`, cleanup
+residue, auth/body guards assembled app, одновременные image-задачи и graceful
+shutdown со startup/shutdown sweep.
+
+## Macro 4 — классификация оставшегося checklist
+
+| Область | Классификация | Основание |
+|---|---|---|
+| Error taxonomy, safe messages, partial/timeout/insufficient paths | VERIFIED | существующие Stage 5/7 targeted tests и новые full-path terminal tests |
+| System, persistence и cleanup failures | IMPLEMENTED | representative deterministic E2E через production boundaries |
+| Runtime not in Git | VERIFIED | `.gitignore`, `git ls-files` и итоговый status проверяются barrier |
+| MIME/signature mismatch и API token | VERIFIED | assembled-app E2E плюс targeted transport/auth tests |
+| WebUI CSRF | NOT_APPLICABLE | cookie/session architecture не выбрана; строгий same-origin guard проверен |
+| Bounded deterministic behavior | VERIFIED | artifact/process/body limits, Profile B E2E и measurement sanity |
+| OS CPU/RAM hard quotas | DEFERRED_WITH_REASON | `S9-D06`: вне local MVP и Stage 9 |
+| Изменение EXAMPLE deployment limits | DEFERRED_WITH_REASON | получен informational reference baseline, но нет данных для нормативной коррекции |
+
+## Macro 4 — reference measurement 2026-09-16
+
+Команда воспроизведения:
+
+```powershell
+uv run python scripts/measure_stage9_profile_b.py --runs 3
+```
+
+Среда: Windows 11 `10.0.26200`, AMD64, Python 3.12.10,
+Intel64 Family 6 Model 198 Stepping 2, 24 logical CPU. Каждый media run выполнен
+в свежем process; wallclock охватывает scheduler start, полный application
+workflow, persisted result retrieval и graceful shutdown.
+
+| Media | Fixture bytes | Runs | Median wall, s | Max wall, s | Result bytes | Max runner peak RSS, MiB |
+|---|---:|---:|---:|---:|---:|---:|
+| image | 80 483 | 3 | 1.047 | 1.077 | 6 862 | 73.08 |
+| audio | 16 044 | 3 | 0.633 | 0.666 | 4 621 | 67.70 |
+| video | 1 101 | 3 | 0.644 | 0.654 | 4 775 | 67.52 |
+
+Полный wallclock девяти изолированных запусков с созданием child process составил
+`11.590 s`. RSS на этой Windows-среде измерен stdlib `ctypes` через Win32
+`GetProcessMemoryInfo / PeakWorkingSetSize` для свежего workflow runner process.
+Метрика включает baseline Python/import/runtime, но не суммирует RSS spawned
+analyzer и FFmpeg/ffprobe processes; на POSIX harness использует `ru_maxrss`, а
+при недоступности корректной метрики возвращает `null`. Числа являются reference
+measurement этой среды, не SLA и не deployment guarantee.
 
 ## Критерий завершения
 
 Все обязательные сквозные, негативные и безопасностные тесты проходят; известные ограничения зафиксированы; исходные и промежуточные данные удаляются фактически.
+
+Stage 9 имеет статус `DONE / CLOSED`. Финальный quality barrier:
+
+- full pytest: `1763 passed, 17 skipped`;
+- coverage: `90%`;
+- targeted remediation/post-remediation suite: `116 passed`;
+- `uv lock --check`: `PASS`;
+- Ruff: `PASS`;
+- mypy: `PASS`, 64 source files;
+- pre-commit: все 8 hooks `PASS`;
+- CLI/import smoke: `PASS`;
+- `git diff --check`: `PASS`.
+
+Принятые ограничения Stage 9 не являются незакрытыми findings:
+
+- Windows ACL остаётся deployment prerequisite;
+- hostile same-account / Administrator находится вне гарантированной threat model;
+- полный filesystem/process sandbox отсутствует;
+- OS CPU/RAM hard quotas не вводились;
+- durable unfinished-job recovery отсутствует;
+- persistence retry отсутствует;
+- автоматическое удаление `.result-*.tmp` crash residue не вводилось;
+- resource measurements имеют informational характер и не являются SLA;
+- 17 symlink-related skips на текущем Windows host связаны с отсутствием
+  symlink privileges; native Windows junction coverage при этом выполнялась.
+
+Следующий этап — Stage 10, который остаётся `NOT_STARTED`.
 
 ---
 

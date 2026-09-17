@@ -11,6 +11,7 @@ from threading import Condition, RLock, Thread
 from fakedetector.config.models import AppConfig
 from fakedetector.core import AuthoritativeLifecycleClock
 from fakedetector.domain import AnalysisStatus, MediaType, ProcessingStage
+from fakedetector.intake import LocalTemporaryInputOwner
 from fakedetector.lifecycle.cleanup import WorkspaceJanitor
 from fakedetector.lifecycle.execution import (
     QueueStateError,
@@ -19,6 +20,7 @@ from fakedetector.lifecycle.execution import (
 )
 from fakedetector.lifecycle.models import AnalysisTask
 from fakedetector.lifecycle.receiver import Stage4TaskProcessor
+from fakedetector.logging_setup import emit_diagnostic
 from fakedetector.result_finalization import AcceptedResultFinalizer
 
 _LOGGER = logging.getLogger(__name__)
@@ -67,6 +69,7 @@ class BoundedLocalScheduler:
         clock: AuthoritativeLifecycleClock,
         registry: TaskRegistry,
         result_finalizer: AcceptedResultFinalizer,
+        temporary_input_owner: LocalTemporaryInputOwner,
     ) -> None:
         limits = config.limits.max_parallel_tasks
         self._limits = {
@@ -87,6 +90,7 @@ class BoundedLocalScheduler:
             config=config.temporary_storage,
             clock=clock,
             registry=registry,
+            temporary_input_owner=temporary_input_owner,
         )
         self._registry = registry
         self._state = _SchedulerState.NOT_STARTED
@@ -302,14 +306,29 @@ class BoundedLocalScheduler:
         try:
             self._janitor.sweep()
         except Exception:
-            _LOGGER.warning("Stage 4 cleanup recovery sweep failed.")
+            emit_diagnostic(
+                _LOGGER,
+                logging.WARNING,
+                "cleanup_failed",
+                phase="recovery",
+                code="workspace_sweep_failed",
+                stage=ProcessingStage.CLEANUP.value,
+            )
 
     def _recover_terminal_settlements(self) -> None:
         for analysis_id in self._registry.recoverable_terminal_tasks():
             try:
                 self._processor.settle_terminal(analysis_id)
             except Exception:
-                _LOGGER.warning("Stage 4 terminal settlement recovery failed.")
+                emit_diagnostic(
+                    _LOGGER,
+                    logging.WARNING,
+                    "cleanup_failed",
+                    analysis_id=analysis_id,
+                    phase="recovery",
+                    code="terminal_settlement_recovery_failed",
+                    stage=ProcessingStage.CLEANUP.value,
+                )
 
     def _settle_infrastructure_failure(self, analysis_id: str) -> None:
         try:

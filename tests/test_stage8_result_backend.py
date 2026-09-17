@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+import fakedetector.lifecycle.receiver as receiver_module
+import fakedetector.result_finalization as result_finalization_module
 from fakedetector._runtime import _build_production_runtime
 from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
@@ -85,7 +87,18 @@ def test_real_production_image_is_persisted_before_finished_and_facts_are_detach
     capturing = _CapturingFinalizer(runtime.result_finalizer)
     runtime.scheduler._processor._result_finalizer = capturing
     save_observations: list[tuple[ProcessingStage, TerminalSettlementPhase]] = []
+    diagnostic_events: list[str] = []
     real_save = runtime.result_repository.save
+
+    def capture_diagnostic(_logger, _level, event: str, **_fields: object) -> None:
+        diagnostic_events.append(event)
+
+    monkeypatch.setattr(receiver_module, "emit_diagnostic", capture_diagnostic)
+    monkeypatch.setattr(
+        result_finalization_module,
+        "emit_diagnostic",
+        capture_diagnostic,
+    )
 
     def observe_save(result: AnalysisResult) -> None:
         snapshot_at_save = runtime.registry.snapshot(result.analysis_id)
@@ -140,6 +153,12 @@ def test_real_production_image_is_persisted_before_finished_and_facts_are_detach
     assert result.recommendation is not None
     assert result.analyzers
     assert all(analyzer.raw_metrics == {} for analyzer in result.analyzers)
+    assert diagnostic_events.index("cleanup_completed") < diagnostic_events.index(
+        "result_saved"
+    )
+    assert diagnostic_events.index("result_saved") < diagnostic_events.index(
+        "analysis_completed"
+    )
 
     facts = capturing.facts
     assert facts is not None
@@ -181,7 +200,11 @@ def test_accepted_persistence_failure_keeps_primary_and_cleanup_facts_without_re
     save_calls = 0
     candidates: list[AnalysisResult] = []
     cleanup_calls: Counter[str] = Counter()
+    diagnostic_events: list[str] = []
     real_cleanup = LocalTemporaryInputOwner.cleanup
+
+    def capture_diagnostic(_logger, _level, event: str, **_fields: object) -> None:
+        diagnostic_events.append(event)
 
     def fail_save(result: AnalysisResult) -> None:
         nonlocal save_calls
@@ -198,6 +221,12 @@ def test_accepted_persistence_failure_keeps_primary_and_cleanup_facts_without_re
 
     monkeypatch.setattr(runtime.result_repository, "save", fail_save)
     monkeypatch.setattr(LocalTemporaryInputOwner, "cleanup", count_cleanup)
+    monkeypatch.setattr(receiver_module, "emit_diagnostic", capture_diagnostic)
+    monkeypatch.setattr(
+        result_finalization_module,
+        "emit_diagnostic",
+        capture_diagnostic,
+    )
 
     runtime.scheduler.start()
     try:
@@ -231,6 +260,12 @@ def test_accepted_persistence_failure_keeps_primary_and_cleanup_facts_without_re
     assert candidates[0].status is AnalysisStatus.COMPLETED
     assert candidates[0].cleanup is not None
     assert all(error.code != "result_write_failed" for error in candidates[0].errors)
+    assert "cleanup_completed" in diagnostic_events
+    assert "result_persistence_failed" in diagnostic_events
+    assert "result_saved" not in diagnostic_events
+    assert "analysis_completed" not in diagnostic_events
+    assert "analysis_partial" not in diagnostic_events
+    assert "analysis_failed" not in diagnostic_events
 
     runtime.scheduler._sweep_best_effort()
 

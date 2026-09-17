@@ -85,7 +85,9 @@ def test_generated_budget_accepts_exact_cumulative_physical_extent(
 def test_limit_plus_one_leaves_registered_partial_artifact_for_cleanup(
     tmp_path: Path,
 ) -> None:
-    registry = WorkspaceArtifactRegistry(tmp_path / "workspace")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    registry = WorkspaceArtifactRegistry(workspace)
     artifact_ref = registry.register("bounded_output", "preprocessing/output.bin")
     target = registry.cleanup_obligations()[0]
     budget = _image_budget()

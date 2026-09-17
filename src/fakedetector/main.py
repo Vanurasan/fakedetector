@@ -1,6 +1,7 @@
 """Точка входа приложения."""
 
 import argparse
+import logging
 import sys
 from collections.abc import Sequence
 
@@ -9,7 +10,7 @@ import uvicorn
 from fakedetector.app import create_app
 from fakedetector.auth import AccessConfigurationError
 from fakedetector.config.loader import ConfigurationError, load_config
-from fakedetector.logging_setup import LoggingSetupError, configure_logging
+from fakedetector.logging_setup import LoggingSetupError, configure_logging, emit_diagnostic
 from fakedetector.runtime_setup import RuntimeSetupError, ensure_runtime_directories
 
 
@@ -53,14 +54,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except AccessConfigurationError:
         print("Access configuration failed.", file=sys.stderr)
         return 5
-    logger.info(
-        "Application is starting.",
-        extra={
-            "event": "application_starting",
-            "schema_version": config.schema_version,
-            "host": config.server.host,
-            "port": config.server.port,
-        },
+    emit_diagnostic(
+        logger,
+        logging.INFO,
+        "application_starting",
+        schema_version=config.schema_version,
+        host=config.server.host,
+        port=config.server.port,
     )
     uvicorn.run(app, host=config.server.host, port=config.server.port)
     return 0

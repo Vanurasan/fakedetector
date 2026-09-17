@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -19,7 +20,10 @@ from fakedetector.intake import (
     LocalTemporaryInputOwner,
     TemporaryInputCleanupError,
 )
-from fakedetector.intake.temporary_input import PreparedSourceRef
+from fakedetector.intake.temporary_input import (
+    PreparedSourceRef,
+    TemporaryInputQuarantineError,
+)
 
 
 class SyntheticStream:
@@ -143,6 +147,188 @@ def test_workspace_collision_is_not_reused_or_removed(tmp_path: Path) -> None:
 
     assert error_info.value.phase == "workspace"
     assert marker.read_text(encoding="utf-8") == "preserve"
+
+
+def test_symlink_temporary_root_is_rejected_without_touching_target(
+    tmp_path: Path,
+    directory_symlink_factory: Callable[[Path, Path], None],
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    root = tmp_path / "temp"
+    directory_symlink_factory(root, outside)
+
+    with pytest.raises(IntakeSystemError) as error_info:
+        LocalTemporaryInputOwner(root).create("a" * 32)
+
+    assert error_info.value.phase == "workspace"
+    assert sentinel.read_bytes() == b"outside"
+    assert not (outside / ("a" * 32)).exists()
+
+
+def test_junction_temporary_root_is_rejected_without_touching_target(
+    tmp_path: Path,
+    directory_junction_factory: Callable[[Path, Path], None],
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    root = tmp_path / "temp"
+    directory_junction_factory(root, outside)
+
+    with pytest.raises(IntakeSystemError) as error_info:
+        LocalTemporaryInputOwner(root).create("b" * 32)
+
+    assert error_info.value.phase == "workspace"
+    assert sentinel.read_bytes() == b"outside"
+    assert not (outside / ("b" * 32)).exists()
+
+
+def test_substituted_workspace_blocks_ingest_without_external_write(
+    tmp_path: Path,
+    directory_symlink_factory: Callable[[Path, Path], None],
+) -> None:
+    analysis_id = "c" * 32
+    root = tmp_path / "temp"
+    owner = LocalTemporaryInputOwner(root)
+    owned_source = owner.create(analysis_id)
+    workspace = root / analysis_id
+    workspace.rename(tmp_path / "owned-workspace")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    directory_symlink_factory(workspace, outside)
+
+    with pytest.raises(IntakeSystemError) as error_info:
+        owner.ingest(owned_source, BytesIO(b"untrusted"), 100)
+
+    assert error_info.value.phase == "output_open"
+    assert sentinel.read_bytes() == b"outside"
+    assert not (outside / "source").exists()
+
+
+def test_substituted_source_blocks_read_and_cleanup_without_external_delete(
+    tmp_path: Path,
+) -> None:
+    analysis_id = "d" * 32
+    root = tmp_path / "temp"
+    owner = LocalTemporaryInputOwner(root)
+    owned_source = owner.create(analysis_id)
+    owner.ingest(owned_source, BytesIO(b"owned"), 100)
+    source = root / analysis_id / "source"
+    source.unlink()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    try:
+        source.symlink_to(sentinel)
+    except OSError:
+        pytest.skip("file symlink creation is unavailable on this host")
+
+    with pytest.raises(IntakeSystemError), owner.open_for_read(owned_source):
+        pass
+    with pytest.raises(TemporaryInputCleanupError):
+        owner.cleanup(owned_source)
+
+    assert source.is_symlink()
+    assert sentinel.read_bytes() == b"outside"
+
+
+def test_substituted_workspace_blocks_cleanup_without_external_delete(
+    tmp_path: Path,
+    directory_symlink_factory: Callable[[Path, Path], None],
+) -> None:
+    analysis_id = "e" * 32
+    root = tmp_path / "temp"
+    owner = LocalTemporaryInputOwner(root)
+    owned_source = owner.create(analysis_id)
+    owner.ingest(owned_source, BytesIO(b"owned"), 100)
+    workspace = root / analysis_id
+    workspace.rename(tmp_path / "owned-workspace")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "source"
+    sentinel.write_bytes(b"outside")
+    directory_symlink_factory(workspace, outside)
+
+    with pytest.raises(TemporaryInputCleanupError):
+        owner.cleanup(owned_source)
+
+    assert workspace.is_symlink()
+    assert sentinel.read_bytes() == b"outside"
+
+
+def test_substituted_workspace_blocks_quarantine_without_external_move(
+    tmp_path: Path,
+    directory_symlink_factory: Callable[[Path, Path], None],
+) -> None:
+    analysis_id = "f" * 32
+    root = tmp_path / "temp"
+    owner = LocalTemporaryInputOwner(root)
+    owned_source = owner.create(analysis_id)
+    owner.ingest(owned_source, BytesIO(b"owned"), 100)
+    accepted_source = owner.transfer(owned_source)
+    accepted_source._commit_handoff(lambda: None)
+    workspace = root / analysis_id
+    workspace.rename(tmp_path / "owned-workspace")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "source"
+    sentinel.write_bytes(b"outside")
+    directory_symlink_factory(workspace, outside)
+
+    with pytest.raises(TemporaryInputQuarantineError):
+        accepted_source._quarantine(datetime(2026, 8, 15, tzinfo=UTC))
+
+    assert workspace.is_symlink()
+    assert sentinel.read_bytes() == b"outside"
+    assert not (tmp_path / "quarantine" / analysis_id).exists()
+
+
+@pytest.mark.parametrize("operation", ["ingest", "cleanup", "quarantine"])
+def test_junction_workspace_substitution_fails_safe_for_sensitive_operations(
+    tmp_path: Path,
+    directory_junction_factory: Callable[[Path, Path], None],
+    operation: str,
+) -> None:
+    analysis_id = "1" * 32
+    root = tmp_path / "temp"
+    owner = LocalTemporaryInputOwner(root)
+    owned_source = owner.create(analysis_id)
+    if operation != "ingest":
+        owner.ingest(owned_source, BytesIO(b"owned"), 100)
+    accepted_source = None
+    if operation == "quarantine":
+        accepted_source = owner.transfer(owned_source)
+        accepted_source._commit_handoff(lambda: None)
+    workspace = root / analysis_id
+    workspace.rename(tmp_path / "owned-workspace")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    directory_junction_factory(workspace, outside)
+
+    if operation == "ingest":
+        with pytest.raises(IntakeSystemError):
+            owner.ingest(owned_source, BytesIO(b"untrusted"), 100)
+    elif operation == "cleanup":
+        with pytest.raises(TemporaryInputCleanupError):
+            owner.cleanup(owned_source)
+    else:
+        assert accepted_source is not None
+        with pytest.raises(TemporaryInputQuarantineError):
+            accepted_source._quarantine(datetime(2026, 8, 15, tzinfo=UTC))
+
+    assert workspace.is_junction()
+    assert sentinel.read_bytes() == b"outside"
+    assert not (outside / "source").exists()
+    assert not (tmp_path / "quarantine" / analysis_id).exists()
 
 
 def test_released_source_cannot_be_read(tmp_path: Path) -> None:
@@ -277,6 +463,7 @@ def test_quarantined_accepted_source_remains_readable_and_cleanup_releases_it(
     owned_source = owner.create(analysis_id)
     owner.ingest(owned_source, BytesIO(b"quarantined-content"), 100)
     accepted_source = owner.transfer(owned_source)
+    accepted_source._commit_handoff(lambda: None)
     accepted_source._quarantine(datetime(2026, 8, 15, tzinfo=UTC))
     quarantine_item = tmp_path / "quarantine" / analysis_id
 
@@ -309,7 +496,7 @@ def test_transfer_rejects_foreign_and_released_handles(tmp_path: Path) -> None:
     foreign_owner.cleanup(foreign_source)
 
 
-def test_cleanup_failure_keeps_ownership_active_and_does_not_remove_foreign_data(
+def test_cleanup_failure_releases_pre_handoff_protection_and_preserves_foreign_data(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "temp"
@@ -325,6 +512,28 @@ def test_cleanup_failure_keeps_ownership_active_and_does_not_remove_foreign_data
     assert not owned_source.is_released
     assert foreign_file.read_text(encoding="utf-8") == "do-not-delete"
     assert not (root / "foreign-data" / "source").exists()
+    assert owner._cleanup_if_unprotected("foreign-data", lambda: "eligible") == "eligible"
+
+
+def test_interrupted_physical_cleanup_keeps_pre_handoff_protection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analysis_id = "a" * 32
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    owned_source = owner.create(analysis_id)
+    owner.ingest(owned_source, BytesIO(b"owned"), 100)
+
+    def interrupt_unlink(self: Path, *, missing_ok: bool = False) -> NoReturn:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Path, "unlink", interrupt_unlink)
+
+    with pytest.raises(KeyboardInterrupt):
+        owner.cleanup(owned_source)
+
+    assert owner._cleanup_if_unprotected(analysis_id, lambda: "unsafe") is None
+    assert (tmp_path / "temp" / analysis_id / "source").is_file()
 
 
 def test_stream_read_failure_closes_output_descriptor(tmp_path: Path, monkeypatch) -> None:

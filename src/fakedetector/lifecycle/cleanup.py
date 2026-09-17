@@ -13,13 +13,21 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Lock
 
+from fakedetector._filesystem import (
+    ensure_private_directory,
+    require_direct_child_directory,
+    require_missing_path,
+    require_safe_directory,
+    require_safe_tree,
+)
 from fakedetector.config.models import TemporaryStorageConfig
 from fakedetector.core import AuthoritativeLifecycleClock
 from fakedetector.core.clock import AuthoritativeClockError
 from fakedetector.domain import CleanupStatus, ErrorDetail
-from fakedetector.intake import TemporaryInputCleanupError
+from fakedetector.intake import LocalTemporaryInputOwner, TemporaryInputCleanupError
 from fakedetector.lifecycle.execution import TaskRegistry
 from fakedetector.lifecycle.models import AnalysisTask, CleanupFacts, TerminalSettlementSnapshot
+from fakedetector.logging_setup import emit_diagnostic
 
 _SYSTEM_ANALYSIS_ID = re.compile(r"^[0-9a-f]{32}$")
 _LOGGER = logging.getLogger(__name__)
@@ -181,10 +189,12 @@ class WorkspaceJanitor:
         config: TemporaryStorageConfig,
         clock: AuthoritativeLifecycleClock,
         registry: TaskRegistry,
+        temporary_input_owner: LocalTemporaryInputOwner,
     ) -> None:
         self._config = config
         self._clock = clock
         self._registry = registry
+        self._temporary_input_owner = temporary_input_owner
         self._root = Path(config.root_path)
         self._quarantine_root = self._root.parent / "quarantine"
         self._sweep_lock = Lock()
@@ -200,9 +210,14 @@ class WorkspaceJanitor:
             quarantine_deleted, quarantine_issues = self._sweep_quarantine(now)
             issues = (*workspace_issues, *quarantine_issues)
             for issue in issues:
-                _LOGGER.warning(
-                    "Stage 4 cleanup recovery did not complete.",
-                    extra={"analysis_id": issue.analysis_id, "cleanup_code": issue.code},
+                emit_diagnostic(
+                    _LOGGER,
+                    logging.WARNING,
+                    "cleanup_failed",
+                    analysis_id=issue.analysis_id,
+                    phase="recovery",
+                    code=issue.code,
+                    stage="cleanup",
                 )
             return SweepResult(
                 workspaces_deleted=tuple(deleted),
@@ -238,9 +253,17 @@ class WorkspaceJanitor:
             ) -> str:
                 return self._recover_workspace(entry, analysis_id)
 
-            outcome = self._registry.cleanup_if_inactive(
+            def cleanup_if_inactive(
+                analysis_id: str = analysis_id,
+            ) -> str | None:
+                return self._registry.cleanup_if_inactive(
+                    analysis_id,
+                    recover_workspace,
+                )
+
+            outcome = self._temporary_input_owner._cleanup_if_unprotected(
                 analysis_id,
-                recover_workspace,
+                cleanup_if_inactive,
             )
             if outcome == "deleted":
                 deleted.append(analysis_id)
@@ -304,6 +327,8 @@ class WorkspaceJanitor:
     @staticmethod
     def _remove_quarantine(entry: Path) -> bool:
         try:
+            require_direct_child_directory(entry.parent, entry)
+            require_safe_tree(entry)
             shutil.rmtree(entry)
         except OSError:
             return False
@@ -312,6 +337,8 @@ class WorkspaceJanitor:
     def _recover_workspace(self, entry: Path, analysis_id: str) -> str:
         for _attempt in range(1 + self._config.cleanup_retries):
             try:
+                require_direct_child_directory(self._root, entry)
+                require_safe_tree(entry)
                 shutil.rmtree(entry)
             except OSError:
                 continue
@@ -329,26 +356,22 @@ class WorkspaceJanitor:
         destination = self._quarantine_root / analysis_id
         if entry.parent != self._root or destination.parent != self._quarantine_root:
             raise OSError
-        if self._quarantine_root.exists():
-            if self._quarantine_root.is_symlink() or not self._quarantine_root.is_dir():
-                raise OSError
-        else:
-            self._quarantine_root.mkdir()
-        if destination.exists() or destination.is_symlink():
-            raise OSError
+        require_direct_child_directory(self._root, entry)
+        require_safe_tree(entry)
+        ensure_private_directory(self._quarantine_root)
+        require_missing_path(destination)
         entry.rename(destination)
+        require_direct_child_directory(self._quarantine_root, destination)
+        require_safe_tree(destination)
         timestamp = self._clock.now().timestamp()
         with suppress(OSError):
             os.utime(destination, (timestamp, timestamp))
 
     @staticmethod
     def _safe_entries(root: Path, issues: list[SweepIssue], code: str) -> tuple[Path, ...]:
-        if not root.exists():
-            return ()
-        if root.is_symlink() or not root.is_dir():
-            issues.append(SweepIssue(None, code))
-            return ()
         try:
+            if not require_safe_directory(root, missing_ok=True):
+                return ()
             return tuple(sorted(root.iterdir(), key=lambda entry: entry.name))
         except OSError:
             issues.append(SweepIssue(None, code))
@@ -356,11 +379,14 @@ class WorkspaceJanitor:
 
     @staticmethod
     def _trusted_directory(entry: Path, analysis_id: str) -> bool:
-        return (
-            _SYSTEM_ANALYSIS_ID.fullmatch(analysis_id) is not None
-            and not entry.is_symlink()
-            and entry.is_dir()
-        )
+        if _SYSTEM_ANALYSIS_ID.fullmatch(analysis_id) is None:
+            return False
+        try:
+            require_direct_child_directory(entry.parent, entry)
+            require_safe_tree(entry)
+        except OSError:
+            return False
+        return True
 
     @staticmethod
     def _expired(entry: Path, now: datetime, ttl: timedelta) -> bool | None:

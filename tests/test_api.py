@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import itertools
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,12 @@ from stage8_helpers import (
     make_status,
 )
 
+import fakedetector._http_upload as http_upload_module
+import fakedetector.api as api_module
+from fakedetector._http_upload import (
+    RequestBodyDeadlineError,
+    multipart_body_limit_bytes,
+)
 from fakedetector.api import install_api
 from fakedetector.app import create_app
 from fakedetector.application import (
@@ -27,6 +35,7 @@ from fakedetector.application import (
     AnalysisSubmissionError,
 )
 from fakedetector.auth import APIBearerAuthenticator
+from fakedetector.config.models import AppConfig
 from fakedetector.domain import AnalysisStatus, ProcessingStage
 
 TOKEN = "stage8-api-token"
@@ -37,12 +46,14 @@ def _client(
     service: StubApplicationService,
     *,
     require_auth: bool = True,
+    config: AppConfig | None = None,
 ) -> TestClient:
     app = FastAPI()
     install_api(
         app,
         service=service,
         authenticator=APIBearerAuthenticator(TOKEN) if require_auth else None,
+        config=config or make_config(Path("test-runtime")),
     )
     return TestClient(app)
 
@@ -75,6 +86,54 @@ def _malformed_multipart(
         content=b"not-a-valid-multipart-body",
         headers=headers,
     )
+
+
+def _small_transport_config() -> AppConfig:
+    config = make_config(Path("test-runtime"))
+    payload = config.model_dump(mode="python")
+    payload["limits"]["max_file_size_mb"] = {"image": 1, "audio": 1, "video": 1}
+    return AppConfig.model_validate(payload)
+
+
+def _raw_file_multipart(payload: bytes) -> tuple[bytes, str]:
+    boundary = "stage9-transport-boundary"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="sample.png"\r\n'
+        "Content-Type: image/png\r\n"
+        "\r\n"
+    ).encode() + payload + f"\r\n--{boundary}--\r\n".encode()
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def _truncated_multipart_after_file(
+    field_name: str,
+    *,
+    filename: str | None,
+) -> tuple[bytes, str]:
+    boundary = "stage9-incomplete-boundary"
+    disposition = f'Content-Disposition: form-data; name="{field_name}"'
+    if filename is not None:
+        disposition += f'; filename="{filename}"'
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="one.png"\r\n'
+        "Content-Type: image/png\r\n"
+        "\r\n"
+        "one\r\n"
+        f"--{boundary}\r\n"
+        f"{disposition}\r\n"
+        "\r\n"
+        "truncated"
+    ).encode()
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def _one_second_request_timeout_config() -> AppConfig:
+    config = make_config(Path("test-runtime"))
+    payload = config.model_dump(mode="python")
+    payload["server"]["request_timeout_seconds"] = 1
+    return AppConfig.model_validate(payload)
 
 
 def test_accepted_multipart_upload_uses_factual_sampled_state_and_default_source() -> None:
@@ -197,6 +256,258 @@ def test_malformed_multipart_is_rejected_only_after_bearer_guard() -> None:
     assert valid.json()["error"]["code"] == "invalid_multipart"
     assert set(valid.json()) == {"error", "request_id"}
     assert service.sources == []
+
+
+def test_unauthenticated_oversized_body_does_not_enter_transport_parser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StubApplicationService()
+    config = _small_transport_config()
+    body_limit = multipart_body_limit_bytes(config)
+    assert body_limit == 2 * 1024 * 1024
+
+    async def fail_parse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("transport parser must remain behind Bearer auth")
+
+    monkeypatch.setattr(api_module, "parse_bounded_multipart", fail_parse)
+
+    response = _client(service, config=config).post(
+        "/api/v1/analyses",
+        content=b"x" * (body_limit + 1),
+        headers={"Content-Type": "multipart/form-data; boundary=unused"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "authentication_required"
+    assert service.sources == []
+
+
+def test_body_exactly_at_global_cap_is_accepted() -> None:
+    service = StubApplicationService()
+    config = _small_transport_config()
+    body_limit = multipart_body_limit_bytes(config)
+    empty_body, content_type = _raw_file_multipart(b"")
+    body, _ = _raw_file_multipart(b"x" * (body_limit - len(empty_body)))
+    assert len(body) == body_limit
+
+    response = _client(service, config=config).post(
+        "/api/v1/analyses",
+        content=body,
+        headers={**AUTH, "Content-Type": content_type},
+    )
+
+    assert response.status_code == 202
+    assert service.original_names == ["sample.png"]
+    assert service.sources[0].channel.value == "api"
+
+
+def test_chunked_cap_plus_one_is_413_before_registration() -> None:
+    service = StubApplicationService()
+    config = _small_transport_config()
+    body_limit = multipart_body_limit_bytes(config)
+    empty_body, content_type = _raw_file_multipart(b"")
+    body, _ = _raw_file_multipart(b"x" * (body_limit + 1 - len(empty_body)))
+    assert len(body) == body_limit + 1
+
+    def chunks():
+        midpoint = len(body) // 2
+        yield body[:midpoint]
+        yield body[midpoint:]
+
+    response = _client(service, config=config).post(
+        "/api/v1/analyses",
+        content=chunks(),
+        headers={**AUTH, "Content-Type": content_type},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "file_too_large"
+    assert set(response.json()) == {"error", "request_id"}
+    assert service.sources == []
+
+
+def test_false_small_content_length_cannot_bypass_actual_body_cap() -> None:
+    service = StubApplicationService()
+    config = _small_transport_config()
+    body_limit = multipart_body_limit_bytes(config)
+    empty_body, content_type = _raw_file_multipart(b"")
+    body, _ = _raw_file_multipart(b"x" * (body_limit + 1 - len(empty_body)))
+
+    response = _client(service, config=config).post(
+        "/api/v1/analyses",
+        content=body,
+        headers={
+            **AUTH,
+            "Content-Type": content_type,
+            "Content-Length": "1",
+        },
+    )
+
+    assert response.status_code == 413
+    assert "analysis_id" not in response.json()
+    assert service.sources == []
+
+
+def test_receive_or_parse_deadline_uses_safe_existing_multipart_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StubApplicationService()
+
+    async def timeout(*_args: object, **_kwargs: object) -> None:
+        raise RequestBodyDeadlineError
+
+    monkeypatch.setattr(api_module, "parse_bounded_multipart", timeout)
+
+    response = _upload(_client(service))
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_multipart"
+    assert set(response.json()) == {"error", "request_id"}
+    assert service.sources == []
+
+
+def test_real_parser_elapsed_deadline_is_400_before_api_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StubApplicationService()
+    ticks = itertools.count(start=0.0, step=0.2)
+    monkeypatch.setattr(http_upload_module, "_monotonic_time", ticks.__next__)
+    body, content_type = _raw_file_multipart(b"payload")
+
+    response = _client(service, config=_one_second_request_timeout_config()).post(
+        "/api/v1/analyses",
+        content=body,
+        headers={**AUTH, "Content-Type": content_type},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_multipart"
+    assert set(response.json()) == {"error", "request_id"}
+    assert service.sources == []
+    assert service.payloads == []
+
+
+@pytest.mark.parametrize(
+    ("field_name", "filename"),
+    [
+        ("file", "two.png"),
+        ("unexpected", None),
+        ("source_context", None),
+    ],
+    ids=["duplicate-file", "unknown-field", "source-context"],
+)
+def test_incomplete_final_part_is_400_before_api_submission(
+    field_name: str,
+    filename: str | None,
+) -> None:
+    service = StubApplicationService()
+    body, content_type = _truncated_multipart_after_file(
+        field_name,
+        filename=filename,
+    )
+
+    response = _client(service).post(
+        "/api/v1/analyses",
+        content=body,
+        headers={**AUTH, "Content-Type": content_type},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_multipart"
+    assert set(response.json()) == {"error", "request_id"}
+    assert service.sources == []
+    assert service.payloads == []
+
+
+def test_strict_multipart_structure_rejects_duplicate_and_unknown_fields() -> None:
+    service = StubApplicationService()
+    client = _client(service)
+    valid_source = json.dumps({"channel": "api"})
+    cases = [
+        [
+            ("file", ("one.png", b"one", "image/png")),
+            ("file", ("two.png", b"two", "image/png")),
+        ],
+        [
+            ("file", ("one.png", b"one", "image/png")),
+            ("source_context", (None, valid_source)),
+            ("source_context", (None, valid_source)),
+        ],
+        [
+            ("file", ("one.png", b"one", "image/png")),
+            ("unexpected", (None, "value")),
+        ],
+        [("file", (None, "not-an-upload"))],
+    ]
+
+    for files in cases:
+        response = client.post("/api/v1/analyses", files=files, headers=AUTH)
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_multipart"
+
+    assert service.sources == []
+
+
+def test_source_context_file_preserves_safe_validation_semantics() -> None:
+    service = StubApplicationService()
+    response = _client(service).post(
+        "/api/v1/analyses",
+        files=[
+            ("file", ("one.png", b"one", "image/png")),
+            ("source_context", ("source.json", b'{"channel":"api"}', "application/json")),
+        ],
+        headers=AUTH,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_source_context"
+    assert service.sources == []
+
+
+def test_api_error_request_id_matches_safe_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StubApplicationService()
+    diagnostics: list[dict[str, object]] = []
+
+    def capture_diagnostic(
+        _logger: logging.Logger,
+        _level: int,
+        event: str,
+        **fields: object,
+    ) -> None:
+        diagnostics.append({"event": event, **fields})
+
+    monkeypatch.setattr(api_module, "emit_diagnostic", capture_diagnostic)
+
+    response = _malformed_multipart(
+        _client(service),
+        authorization=f"Bearer {TOKEN}",
+    )
+
+    assert response.status_code == 400
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["event"] == "api_error"
+    assert diagnostics[0]["request_id"] == response.json()["request_id"]
+    assert diagnostics[0]["code"] == "invalid_multipart"
+
+
+def test_api_logging_failure_does_not_change_error_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_log(*_args: object, **_kwargs: object) -> None:
+        raise OSError("PRIVATE logging path")
+
+    monkeypatch.setattr(api_module._LOGGER, "log", fail_log)
+
+    response = _malformed_multipart(
+        _client(StubApplicationService()),
+        authorization=f"Bearer {TOKEN}",
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_multipart"
+    assert response.json()["request_id"].startswith("req_")
 
 
 def test_missing_and_empty_file_are_transport_400_without_analysis_id() -> None:

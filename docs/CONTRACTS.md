@@ -382,8 +382,9 @@ Stage 8 Macro 1 уточняет единую последовательност
 Ошибка `save()` не повторяет анализ или очистку, не меняет фактический основной
 статус и не публикует `FINISHED`. Задача остаётся в `PERSISTENCE`, расчёт — в
 `FACT_READY`, владение финализацией освобождается, а в авторитетный реестр
-добавляется безопасная ошибка `result_write_failed`. Автоматические повторная
-попытка и восстановление после перезапуска относятся к Stage 9.
+добавляется безопасная ошибка `result_write_failed`. Stage 9 Macro 1 не вводит
+автоматическую повторную попытку, durable recovery или восстановление после
+перезапуска; такое поведение возможно только как отдельное последующее решение.
 
 ### 3.2. Внутренний контекст задачи `AnalysisContext`
 
@@ -605,13 +606,24 @@ application-owned, строится только из validated system `analysis
 ```text
 workspace eligible for TTL cleanup
 ONLY IF
+analysis_id не защищён pre-handoff ownership temporary input owner
+AND
 analysis_id is NOT present as an active/non-terminal task in TaskRegistry
 ```
 
 Janitor запрещено cleanup или quarantine workspace живой задачи независимо от
-его filesystem mtime. Минимальный deterministic MVP sweep запускается при старте
-Stage 4 scheduler, после cleanup terminal task и при graceful shutdown; отдельный
-daemon или background timer не вводится.
+его filesystem mtime. Проверка pre-handoff protection и выдача разрешения на
+cleanup выполняются тем же temporary input owner: под короткой thread-safe
+state guard он атомарно проверяет pre-handoff protection и публикует janitor
+claim для конкретного `analysis_id`. Пока claim опубликован, создать новую
+pre-handoff protection того же `analysis_id` нельзя; затем
+`TaskRegistry.cleanup_if_inactive()` и физический cleanup выполняются без
+глобальной owner guard, а claim снимается в `finally`. Поэтому раздельное окно
+`check-active() → delete()` для одного `analysis_id` запрещено, но медленная
+операция одного analysis не блокирует unrelated analyses. Минимальный
+deterministic MVP sweep запускается при старте Stage 4 scheduler, после cleanup
+terminal task и при graceful shutdown; отдельный daemon или background timer не
+вводится.
 
 Для каждого непосредственного безопасного дочернего workspace sweep:
 
@@ -623,8 +635,12 @@ daemon или background timer не вводится.
 
 Symlink и suspicious/unknown entries не follow и не интерпретируются как trusted
 workspace. Они обрабатываются консервативно, и система не заявляет cleanup
-success без фактического безопасного удаления. Полный TOCTOU/no-follow hardening
-остаётся задачей Stage 9.
+success без фактического безопасного удаления. Stage 9 Macro 2 требует перед
+destructive recovery повторно подтвердить root, direct-child identity и всё
+удаляемое дерево как набор ordinary directories/regular files без symlink,
+junction или иного detectable reparse point. Подозрительный объект остаётся на
+месте и создаёт safe recovery issue; `shutil.rmtree()` и quarantine rename для
+него запрещены.
 
 После `quarantine_ttl_hours` eligible quarantined item получает cleanup attempt
 во время sweep. При success item удаляется. При failure item остаётся в
@@ -680,7 +696,9 @@ terminalizes active task и не восстанавливает primary outcome.
 
 Правила:
 
-- `original_name` используется только для отображения и диагностики;
+- `original_name` используется только для отображения и доменного результата;
+- `original_name` не включается в технический журнал без отдельного безопасного
+  sanitization contract;
 - имя не используется для формирования системного пути;
 - для MVP `original_name` обязан содержать расширение;
 - `file.mp4` и `archive.tar.mp4` дают нормализованное расширение `mp4`;
@@ -859,6 +877,29 @@ Extension, declared MIME, `original_name` и `Content-Length` не выбира�
 фактический размер и SHA-256 рассчитываются в том же intake pass. Конкретные
 числовые лимиты остаются конфигурацией.
 
+До регистрации Stage 3 HTTP mutation boundary независимо ограничивает полный
+request body:
+
+```text
+GLOBAL_BODY_LIMIT =
+max(max_file_size_mb.image, max_file_size_mb.audio, max_file_size_mb.video)
+* 1_048_576
++ 1_048_576 bytes multipart envelope
+```
+
+Считаются фактически полученные body bytes; `Content-Length` допускается только
+как ранняя оптимизация отказа. Ровно `GLOBAL_BODY_LIMIT` байт разрешено передать
+parser, превышение возвращает transport `413 file_too_large` без `analysis_id`,
+result links, Stage 3 registration или workspace. Это не заменяет per-media
+проверку Stage 3: request ниже global cap может после определения `MediaType`
+получить канонический зарегистрированный `413` по более узкому лимиту с
+сохранённым терминальным результатом.
+
+Application boundary ограничивает только байты, уже переданные ASGI-приложению,
+и защищает multipart parser/spool. Она не заменяет отдельные deployment limits
+Uvicorn, reverse proxy или другого upstream transport, если такой слой
+используется.
+
 ### 6.5. Семантика безопасного чтения
 
 Для image `safe_read=true` означает полное безопасное декодирование и получение
@@ -895,9 +936,23 @@ Temporary input owner создаёт `runtime/temp/<analysis_id>`, формир�
 выполняет cleanup.
 
 Каталог создаётся с минимально необходимой для текущего локального runtime
-политикой доступа и изолируется от workspace других `analysis_id`. Hardening
-против concurrent path substitution, TOCTOU и полный no-follow redesign
-относятся к Stage 9 и не являются частью этого контракта Stage 3.
+политикой доступа и изолируется от workspace других `analysis_id`. Temporary root
+и каждый workspace должны быть ordinary directories без symlink, junction или
+иного detectable reparse point; workspace обязан оставаться точным direct child
+root. Эти инварианты повторно проверяются перед ingest, controlled read/local-path
+callback, cleanup и quarantine. Canonical `source`, если он существует, обязан
+быть ordinary regular file без detectable reparse; suspicious source не
+читается, не удаляется и не помещается в quarantine. Создание source использует
+exclusive create и доступный на платформе `O_NOFOLLOW`; controlled read сверяет
+identity открытого descriptor с проверенным path object.
+
+Новые sensitive directories запрашивают `mode=0o700`; source и временный result
+создаются с stdlib exclusive/private file semantics, а JSONL handler полагается
+на private log directory и стандартную политику создания `logging`. На Windows
+это не является проверкой или гарантией ACL: существующие ACL не переписываются,
+а deployment parent обязан принадлежать и быть writable только доверенным
+account. Stdlib-недоступная проверка ACL является эксплуатационной prerequisite,
+а не подтверждённым runtime invariant.
 
 Успешный внутренний handoff логически содержит:
 
@@ -915,7 +970,26 @@ handle.
 До успешного handoff owner отвечает за cleanup при rejection и exception. После
 handoff Stage 4 принимает ownership и отвечает за дальнейший lifecycle и
 последующую очистку accepted input. Если handoff не состоялся, ownership остаётся
-у Stage 3.
+у Stage 3. Pre-handoff protection регистрируется у temporary input owner до
+появления workspace в файловой системе и сохраняется через move-style transfer.
+Во время `receiver.accept()` protection остаётся опубликованной без удержания
+глобальной owner guard и снимается коротким атомарным transition только после
+успешного receiver commit. При исключении receiver protection остаётся активной,
+пока Stage 3 выполняет свою единственную ordinary physical cleanup attempt.
+После завершения этой attempt Stage 3 workflow ownership заканчивается и
+protection снимается как при успехе, так и при обычном `OSError`; не удалённый
+residue становится eligible для существующего TTL/recovery после проверки
+`TaskRegistry`. Новый retry Stage 3 не выполняется.
+
+Операция subprocess/media, которая может оставить reader/process незавершённым,
+передаёт до Stage 3 внутренний cleanup safety barrier. Это private protocol, а не
+поле domain/API. Если `try_confirm_safe()` не вернул ровно `true` или сам завершился
+ошибкой, Stage 3 запрещены unlink source, удаление workspace и quarantine;
+`CleanupResult` фиксирует `failed`, а исходный ресурс остаётся под pre-handoff
+protection. После подтверждения barrier действует обычная cleanup policy. Ошибки
+validation, не имеющие активного reader/process, barrier не создают и очищаются
+как прежде. То же правило действует для `BaseException`/`finally`: safety barrier
+нельзя обойти best-effort cleanup.
 
 ### 6.7. Прикладной результат Stage 3
 
@@ -1007,7 +1081,14 @@ filesystem path, traceback или другие implementation details. Посл�
 handoff, выполняется ровно одна immediate cleanup attempt. Её фактический
 результат записывается в обязательный для этого случая `CleanupResult`.
 Cleanup retry, TTL и quarantine остаются ответственностью Stage 4 и не
-применяются Stage 3.
+применяются Stage 3. Исключение составляет safety refusal из раздела 6.6: он не
+является физической attempt и запрещает опасный cleanup, но всё равно даёт
+фактический `CleanupResult(status=failed)` без ложного заявления об удалении.
+При safety refusal pre-handoff protection не снимается. Ordinary physical
+attempt считается завершённой после success или преобразованного в
+`TemporaryInputCleanupError` `OSError`; при `BaseException`/interruption
+безопасность состояния автоматически не подтверждается, поэтому protection
+остаётся активной.
 
 Cleanup failure не меняет и не маскирует primary outcome:
 
@@ -1050,15 +1131,20 @@ owned
 ```
 
 Это implementation-private state, а не domain enum или сериализуемый контракт.
-Pre-handoff cleanup terminal outcome переводит `owned` непосредственно в
-`released`, не создавая ложного handoff.
+Успешный pre-handoff cleanup переводит `owned` непосредственно в `released`, не
+создавая ложного handoff. Неуспешная ordinary physical attempt сохраняет
+фактические признаки неудалённого ресурса, но завершает Stage 3 workflow
+ownership и снимает pre-handoff protection, чтобы residue обслуживался
+существующим janitor recovery; новый private/domain state для этого не вводится.
 Handoff имеет move-style semantics: исходная Stage 3 capability после transfer
 недействительна; double transfer, transfer released source и transfer foreign
 ownership запрещены. Успешный handoff запрещает последующий cleanup со стороны
 Stage 3. Если receiver не подтвердил handoff, ownership и cleanup obligation
 остаются у Stage 3 и выполняется одна immediate cleanup attempt. Receiver обязан
 откатить provisional Stage 4 state перед исключением; Stage 3 сохраняет safe
-primary receiver failure отдельно от cleanup outcome.
+primary receiver failure отдельно от cleanup outcome. Pre-handoff protection
+заменяется авторитетным Stage 4 ownership только внутри coordinated receiver
+commit; состояния без защиты одного из этих владельцев между ними нет.
 
 Узкий receiver port не является универсальным lease/capability framework и не
 реализует Stage 4. Stage 3 заканчивается либо accepted validated descriptor и
@@ -1143,6 +1229,13 @@ creation/write. Partial или ещё не созданный после сбо�
 регистре и запрещает повторное резервирование той же цели другим ref.
 Точное сравнение компонентов сохраняет допустимые соседние и вложенные пути,
 включая имена с общим текстовым префиксом; идентичность реестра/ref не меняется.
+
+Перед каждым trusted artifact path callback registry повторно подтверждает
+workspace и все уже существующие intermediate parents как ordinary directories
+без detectable reparse, а существующий target — как ordinary regular file.
+Cleanup применяет ту же проверку и не unlink/rmdir suspicious target или parent.
+Enforcement находится на общей artifact capability boundary и не дублируется в
+каждом analyzer/preprocessor.
 
 Для созданных артефактов Stage 5 одной задачи установлен единый внутренний предел
 количества `_MAX_STAGE5_ARTIFACTS = 256`. Производитель аудио вычисляет
@@ -1434,6 +1527,16 @@ argument list, `shell=False`, disabled stdin, controlled cwd, bounded stdout,
 bounded/discarded stderr, timeout и terminate/kill/reap с safe factual outcome.
 Stage 3 и Stage 5 используют отдельные semantic adapters поверх primitive;
 существующие Stage 3 media rejection и infrastructure semantics не меняются.
+
+FFmpeg/ffprobe получают media input только как абсолютный канонический
+application-owned путь к `source` или зарегистрированному artifact. Значение
+`original_name` не участвует в argv и не может стать option или protocol input.
+Непосредственно перед каждым media input задаётся
+`-protocol_whitelist file`; intentional controlled output `pipe:1` не является
+пользовательским input. Executable name и все остальные аргументы задаёт
+trusted application code. Это запрещает user-controlled network/protocol input,
+но не является OS process sandbox, CPU/RAM quota или защитой от hostile process
+под той же account.
 
 Внутренний режим передачи stdout напрямую в приёмник сохраняет ту же процессную границу:
 stdout читается ограниченными блоками и потоково передаётся механизму записи без накопления
@@ -1914,6 +2017,7 @@ internal
 |---|---|---|
 | `authentication_required` | authentication | Не предоставлен токен/сессия |
 | `authentication_failed` | authentication | Недействительные данные доступа |
+| `invalid_multipart` | validation | Multipart body или его структура не прошли безопасный разбор |
 | `file_missing` | validation | Файл не передан |
 | `file_empty` | validation | Пустой файл |
 | `file_too_large` | resource_limit | Превышен лимит |
@@ -2152,7 +2256,8 @@ cleanup промежуточных файлов не осталось; это н
 безопасную типизированную ошибку с фактическим `analysis_id`, не создаёт
 фиктивный результат, URL результата, кеш или обещание последующего GET либо
 восстановления. `PreRegistrationError` не создаёт `AnalysisResult`. Повторная
-попытка и восстановление после неудачного сохранения Stage 3 относятся к Stage 9.
+попытка и восстановление после неудачного сохранения Stage 3 не вводятся Stage 9
+Macro 1 и требуют отдельного будущего решения.
 
 Stage 4 не формирует промежуточную или фиктивную версию `AnalysisResult` и не
 фабрикует результаты анализаторов, признаки, полноту, оценку риска или
@@ -2404,7 +2509,7 @@ external references, ошибки, findings, результаты и метри�
 - `limit <= 0` отклоняется с `ValueError` до обращения к файловой системе;
 - отсутствующий каталог результатов означает пустой список и не создаётся;
 - рассматриваются только непосредственные дочерние обычные файлы без перехода
-  по symlink;
+  по symlink/junction/иному detectable reparse;
 - имя кандидата имеет точный lowercase-вид `<analysis_id>.json`, а
   `analysis_id` проходит те же проверки безопасного компонента пути, что и
   остальные операции repository;
@@ -2450,6 +2555,18 @@ external references, ошибки, findings, результаты и метри�
   зарезервированных имён Windows;
 - существующая прямая символическая ссылка на целевой JSON отклоняется до записи
   временного файла;
+- существующий result root обязан быть ordinary directory без symlink, junction
+  или иного detectable reparse point; его непосредственная значимая lexical
+  parent boundary также проверяется, а отсутствующий root создаётся с
+  `mode=0o700` как stdlib best effort;
+- адресные `get`/`exists` отклоняют safe typed `ResultRepositoryError` как
+  suspicious root, так и symlink/junction/reparse/non-regular target; отсутствие
+  безопасного root/target сохраняет прежнюю семантику `None`/`false`;
+- созданный `.result-*.tmp`, result root и существующий destination повторно
+  проверяются непосредственно перед `os.replace`; temp cleanup не удаляет
+  suspicious residue;
+- regular-file reads открываются после no-follow metadata check и до разбора
+  payload сверяют descriptor identity с проверенным file object;
 - отсутствие прямой записи из анализаторов;
 - безопасное формирование пути;
 - отсутствие исходного мультимедиа в результате;
@@ -2457,6 +2574,17 @@ external references, ошибки, findings, результаты и метри�
 - `get`, `exists` и `list_recent` отображают `OSError` в безопасный
   `ResultRepositoryError` без пути, данных и исходного текста ОС;
 - возможность позднее заменить реализацию без изменения ядра.
+
+Ошибка удаления созданного `.result-*.tmp` не скрывается: в доступной безопасной
+точке журналируется `cleanup_failed` с `phase=result_temp_cleanup` и
+`code=result_temp_cleanup_failed`, без абсолютного пути. Этот secondary failure
+не меняет основной persistence outcome и не запускает retry. Stage 9 Macro 1 не
+вводит автоматическую startup-очистку таких файлов и не обещает crash recovery.
+Безопасная ручная очистка допускается только после остановки runtime и
+подтверждения его исключительного владения каталогом результатов: оператор
+проверяет только непосредственные обычные файлы с точной формой
+`.result-*.tmp`, исключает symlink/junction/reparse entries и удаляет каждый
+явно проверенный residue отдельно. Массовый wildcard cleanup при старте запрещён.
 
 Перед сохранением `ResultFinalizationService` применяет политику
 `result.include_raw_metrics` к отделённой проекции результата: при `true`
@@ -2509,6 +2637,14 @@ external_systems
 - `port`;
 - `request_timeout_seconds`;
 - `application_version`.
+
+`request_timeout_seconds` является deadline только для HTTP body receive и
+multipart parse mutation-запроса. Он начинается после обязательных transport
+security guards и заканчивается до вызова application intake. Истечение
+возвращает существующую безопасную семантику `400 invalid_multipart` без
+регистрации, ID и result links. Это поле не ограничивает очередь, Stage 3,
+analyzer, preprocessing, общий Stage 5 lifetime или сохранение результата;
+для них действуют отдельные существующие processing/subprocess limits.
 
 #### `access_channels.webui`
 
@@ -2847,6 +2983,14 @@ Authorization: Bearer <token>
 - `file` — обязательный файл;
 - `source_context` — необязательная JSON-строка, валидируемая как `SourceContext`.
 
+Структура строгая: `file` присутствует ровно один раз как file part,
+`source_context` — не более одного раза, иные имена полей запрещены. Duplicate
+`file`, duplicate `source_context`, unknown field и строковый part вместо
+`UploadFile` для `file` возвращают `400 invalid_multipart`; отсутствующий `file`
+сохраняет `400 file_missing`. Единственный `source_context`, переданный не как
+строка, сохраняет существующую safe validation semantics `422
+invalid_source_context`.
+
 Успешный ответ:
 
 ```http
@@ -2873,10 +3017,16 @@ Authorization: Bearer <token>
 участвуют в аутентификации, авторизации, доверии маршрутизации или построении
 внутренних путей.
 
-Bearer проверяется до разбора тела запроса. Только после успешной аутентификации
-адаптер вызывает `request.form()` и извлекает `file` и `source_context`.
-Некорректное тело `multipart/form-data` возвращает `400` в модели
-`APIErrorResponse`; ответ обработчика FastAPI с полем `detail` наружу не выходит.
+Bearer проверяется до чтения тела запроса. Только после успешной аутентификации
+адаптер применяет early `Content-Length` optimization, потоковый actual-byte cap,
+общий `server.request_timeout_seconds` deadline, Starlette multipart parser и
+строгую проверку структуры, после чего извлекает `file` и `source_context`.
+Parser получает только уже ограниченный stream; полный upload не собирается
+через `request.body()`, file parts используют framework spool. Некорректное тело
+или истечение receive/parse deadline возвращает `400 invalid_multipart` в модели
+`APIErrorResponse`; private parser detail наружу не выходит. Превышение global
+body cap возвращает `413 file_too_large` до Stage 3 с тем же безопасным envelope,
+но без `analysis_id`, `status_url` и `result_url`.
 
 Принятый `Stage3Accepted` возвращает `202`. Успешно сохранённый
 `Stage3Terminal` использует смешанную семантику `413`/`415`/`422`/`500` и только
@@ -2953,11 +3103,11 @@ Authorization: Bearer <token>
 |---:|---|
 | `200` | Результат или статус успешно получен |
 | `202` | Задача принята или ещё выполняется |
-| `400` | Некорректный запрос |
+| `400` | Некорректный запрос, включая receive/parse deadline multipart body |
 | `401` | Требуется аутентификация |
 | `403` | Доступ запрещён |
 | `404` | Анализ не найден |
-| `413` | Файл превышает лимит |
+| `413` | Полный transport body либо определённый Stage 3 media file превышает свой лимит |
 | `415` | Формат/тип не поддерживается |
 | `422` | Структура параметров не прошла валидацию |
 | `429` | Превышено ограничение запросов, если оно включено |
@@ -3041,9 +3191,12 @@ GET  /analyses/{analysis_id}/result
 страницей `403`. Cookie, сеанс и CSRF-токен не вводятся.
 
 На `POST /analyses` HTTP Basic завершается до входа в обработчик, затем
-проверяется совпадение источника и только после этого вызывается
-`request.form()`. Некорректная форма после успешных проверок получает безопасную
-HTML-страницу `400`.
+проверяется совпадение источника и только после этого выполняются bounded receive,
+multipart parse и строгая проверка формы. Допустим ровно один file part `file`;
+duplicate, unknown, missing или строковый `file` получают branded безопасную
+HTML-страницу `400`. Истечение receive/parse deadline использует ту же страницу
+`400 invalid_multipart`; превышение global body cap — branded `413
+file_too_large`. Ни один такой transport outcome не регистрирует анализ.
 
 ### 18.3. Страница результата
 
@@ -3082,10 +3235,47 @@ HTML-страницу `400`.
   "analyzer_id": "metadata_analyzer",
   "duration_ms": 81,
   "status": "completed",
-  "error_type": null,
   "message": "Analyzer completed."
 }
 ```
+
+Каждая строка является самостоятельным валидным JSON object. Базовые поля:
+
+```text
+timestamp
+level
+logger
+module
+event
+message
+```
+
+`message` выбирается только из статического текста канонического `event` и не
+строится из exception message/repr или пользовательского ввода. Разрешённые
+structured fields:
+
+```text
+analysis_id
+request_id
+phase
+code
+error_type
+status
+stage
+analyzer_id
+duration_ms
+schema_version
+host
+port
+```
+
+`schema_version`, `host` и `port` относятся к уже существующим startup events.
+Formatter валидирует форму разрешённых значений и пропускает отсутствующие или
+небезопасные значения. Любой иной `extra` не сериализуется автоматически.
+Запрещены raw exception/traceback, `Authorization`, Bearer/Basic credentials,
+значения secrets из environment, полный `SourceContext`, raw headers,
+произвольный `original_name`, абсолютные temporary/workspace paths и иной
+user-controlled payload без отдельного sanitization contract.
 
 ### 19.2. Канонические события MVP
 
@@ -3106,6 +3296,10 @@ cleanup_started
 cleanup_completed
 cleanup_failed
 result_saved
+result_persistence_failed
+ownership_handoff_completed
+validation_failed
+api_error
 analysis_completed
 analysis_partial
 analysis_failed
@@ -3118,7 +3312,48 @@ analysis_failed
 подтверждает привязку Uvicorn к порту или готовность приложения принимать
 HTTP-запросы. HTTP readiness проверяется отдельно через `GET /health`.
 
-JSONL whitelist и обязательные поля события остаются без изменений.
+До создания или повторного использования JSONL handler log directory обязан
+быть ordinary non-reparse directory, а существующий canonical log target —
+ordinary non-reparse regular file. Новый каталог создаётся с `mode=0o700` как
+stdlib best effort; открытый handler descriptor сверяется с проверенным target.
+Нарушение является безопасным `RuntimeSetupError`/`LoggingSetupError` без пути и
+raw OS details.
+
+Фактически обязательные diagnostic boundaries Macro 1:
+
+- `analysis_registered` после появления известной identity;
+- `validation_failed` для internal Stage 3 failure;
+- `ownership_handoff_completed` только после успешного Stage 4 receiver commit;
+- `cleanup_failed` для cleanup/recovery issue, включая безопасную диагностику
+  residue временного result-файла;
+- `result_persistence_failed` при неуспешном `save()`;
+- `analysis_completed`, `analysis_partial` или `analysis_failed` только после
+  успешного сохранения и публикации `FINISHED`; для terminal Stage 3 rejection
+  используется утверждённое `validation_rejected` со `stage=finished`;
+- `api_error` для безопасного HTTP error envelope.
+
+Контрактно значимый порядок для принятой задачи:
+
+```text
+cleanup_completed | cleanup_failed
+→ result_saved
+→ analysis_completed | analysis_partial | analysis_failed
+```
+
+`result_saved` появляется только после успешного `ResultRepository.save()`, а
+terminal analysis event — после публикации `FINISHED`. При ошибке `save()`
+журналируется `result_persistence_failed`; ложные `result_saved` и terminal
+analysis event запрещены.
+
+`request_id` является только adapter/diagnostic correlation. Для каждого HTTP
+error значение `request_id` в response envelope обязано совпадать со значением в
+соответствующем `api_error`; оно не добавляется в `AnalysisResult`,
+`SourceContext`, task identity или success response.
+
+Diagnostic logging является secondary side effect. Ошибка formatter, emit,
+rotation или handler не повторяет анализ, cleanup или persistence, не меняет
+primary `completed`/`partial`/`failed`/`rejected`, не создаёт retry и не изменяет
+безопасный пользовательский ответ.
 
 События не являются пользовательским аудитом действий и не заменяют отдельную модель аудита, если она понадобится позднее.
 

@@ -340,6 +340,125 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-17
+
+### Изменено
+
+- **[Stage 9/Closure] Stage 9 закрыт после independent post-remediation audit с
+  `PASS`.** Findings `S9-A01` и `S9-A02` имеют статус `CLOSED`; новых findings
+  нет (`0 BLOCKER`, `0 HIGH`, `0 MEDIUM`, `0 LOW`). Финальный barrier:
+  `1763 passed, 17 skipped`, coverage `90%`. Следующим этапом становится Stage 10,
+  который остаётся `NOT_STARTED`.
+
+### Исправлено
+
+- **[Stage 9/S9-A01] Multipart parsing теперь подтверждает полное завершение
+  сообщения.** Возврат `FormData` от Starlette больше не считается достаточным:
+  boundary требует фактического `on_end` от `python-multipart`, а ASGI body stream
+  должен завершиться нормально. Оборванная последняя file/field part возвращает
+  существующий `400 invalid_multipart` до регистрации; созданные parser spool
+  закрываются.
+
+- **[Stage 9/S9-A02] Receive/parse deadline усилен синхронными monotonic
+  checkpoints.** Один absolute deadline проверяется на stream boundary и сразу
+  после завершения parser до возврата `FormData`, поэтому готовые без suspension
+  chunks и длительная синхронная parser work больше не обходят лимит.
+  `asyncio.timeout()` сохранён для отмены блокирующего receive. Публичный
+  контракт, конфигурация, schema и зависимости не изменены.
+
+Оба finding независимого финального аудита исправлены в реализации, но Stage 9
+остаётся `IN_PROGRESS`: owner review и independent post-remediation audit ещё не
+выполнены. Stage 10 остаётся `NOT_STARTED`.
+
+### 2026-09-16
+
+### Добавлено
+
+- **[Stage 9 Macro 4/E2E] Добавлено полное production-composed доказательство
+  Profile B.** Generated network-free image/audio/video fixtures проходят API
+  через Stage 3–8 до сохранённого `AnalysisResult`; representative WebUI,
+  restart без старого `TaskRegistry`, rejection, infrastructure/persistence/
+  cleanup failures, auth/body guards, deterministic concurrency и graceful
+  shutdown проверяются отдельными full-path сценариями. Публичная схема,
+  маршруты и production behavior не расширялись.
+
+- **[Stage 9 Macro 4/Measurement] Добавлен воспроизводимый informational
+  resource harness.** `scripts/measure_stage9_profile_b.py` выполняет каждый
+  Profile B workflow в свежем process и публикует structured JSON с wallclock,
+  fixture/result sizes и доступной RSS metric без новой зависимости. Reference
+  Windows measurement зафиксирован в `PROJECT.md` и `ROADMAP.md`; произвольный
+  SLA, OS-level CPU/RAM quotas и изменение deployment limits не введены.
+
+### 2026-09-15
+
+### Исправлено
+
+- **[Stage 9 Macro 2/Filesystem] Реализован targeted runtime-root и reparse
+  hardening.** Sensitive temp/quarantine/result/log roots, direct workspace,
+  source, result/log targets и artifact parents теперь проверяются на ordinary
+  object type, symlink, junction и detectable Windows reparse point в безопасных
+  checkpoints. Janitor и quarantine retain/report suspicious objects до
+  `shutil.rmtree()`/rename; result repository сохраняет atomic same-directory
+  write, дополнительно проверяя root/temp/destination и descriptor identity.
+  Новые directories запрашивают private stdlib mode, существующие ACL не
+  переписываются; Windows ACL isolation и residual hostile-same-account races
+  честно зафиксированы как deployment prerequisite/ограничение без pywin32,
+  новых dependencies, config или domain schema.
+
+### Безопасность
+
+- **[Stage 9 Macro 3/HTTP transport] Добавлена bounded receive/parse boundary
+  до Stage 3 registration.** Полный mutation body потоково ограничен формулой
+  max configured per-media bytes + 1 MiB multipart envelope с независимым
+  actual-byte counting; `Content-Length` служит только ранней оптимизацией.
+  Bearer и HTTP Basic/same-origin guards остаются раньше body consumption,
+  `server.request_timeout_seconds` ограничивает receive+parse, partial framework
+  spool закрывается, а API/WebUI принимают только строгую структуру своих
+  multipart fields. Transport `413` и `400 invalid_multipart` не создают
+  analysis ID, result links или workspace; Stage 3 per-media `413` сохранён.
+
+- **[Stage 9 Macro 3/Media subprocess] Закрыт protocol/network input gap
+  FFmpeg/ffprobe.** Все Stage 3/5 media input ограничены
+  `-protocol_whitelist file` и остаются каноническими application-owned paths;
+  `original_name` не входит в argv. Существующий общий bounded process primitive
+  продолжает обеспечивать list argv, `shell=False`, disabled stdin,
+  bounded/discarded stdout/stderr, timeout и terminate/kill/reap без нового
+  process manager, dependency, config field или OS-level quota subsystem.
+
+### 2026-09-14
+
+### Исправлено
+
+- **[Stage 9 Macro 1/Lifecycle safety] Сохранён cleanup safety barrier Stage 3 и
+  закрыта pre-handoff race с janitor.** Причина: преобразование media-tool errors
+  теряло признак незавершённого reader/process, а workspace появлялся до
+  регистрации Stage 4 task. Теперь private barrier проходит до владельца cleanup,
+  неподтверждённая безопасность запрещает unlink/quarantine, а temporary input
+  owner координирует janitor и receiver commit короткими per-analysis claims и
+  private per-resource lock без глобальной блокировки медленных callbacks или
+  filesystem operations. Завершённая ordinary Stage 3 cleanup attempt снимает
+  pre-handoff protection даже при `OSError`, оставляя residue существующему
+  TTL/recovery; unresolved safety и interrupted physical operation продолжают
+  сохранять protection. Domain/API lifecycle не изменён.
+
+### Добавлено
+
+- **[Stage 9 Macro 1/JSONL] Реализована безопасная структурная диагностика
+  Stage 3–8.** Formatter пропускает только утверждённые поля и статические
+  сообщения событий; зарегистрированы identity, terminal failure, handoff,
+  cleanup/recovery, persistence, `FINISHED` и API errors. `request_id` HTTP error
+  совпадает с `api_error`, а сбой emit/handler остаётся secondary side effect и
+  не меняет business outcome.
+
+### Решения
+
+- **[Stage 9/Границы] Stage 9 разделён на четыре Macro и зафиксированы решения
+  `S9-D01`–`S9-D06`.** Macro 1 не вводит filesystem hardening, HTTP body guard,
+  E2E/performance envelope, durable recovery, retry или startup cleanup
+  `.result-*.tmp`; для crash residue определена только безопасная диагностика и
+  ручная maintenance procedure. Stage 9 имеет статус `IN_PROGRESS`, Macro 2 не
+  начат.
+
 ### 2026-09-11
 
 ### Добавлено

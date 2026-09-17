@@ -63,11 +63,15 @@ def _build_production_runtime(config: AppConfig) -> _ProductionRuntime:
         finding_service=Stage6FindingService(),
         assessment_service=Stage7AssessmentService(captured_config.risk_assessment),
     )
+    temporary_input_owner = LocalTemporaryInputOwner(
+        captured_config.temporary_storage.root_path
+    )
     scheduler = BoundedLocalScheduler(
         config=captured_config,
         clock=clock,
         registry=task_registry,
         result_finalizer=result_finalizer,
+        temporary_input_owner=temporary_input_owner,
     )
     receiver = Stage4TaskReceiver(
         config=captured_config,
@@ -75,9 +79,6 @@ def _build_production_runtime(config: AppConfig) -> _ProductionRuntime:
         registry=task_registry,
         router=MediaRouter(dict.fromkeys(MediaType, executor)),
         queue=scheduler,
-    )
-    temporary_input_owner = LocalTemporaryInputOwner(
-        captured_config.temporary_storage.root_path
     )
     intake = FileIntakeService(
         controlled_intake=ControlledIntakeService(

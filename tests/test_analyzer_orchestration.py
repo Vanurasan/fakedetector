@@ -799,8 +799,8 @@ def test_controlled_source_read_failure_is_fatal_and_stops_orchestration(
                 runner=runner,
             ).execute(case.prepared, case.descriptor, case.registry)
 
-    assert error.value.phase == "worker_internal"
-    assert len(runner.requests) == 1
+    assert error.value.phase == "input_capability"
+    assert len(runner.requests) == 0
     assert str(tmp_path) not in str(error.value)
     assert "OSError" not in str(error.value)
 

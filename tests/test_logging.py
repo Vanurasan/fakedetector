@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from fakedetector.config.models import LoggingConfig
-from fakedetector.logging_setup import configure_logging
+from fakedetector.logging_setup import configure_logging, emit_diagnostic
 
 
 @pytest.fixture
@@ -99,6 +99,7 @@ def test_log_record_is_safe_jsonl_with_utc_timestamp(logging_config) -> None:
     assert record["event"] == "application_starting"
     assert record["level"] == "INFO"
     assert record["logger"] == "fakedetector"
+    assert record["module"] == "test_logging"
     assert record["message"] == "Application is starting."
     assert record["schema_version"] == "1.0"
     assert record["host"] == "127.0.0.1"
@@ -123,6 +124,7 @@ def test_unknown_extra_fields_are_not_serialized(logging_config) -> None:
         "timestamp",
         "level",
         "logger",
+        "module",
         "event",
         "message",
         "schema_version",
@@ -185,6 +187,7 @@ def test_logging_rotates_jsonl_and_preserves_safe_records(tmp_path: Path) -> Non
         "timestamp",
         "level",
         "logger",
+        "module",
         "event",
         "message",
         "schema_version",
@@ -293,3 +296,94 @@ def test_repeated_configuration_preserves_foreign_handler_and_one_record(
     assert len(foreign_stream.getvalue().splitlines()) == 1
     log_lines = Path(config.jsonl_path).read_text(encoding="utf-8").splitlines()
     assert len(log_lines) == 1
+
+
+def test_formatter_preserves_only_approved_structured_diagnostics(logging_config) -> None:
+    logger, _ = logging_config
+    stream = _add_stream_handler(logger)
+    analysis_id = "a" * 32
+    request_id = f"req_{'b' * 32}"
+
+    emit_diagnostic(
+        logger,
+        logging.WARNING,
+        "analyzer_failed",
+        analysis_id=analysis_id,
+        request_id=request_id,
+        phase="execution",
+        code="analyzer_error",
+        error_type="worker_failure",
+        status="error",
+        stage="analysis",
+        analyzer_id="metadata_analyzer",
+        duration_ms=81,
+    )
+
+    record = json.loads(stream.getvalue().strip())
+    assert record == {
+        "timestamp": record["timestamp"],
+        "level": "WARNING",
+        "logger": "fakedetector",
+        "module": "test_logging",
+        "event": "analyzer_failed",
+        "message": "Analyzer failed.",
+        "analysis_id": analysis_id,
+        "request_id": request_id,
+        "phase": "execution",
+        "code": "analyzer_error",
+        "error_type": "worker_failure",
+        "status": "error",
+        "stage": "analysis",
+        "analyzer_id": "metadata_analyzer",
+        "duration_ms": 81,
+    }
+    assert record["timestamp"].endswith("Z")
+
+
+def test_formatter_drops_private_message_traceback_and_payload_fields(logging_config) -> None:
+    logger, _ = logging_config
+    stream = _add_stream_handler(logger)
+    poison = "Authorization Bearer token password C:\\PRIVATE\\temp\\source attribution"
+
+    try:
+        raise RuntimeError(poison)
+    except RuntimeError:
+        logger.error(
+            poison,
+            exc_info=True,
+            extra={
+                "event": "api_error",
+                "Authorization": poison,
+                "token": poison,
+                "password": poison,
+                "temporary_path": poison,
+                "source_context": {"external_reference": poison},
+                "arbitrary": poison,
+            },
+        )
+
+    line = stream.getvalue().strip()
+    record = json.loads(line)
+    assert poison not in line
+    assert record["message"] == "API request failed."
+    assert set(record) == {
+        "timestamp",
+        "level",
+        "logger",
+        "module",
+        "event",
+        "message",
+    }
+
+
+def test_diagnostic_emission_failure_is_secondary() -> None:
+    class FailingLogger(logging.Logger):
+        def log(self, *_args: object, **_kwargs: object) -> None:
+            raise OSError("PRIVATE logging failure")
+
+    emit_diagnostic(
+        FailingLogger("failing"),
+        logging.ERROR,
+        "analysis_failed",
+        analysis_id="a" * 32,
+    )

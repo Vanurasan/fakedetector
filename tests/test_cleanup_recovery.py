@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -131,7 +132,12 @@ def descriptor(analysis_id: str) -> ValidatedFileDescriptor:
     )
 
 
-def make_task(root: Path, analysis_id: str) -> tuple[AnalysisTask, LocalTemporaryInputOwner]:
+def make_task(
+    root: Path,
+    analysis_id: str,
+    *,
+    commit_handoff: bool = True,
+) -> tuple[AnalysisTask, LocalTemporaryInputOwner]:
     owner = LocalTemporaryInputOwner(root)
     owned_source = owner.create(analysis_id)
     owner.ingest(owned_source, BytesIO(b"x"), 1)
@@ -159,6 +165,8 @@ def make_task(root: Path, analysis_id: str) -> tuple[AnalysisTask, LocalTemporar
         accepted_source=accepted_source,
         artifacts=WorkspaceArtifactRegistry(root / analysis_id),
     )
+    if commit_handoff:
+        accepted_source._commit_handoff(lambda: None)
     return task, owner
 
 
@@ -578,16 +586,21 @@ def test_workspace_ttl_boundary_and_active_exclusion(tmp_path: Path) -> None:
     )
     exact = create_workspace(root, exact_id, _NOW - timedelta(minutes=60))
     older = create_workspace(root, older_id, _NOW - timedelta(minutes=60, seconds=1))
-    active_task, _owner = make_task(root, active_id)
+    active_task, active_owner = make_task(root, active_id)
     os.utime(root / active_id, ((_NOW - timedelta(days=1)).timestamp(),) * 2)
     registry = TaskRegistry()
     registry.reserve(active_task)
+    assert (
+        active_owner._cleanup_if_unprotected(active_id, lambda: "handoff-released")
+        == "handoff-released"
+    )
     config = make_config(root, ttl_minutes=60, quarantine_enabled=False)
 
     result = WorkspaceJanitor(
         config=config.temporary_storage,
         clock=authoritative_clock(),
         registry=registry,
+        temporary_input_owner=active_owner,
     ).sweep()
 
     assert younger.is_dir()
@@ -595,6 +608,248 @@ def test_workspace_ttl_boundary_and_active_exclusion(tmp_path: Path) -> None:
     assert not older.exists()
     assert (root / active_id / "source").is_file()
     assert result.workspaces_deleted == (exact_id, older_id)
+
+
+def test_stale_pre_handoff_workspace_is_not_swept(tmp_path: Path) -> None:
+    analysis_id = "a" * 32
+    root = tmp_path / "temp"
+    owner = LocalTemporaryInputOwner(root)
+    owned_source = owner.create(analysis_id)
+    owner.ingest(owned_source, BytesIO(b"x"), 1)
+    os.utime(root / analysis_id, ((_NOW - timedelta(days=1)).timestamp(),) * 2)
+    janitor = WorkspaceJanitor(
+        config=make_config(root, quarantine_enabled=False).temporary_storage,
+        clock=authoritative_clock(),
+        registry=TaskRegistry(),
+        temporary_input_owner=owner,
+    )
+
+    result = janitor.sweep()
+
+    assert result.workspaces_deleted == ()
+    assert result.workspaces_quarantined == ()
+    assert (root / analysis_id / "source").is_file()
+    owner.cleanup(owned_source)
+
+
+def test_blocked_janitor_cleanup_does_not_block_unrelated_owner_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cleanup_id = "1" * 32
+    unrelated_id = "2" * 32
+    root = tmp_path / "temp"
+    create_workspace(root, cleanup_id, _NOW - timedelta(days=1))
+    owner = LocalTemporaryInputOwner(root)
+    janitor = WorkspaceJanitor(
+        config=make_config(root, quarantine_enabled=False).temporary_storage,
+        clock=authoritative_clock(),
+        registry=TaskRegistry(),
+        temporary_input_owner=owner,
+    )
+    entered_cleanup = Event()
+    release_cleanup = Event()
+    unrelated_finished = Event()
+    unrelated_sources = []
+    unrelated_errors: list[BaseException] = []
+    real_recover = janitor._recover_workspace
+
+    def blocking_recover(entry: Path, candidate_id: str) -> str:
+        entered_cleanup.set()
+        assert release_cleanup.wait(5)
+        return real_recover(entry, candidate_id)
+
+    def run_unrelated_lifecycle() -> None:
+        try:
+            owned_source = owner.create(unrelated_id)
+            owner.ingest(owned_source, BytesIO(b"x"), 1)
+            accepted_source = owner.transfer(owned_source)
+            accepted_source._commit_handoff(lambda: None)
+            unrelated_sources.append(accepted_source)
+        except BaseException as error:
+            unrelated_errors.append(error)
+        finally:
+            unrelated_finished.set()
+
+    monkeypatch.setattr(janitor, "_recover_workspace", blocking_recover)
+    sweep_thread = Thread(target=janitor.sweep)
+    sweep_thread.start()
+    assert entered_cleanup.wait(5)
+
+    with pytest.raises(IntakeSystemError):
+        owner.create(cleanup_id)
+
+    unrelated_thread = Thread(target=run_unrelated_lifecycle)
+    unrelated_thread.start()
+    try:
+        assert unrelated_finished.wait(5)
+        assert unrelated_errors == []
+        assert len(unrelated_sources) == 1
+    finally:
+        release_cleanup.set()
+        sweep_thread.join(5)
+        unrelated_thread.join(5)
+
+    assert not sweep_thread.is_alive()
+    assert not unrelated_thread.is_alive()
+    assert not (root / cleanup_id).exists()
+    unrelated_sources[0].cleanup()
+
+
+def test_blocked_handoff_does_not_block_unrelated_create_or_allow_same_id_janitor(
+    tmp_path: Path,
+) -> None:
+    handoff_id = "3" * 32
+    unrelated_id = "4" * 32
+    root = tmp_path / "temp"
+    task, owner = make_task(root, handoff_id, commit_handoff=False)
+    os.utime(root / handoff_id, ((_NOW - timedelta(days=1)).timestamp(),) * 2)
+    janitor = WorkspaceJanitor(
+        config=make_config(root, quarantine_enabled=False).temporary_storage,
+        clock=authoritative_clock(),
+        registry=TaskRegistry(),
+        temporary_input_owner=owner,
+    )
+    entered_handoff = Event()
+    release_handoff = Event()
+    create_finished = Event()
+    sweep_finished = Event()
+    created_sources = []
+    operation_errors: list[BaseException] = []
+    sweep_results = []
+
+    def blocking_accept() -> None:
+        entered_handoff.set()
+        assert release_handoff.wait(5)
+
+    def commit_handoff() -> None:
+        try:
+            task.accepted_source._commit_handoff(blocking_accept)
+        except BaseException as error:
+            operation_errors.append(error)
+
+    def create_unrelated() -> None:
+        try:
+            created_sources.append(owner.create(unrelated_id))
+        except BaseException as error:
+            operation_errors.append(error)
+        finally:
+            create_finished.set()
+
+    def sweep() -> None:
+        try:
+            sweep_results.append(janitor.sweep())
+        except BaseException as error:
+            operation_errors.append(error)
+        finally:
+            sweep_finished.set()
+
+    handoff_thread = Thread(target=commit_handoff)
+    handoff_thread.start()
+    assert entered_handoff.wait(5)
+    create_thread = Thread(target=create_unrelated)
+    sweep_thread = Thread(target=sweep)
+    create_thread.start()
+    sweep_thread.start()
+    try:
+        assert create_finished.wait(5)
+        assert sweep_finished.wait(5)
+        assert operation_errors == []
+        assert len(created_sources) == 1
+        assert len(sweep_results) == 1
+        assert sweep_results[0].workspaces_deleted == ()
+        assert (root / handoff_id / "source").is_file()
+    finally:
+        release_handoff.set()
+        handoff_thread.join(5)
+        create_thread.join(5)
+        sweep_thread.join(5)
+
+    assert not handoff_thread.is_alive()
+    assert not create_thread.is_alive()
+    assert not sweep_thread.is_alive()
+    owner.cleanup(created_sources[0])
+    task.accepted_source.cleanup()
+
+
+def test_handoff_and_janitor_have_no_protection_free_race(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analysis_id = "e" * 32
+    root = tmp_path / "temp"
+    task, owner = make_task(root, analysis_id, commit_handoff=False)
+    os.utime(root / analysis_id, ((_NOW - timedelta(days=1)).timestamp(),) * 2)
+    registry = TaskRegistry()
+    janitor = WorkspaceJanitor(
+        config=make_config(root, quarantine_enabled=False).temporary_storage,
+        clock=authoritative_clock(),
+        registry=registry,
+        temporary_input_owner=owner,
+    )
+    registry_reserved = Event()
+    release_handoff = Event()
+    permission_requested = Event()
+    handoff_errors: list[BaseException] = []
+    sweep_results: list[object] = []
+    real_permission = owner._cleanup_if_unprotected
+
+    def observe_permission(analysis_id: str, cleanup):
+        permission_requested.set()
+        return real_permission(analysis_id, cleanup)
+
+    def reserve_stage4() -> None:
+        registry.reserve(task)
+        registry_reserved.set()
+        assert release_handoff.wait(5)
+
+    def commit_handoff() -> None:
+        try:
+            task.accepted_source._commit_handoff(reserve_stage4)
+        except BaseException as error:
+            handoff_errors.append(error)
+
+    monkeypatch.setattr(owner, "_cleanup_if_unprotected", observe_permission)
+    handoff_thread = Thread(target=commit_handoff)
+    handoff_thread.start()
+    assert registry_reserved.wait(5)
+
+    sweep_thread = Thread(target=lambda: sweep_results.append(janitor.sweep()))
+    sweep_thread.start()
+    assert permission_requested.wait(5)
+    sweep_thread.join(5)
+
+    assert not sweep_thread.is_alive()
+    assert len(sweep_results) == 1
+    assert (root / analysis_id / "source").is_file()
+    assert registry.is_active(analysis_id)
+
+    release_handoff.set()
+    handoff_thread.join(5)
+
+    assert not handoff_thread.is_alive()
+    assert handoff_errors == []
+    assert registry.is_active(analysis_id)
+
+    permission_granted = Event()
+
+    def consult_registry() -> str | None:
+        permission_granted.set()
+        return registry.cleanup_if_inactive(
+            analysis_id,
+            lambda _task: "incorrectly-deleted",
+        )
+
+    assert real_permission(analysis_id, consult_registry) is None
+    assert permission_granted.is_set()
+    after_commit = janitor.sweep()
+    assert after_commit.workspaces_deleted == ()
+    assert (root / analysis_id / "source").is_file()
+    assert (
+        real_permission(analysis_id, lambda: "handoff-released")
+        == "handoff-released"
+    )
+    task.accepted_source.cleanup()
 
 
 def test_workspace_retry_exhaustion_quarantines_but_not_again_in_same_sweep(
@@ -614,6 +869,7 @@ def test_workspace_retry_exhaustion_quarantines_but_not_again_in_same_sweep(
         config=config.temporary_storage,
         clock=authoritative_clock(),
         registry=TaskRegistry(),
+        temporary_input_owner=LocalTemporaryInputOwner(root),
     )
     real_rmtree = cleanup_module.shutil.rmtree
     calls = 0
@@ -649,6 +905,7 @@ def test_janitor_without_authoritative_anchor_skips_time_dependent_sweep(
         config=config.temporary_storage,
         clock=AuthoritativeLifecycleClock(FailingClock()),
         registry=TaskRegistry(),
+        temporary_input_owner=LocalTemporaryInputOwner(root),
     )
 
     result = janitor.sweep()
@@ -666,7 +923,7 @@ def test_registry_cleanup_claim_closes_registration_race(
 ) -> None:
     analysis_id = "a" * 32
     root = tmp_path / "temp"
-    task, _owner = make_task(root, analysis_id)
+    task, owner = make_task(root, analysis_id)
     os.utime(root / analysis_id, ((_NOW - timedelta(days=1)).timestamp(),) * 2)
     registry = TaskRegistry()
     config = make_config(root, quarantine_enabled=False)
@@ -674,6 +931,7 @@ def test_registry_cleanup_claim_closes_registration_race(
         config=config.temporary_storage,
         clock=authoritative_clock(),
         registry=registry,
+        temporary_input_owner=owner,
     )
     entered_cleanup = Event()
     release_cleanup = Event()
@@ -722,12 +980,13 @@ def test_blocked_filesystem_cleanup_does_not_block_unrelated_registry_reservatio
     unrelated_id = "2" * 32
     root = tmp_path / "temp"
     create_workspace(root, cleanup_id, _NOW - timedelta(days=1))
-    unrelated_task, _owner = make_task(root, unrelated_id)
+    unrelated_task, owner = make_task(root, unrelated_id)
     registry = TaskRegistry()
     janitor = WorkspaceJanitor(
         config=make_config(root, quarantine_enabled=False).temporary_storage,
         clock=authoritative_clock(),
         registry=registry,
+        temporary_input_owner=owner,
     )
     entered_cleanup = Event()
     release_cleanup = Event()
@@ -860,6 +1119,7 @@ def test_quarantine_ttl_releases_known_controlled_source_through_owner(
         config=config.temporary_storage,
         clock=authoritative_clock(),
         registry=registry,
+        temporary_input_owner=owner,
     ).sweep()
 
     assert result.quarantine_deleted == (analysis_id,)
@@ -913,6 +1173,7 @@ def test_failed_known_quarantine_ttl_cleanup_remains_controlled_and_retryable(
         config=config.temporary_storage,
         clock=authoritative_clock(),
         registry=registry,
+        temporary_input_owner=owner,
     )
     real_rmtree = temporary_input_module.shutil.rmtree
 
@@ -961,6 +1222,7 @@ def test_orphan_quarantine_ttl_retries_once_per_sweep_and_retains_failure(
         config=config.temporary_storage,
         clock=authoritative_clock(),
         registry=TaskRegistry(),
+        temporary_input_owner=LocalTemporaryInputOwner(root),
     )
     calls = 0
     real_rmtree = cleanup_module.shutil.rmtree
@@ -1012,6 +1274,7 @@ def test_suspicious_entries_are_retained_and_symlink_is_not_followed(tmp_path: P
         config=config.temporary_storage,
         clock=authoritative_clock(),
         registry=TaskRegistry(),
+        temporary_input_owner=LocalTemporaryInputOwner(root),
     ).sweep()
 
     assert malformed.is_dir()
@@ -1020,6 +1283,62 @@ def test_suspicious_entries_are_retained_and_symlink_is_not_followed(tmp_path: P
     assert outside_file.read_bytes() == b"keep"
     assert len(result.issues) == 3
     assert all(issue.analysis_id is None for issue in result.issues)
+
+
+def test_stale_junction_workspace_is_retained_without_following_target(
+    tmp_path: Path,
+    directory_junction_factory: Callable[[Path, Path], None],
+) -> None:
+    root = tmp_path / "temp"
+    root.mkdir()
+    analysis_id = "1" * 32
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    junction = root / analysis_id
+    directory_junction_factory(junction, outside)
+
+    result = WorkspaceJanitor(
+        config=make_config(root).temporary_storage,
+        clock=authoritative_clock(),
+        registry=TaskRegistry(),
+        temporary_input_owner=LocalTemporaryInputOwner(root),
+    ).sweep()
+
+    assert junction.is_junction()
+    assert sentinel.read_bytes() == b"outside"
+    assert result.workspaces_deleted == ()
+    assert result.workspaces_quarantined == ()
+    assert [issue.code for issue in result.issues] == ["workspace_entry_unsafe"]
+
+
+def test_suspicious_quarantine_symlink_is_retained_without_following_target(
+    tmp_path: Path,
+    directory_symlink_factory: Callable[[Path, Path], None],
+) -> None:
+    root = tmp_path / "temp"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    analysis_id = "2" * 32
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    link = quarantine / analysis_id
+    directory_symlink_factory(link, outside)
+
+    result = WorkspaceJanitor(
+        config=make_config(root).temporary_storage,
+        clock=authoritative_clock(),
+        registry=TaskRegistry(),
+        temporary_input_owner=LocalTemporaryInputOwner(root),
+    ).sweep()
+
+    assert link.is_symlink()
+    assert sentinel.read_bytes() == b"outside"
+    assert result.quarantine_deleted == ()
+    assert [issue.code for issue in result.issues] == ["quarantine_entry_unsafe"]
 
 
 def test_scheduler_invokes_startup_post_terminal_and_shutdown_sweeps(
@@ -1045,6 +1364,7 @@ def test_scheduler_invokes_startup_post_terminal_and_shutdown_sweeps(
         clock=clock,
         registry=registry,
         result_finalizer=SuccessfulAcceptedResultFinalizer(),
+        temporary_input_owner=LocalTemporaryInputOwner(root),
     )
     receiver = Stage4TaskReceiver(
         config=config,

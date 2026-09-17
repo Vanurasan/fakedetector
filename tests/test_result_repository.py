@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, NoReturn
@@ -372,6 +373,53 @@ def test_failed_first_save_leaves_no_partial_target_or_temp_file(
     assert repository.exists(result.analysis_id) is False
 
 
+def test_failed_temp_result_cleanup_emits_safe_diagnostic_and_retains_residue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = JsonFileResultRepository(tmp_path)
+    result = make_result()
+    diagnostics: list[dict[str, object]] = []
+    real_unlink = Path.unlink
+
+    def fail_replace(_source: object, _target: object) -> NoReturn:
+        raise OSError("PRIVATE replace failure")
+
+    def fail_temporary_unlink(path: Path, *, missing_ok: bool = False) -> None:
+        if path.name.startswith(".result-"):
+            raise OSError(f"PRIVATE residue {path}")
+        real_unlink(path, missing_ok=missing_ok)
+
+    def capture_diagnostic(
+        _logger: object,
+        _level: object,
+        event: str,
+        **fields: object,
+    ) -> None:
+        diagnostics.append({"event": event, **fields})
+
+    monkeypatch.setattr(repository_module.os, "replace", fail_replace)
+    monkeypatch.setattr(Path, "unlink", fail_temporary_unlink)
+    monkeypatch.setattr(repository_module, "emit_diagnostic", capture_diagnostic)
+
+    with pytest.raises(ResultRepositoryError):
+        repository.save(result)
+
+    residues = list(tmp_path.glob(".result-*.tmp"))
+    assert len(residues) == 1
+    assert diagnostics == [
+        {
+            "event": "cleanup_failed",
+            "analysis_id": result.analysis_id,
+            "phase": "result_temp_cleanup",
+            "code": "result_temp_cleanup_failed",
+            "status": result.status.value,
+            "stage": "persistence",
+        }
+    ]
+    assert str(tmp_path) not in repr(diagnostics)
+
+
 def test_save_rejects_existing_symlink_target_without_mutation(tmp_path: Path) -> None:
     repository = JsonFileResultRepository(tmp_path)
     outside = tmp_path / "PRIVATE-outside.json"
@@ -384,6 +432,10 @@ def test_save_rejects_existing_symlink_target_without_mutation(tmp_path: Path) -
 
     with pytest.raises(ResultRepositoryError, match="^Result could not be saved\\.$"):
         repository.save(make_result())
+    with pytest.raises(ResultRepositoryError, match="^Stored result could not be read\\.$"):
+        repository.get("analysis-safe-001")
+    with pytest.raises(ResultRepositoryError, match="^Stored result could not be read\\.$"):
+        repository.exists("analysis-safe-001")
 
     assert link.is_symlink()
     assert outside.read_text(encoding="utf-8") == "PRIVATE TARGET"
@@ -517,13 +569,17 @@ def test_target_path_depends_only_on_opaque_analysis_id(tmp_path: Path) -> None:
     assert not (tmp_path / "outside").exists()
 
 
-def test_exists_ignores_non_result_entries(tmp_path: Path) -> None:
+def test_addressed_operations_reject_directory_instead_of_result_file(
+    tmp_path: Path,
+) -> None:
     repository = JsonFileResultRepository(tmp_path)
     (tmp_path / "analysis-safe-001.json").mkdir()
     (tmp_path / "analysis-safe-001.tmp").write_text("not a result", encoding="utf-8")
 
-    assert repository.exists("analysis-safe-001") is False
-    assert repository.get("analysis-safe-001") is None
+    with pytest.raises(ResultRepositoryError):
+        repository.exists("analysis-safe-001")
+    with pytest.raises(ResultRepositoryError):
+        repository.get("analysis-safe-001")
 
 
 @pytest.mark.parametrize(
@@ -833,10 +889,11 @@ def test_addressed_operations_deterministically_reject_symlink_before_file_stat(
     monkeypatch.setattr(Path, "is_file", fail_file_stat)
     monkeypatch.setattr(Path, "read_text", fail_read)
 
-    if operation == "get":
-        assert repository.get("linked") is None
-    else:
-        assert repository.exists("linked") is False
+    with pytest.raises(ResultRepositoryError):
+        if operation == "get":
+            repository.get("linked")
+        else:
+            repository.exists("linked")
 
 
 def test_list_recent_deterministically_rejects_symlink_before_file_stat_or_read(
@@ -914,14 +971,14 @@ def test_list_recent_candidate_read_error_is_safe(
     target = tmp_path / "private-entry.json"
     payload = make_result("private-entry").model_dump_json()
     target.write_text(payload, encoding="utf-8")
-    real_read_text = Path.read_text
+    real_open = repository_module.open_regular_file_for_read
 
-    def fail_candidate_read(path: Path, *args: Any, **kwargs: Any) -> str:
+    def fail_candidate_read(path: Path):
         if path == target:
             raise OSError("PRIVATE OS READ ERROR")
-        return real_read_text(path, *args, **kwargs)
+        return real_open(path)
 
-    monkeypatch.setattr(Path, "read_text", fail_candidate_read)
+    monkeypatch.setattr(repository_module, "open_regular_file_for_read", fail_candidate_read)
 
     with pytest.raises(ResultRepositoryError) as error_info:
         repository.list_recent(1)
@@ -931,3 +988,84 @@ def test_list_recent_candidate_read_error_is_safe(
     assert "PRIVATE OS" not in str(error_info.value)
     assert payload not in str(error_info.value)
     assert str(tmp_path) not in str(error_info.value)
+
+
+def test_result_root_symlink_rejects_save_and_reads_without_external_mutation(
+    tmp_path: Path,
+    directory_symlink_factory: Callable[[Path, Path], None],
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    result_directory = tmp_path / "results"
+    directory_symlink_factory(result_directory, outside)
+    repository = JsonFileResultRepository(result_directory)
+
+    with pytest.raises(ResultRepositoryError):
+        repository.save(make_result())
+    with pytest.raises(ResultRepositoryError):
+        repository.get("analysis-safe-001")
+    with pytest.raises(ResultRepositoryError):
+        repository.exists("analysis-safe-001")
+    with pytest.raises(ResultRepositoryError):
+        repository.list_recent(1)
+
+    assert sentinel.read_bytes() == b"outside"
+    assert not (outside / "analysis-safe-001.json").exists()
+
+
+def test_result_root_junction_rejects_save_and_read_without_external_mutation(
+    tmp_path: Path,
+    directory_junction_factory: Callable[[Path, Path], None],
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    result_directory = tmp_path / "results"
+    directory_junction_factory(result_directory, outside)
+    repository = JsonFileResultRepository(result_directory)
+
+    with pytest.raises(ResultRepositoryError):
+        repository.save(make_result())
+    with pytest.raises(ResultRepositoryError):
+        repository.get("analysis-safe-001")
+
+    assert sentinel.read_bytes() == b"outside"
+    assert not (outside / "analysis-safe-001.json").exists()
+
+
+def test_substituted_result_temp_is_retained_without_external_overwrite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result_directory = tmp_path / "results"
+    repository = JsonFileResultRepository(result_directory)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    real_require_directory = repository_module.require_safe_directory
+    substituted: list[Path] = []
+
+    def substitute_temp(path: Path, *, missing_ok: bool = False) -> bool:
+        if path == result_directory and not substituted:
+            temporary_path = next(result_directory.glob(".result-*.tmp"))
+            temporary_path.unlink()
+            substituted.append(temporary_path)
+            try:
+                temporary_path.symlink_to(sentinel)
+            except OSError:
+                pytest.skip("file symlink creation is unavailable on this host")
+        return real_require_directory(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(repository_module, "require_safe_directory", substitute_temp)
+
+    with pytest.raises(ResultRepositoryError):
+        repository.save(make_result())
+
+    assert len(substituted) == 1
+    assert substituted[0].is_symlink()
+    assert sentinel.read_bytes() == b"outside"
+    assert not (result_directory / "analysis-safe-001.json").exists()

@@ -593,8 +593,8 @@ Settlement claim создаётся до первого physical cleanup side ef
 
 При ошибке сохранения фактические основной исход и очистка сохраняются, задача
 остаётся в `PERSISTENCE` с безопасной ошибкой `result_write_failed`, `FINISHED` не
-публикуется, анализ и очистка не повторяются. Автоматические повторная попытка и
-восстановление после перезапуска относятся к Stage 9.
+публикуется, анализ и очистка не повторяются. Stage 9 Macro 1 не добавляет
+automatic retry, durable recovery или восстановление после перезапуска.
 
 **Статус terminal settlement architecture: FIXED.**
 
@@ -615,6 +615,20 @@ Settlement claim создаётся до первого physical cleanup side ef
 том же проходе, предоставляет validator непрозрачную внутреннюю ссылку и
 поддерживает явную передачу ownership. Это не универсальный storage framework и
 не orchestrator жизненного цикла.
+
+Temporary input owner также является единой in-process coordination authority
+для pre-handoff workspace: protection создаётся до доступности workspace для
+janitor, удерживается через receiver commit и атомарно заменяется Stage 4
+ownership. Короткая общая state guard публикует protection и janitor claim для
+конкретного `analysis_id`, а `receiver.accept()` и filesystem operations идут без
+неё; private per-resource lock сохраняет атомарность операций одного controlled
+resource, не блокируя unrelated analyses. После завершённой ordinary Stage 3
+cleanup attempt protection снимается даже при физическом `OSError`, и residue
+переходит в существующий TTL/recovery path без нового retry. При unresolved
+reader/process safety barrier protection остаётся активной.
+Внутренний cleanup safety barrier media operation запрещает Stage 3 unlink,
+удаление workspace и quarantine, пока остановка reader/process не подтверждена;
+новый domain state или публичное поле для этого не вводятся.
 
 ### 6.8. Предварительная обработка
 
@@ -1445,9 +1459,15 @@ runtime/results/<analysis_id>.json
 Запись использует детерминированную сериализацию UTF-8 и выполняется атомарно:
 временный файл в том же каталоге, `flush`, `fsync`, затем `os.replace`. Каталог
 создаётся лениво при первом `save()`; операции чтения не создают его.
-Существующая прямая символическая ссылка на целевой файл отклоняется. Более
-широкое устранение TOCTOU на основе дескрипторов и запрета следования по ссылкам
-остаётся задачей Stage 9.
+Существующая прямая символическая ссылка на целевой файл отклоняется. Stage 9
+Macro 2 выполнил targeted устранение TOCTOU/reparse hazards; полный Win32
+handle-based redesign не вводился и не требуется.
+
+Crash может оставить `.result-*.tmp`. Macro 1 журналирует доступный безопасный
+сбой удаления, но не выполняет автоматическую startup-очистку и не обещает
+recovery. Единственная допустимая ручная процедура определена в
+`CONTRACTS.md`: runtime предварительно останавливается, подтверждается exclusive
+ownership, а каждый direct regular residue проверяется и удаляется отдельно.
 
 ### 12.4. Условия перехода на SQLite
 
@@ -1686,6 +1706,117 @@ FFmpeg и другие внешние инструменты вызываютс�
 - статический токен из переменной окружения допустим для MVP;
 - управление выпуском, отзывом и сроком токенов относится к последующим требованиям;
 - rate limiting добавляется после определения реального сценария интеграции.
+
+### 15.6. Зафиксированные границы Stage 9
+
+Stage 9 завершён со статусом **DONE / CLOSED**. Closure chain:
+implementation → independent final audit `REMEDIATE` по `S9-A01`/`S9-A02` →
+remediation → independent post-remediation audit `PASS`; оба finding закрыты,
+новых findings нет.
+
+Runtime считается приватным для account приложения. Stage 9 не обещает защиту
+от hostile process под той же Windows account или с Administrator privileges.
+
+Macro 2 выполняет только targeted filesystem hardening: новые sensitive runtime
+roots создаются максимально приватно средствами stdlib/Python 3.12,
+существующие ACL автоматически не переписываются, pywin32 и новые dependencies
+не добавляются, а symlink/junction/reparse hazards должны завершаться безопасным
+отказом. ACL, которые stdlib нельзя надёжно проверить, являются deployment
+prerequisite.
+
+Sensitive runtime roots local MVP — temporary storage, sibling quarantine,
+result repository и каталог JSONL logs; direct workspace каждого `analysis_id`
+является owned child temporary/quarantine root, а отдельного artifact storage root
+нет. Runtime проверяет эти объекты и их непосредственную значимую lexical parent
+boundary через stdlib metadata и отклоняет обычный файл вместо directory,
+symlink, junction и иной detectable Windows reparse point. Destructive recovery
+работает консервативно: подозрительный workspace или элемент quarantine
+сохраняется и получает safe diagnostic, а не передаётся в `shutil.rmtree()`.
+
+Проверки выполняются в узких checkpoints перед open/write/replace/rename/delete
+и подтверждают identity открытого regular file descriptor там, где stdlib это
+позволяет. Это устраняет avoidable application-owned check/use gaps, но не
+является полной Win32 handle-based/no-follow архитектурой и не обещает устранение
+всех races с hostile process той же Windows account. На Windows `mode=0o700` и
+`mode=0o600` являются best effort; фактическая изоляция ACL наследуется от
+deployment parent, который должен принадлежать и быть writable только доверенным
+account согласно эксплуатационной политике.
+
+Macro 3 устанавливает для mutation POST transport boundary как максимум
+настроенных image/audio/video лимитов плюс 1 MiB multipart envelope. HTTP-слой
+считает фактически полученные байты потоково до multipart parsing, отклоняет
+превышение с `413` до регистрации анализа и использует
+`server.request_timeout_seconds` как общий deadline receive/parse. Bearer и HTTP
+Basic/same-origin guards остаются перед чтением тела, а точные per-media лимиты
+по-прежнему применяются Stage 3 после transport boundary.
+
+Все production FFmpeg/ffprobe media input передаются только как канонический
+application-owned local path через общий bounded subprocess primitive и явно
+ограничены protocol whitelist `file`. Исходное имя пользователя не входит в
+filesystem path или argv. Primitive использует list argv, `shell=False`,
+отключённый stdin, bounded/discarded output, timeout и подтверждённый
+terminate/kill/reap; отдельная OS-level quota или process sandbox в Macro 3 не
+вводится.
+
+Для local MVP принимаются bounded algorithms, body guard и измеренный resource
+envelope. OS-level hard quotas CPU/RAM находятся вне Stage 9.
+
+### 15.7. Сквозное доказательство и измеренный baseline local MVP
+
+Stage 9 Macro 4 проверяет Profile B через production composition, а не через
+альтернативный тестовый pipeline. Матрица включает:
+
+- image: `image_metadata_consistency` и `image_copy_move_correspondence` на
+  generated seeded copy-move PNG;
+- audio: `audio_pcm_quality` на generated PCM WAV с bounded saturation
+  observations;
+- video: `video_sampled_frame_quality` на generated MP4 с повторяющимися
+  sampled frames.
+
+Для каждой модальности фактически проходят HTTP upload, Stage 3, локальная
+очередь и registry, preprocessing/analyzer orchestration, Stages 6/7,
+терминальная очистка, `ResultFinalizationService`, `JsonFileResultRepository` и
+API result retrieval. Representative WebUI upload использует тот же
+`AnalysisApplicationService`; restart test создаёт новый application instance и
+читает опубликованный результат только из общего result directory, не обещая
+recovery незавершённой задачи.
+
+Воспроизводимый informational harness запускается командой:
+
+```powershell
+uv run python scripts/measure_stage9_profile_b.py --runs 3
+```
+
+Он генерирует bounded network-free fixtures, выполняет каждый workflow в свежем
+process и выдаёт JSON с fixture/result size, числом запусков, wallclock и
+доступной process RSS metric. Windows использует stdlib `ctypes` и
+`GetProcessMemoryInfo / PeakWorkingSetSize`, POSIX — `resource.getrusage()`;
+неподдерживаемая метрика остаётся `null`. RSS относится к workflow runner process
+и не суммирует отдельные analyzer/FFmpeg processes.
+
+Reference measurement 2026-09-16 на Windows 11 `10.0.26200`, AMD64, Python
+3.12.10, Intel64 Family 6 Model 198 Stepping 2, 24 logical CPU:
+
+| Media | Fixture bytes | Runs | Median wall, s | Result bytes | Max runner peak RSS, MiB |
+|---|---:|---:|---:|---:|---:|
+| image | 80 483 | 3 | 1.047 | 6 862 | 73.08 |
+| audio | 16 044 | 3 | 0.633 | 4 621 | 67.70 |
+| video | 1 101 | 3 | 0.644 | 4 775 | 67.52 |
+
+Это описание фактического reference environment, а не SLA, minimum hardware
+requirement или основание для OS-level quota. Автоматическая проверка требует
+только корректных конечных неотрицательных измерений и завершённых workflow; она
+не падает из-за произвольного порога времени или RSS.
+
+Принятые ограничения Stage 9 сохраняются после закрытия этапа и не являются
+незакрытыми findings: Windows ACL остаётся deployment prerequisite; hostile
+same-account / Administrator и полный filesystem/process sandbox находятся вне
+гарантированной threat model; OS CPU/RAM hard quotas не вводились; durable
+recovery незавершённых задач и persistence retry отсутствуют; автоматическое
+удаление `.result-*.tmp` crash residue не вводилось; resource measurements имеют
+informational характер и не являются SLA. На текущем Windows host 17
+symlink-related тестов пропущены из-за отсутствия symlink privileges, при этом
+native Windows junction coverage выполнено.
 
 ---
 

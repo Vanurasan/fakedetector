@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import traceback
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -87,6 +88,131 @@ def test_existing_directory_and_file_are_preserved(tmp_path: Path) -> None:
     ensure_runtime_directories(config)
 
     assert marker.read_text(encoding="utf-8") == "preserve-me"
+
+
+def test_symlink_temporary_root_is_safe_startup_failure(
+    tmp_path: Path,
+    directory_symlink_factory: Callable[[Path, Path], None],
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    temporary_root = tmp_path / "runtime" / "temp"
+    temporary_root.parent.mkdir()
+    directory_symlink_factory(temporary_root, outside)
+    config = make_config(
+        temporary_storage_path=temporary_root,
+        result_directory=tmp_path / "runtime" / "results",
+        log_path=tmp_path / "runtime" / "logs" / "application.jsonl",
+    )
+
+    with pytest.raises(RuntimeSetupError, match="^Runtime initialization failed\\.$"):
+        ensure_runtime_directories(config)
+
+    assert sentinel.read_bytes() == b"outside"
+
+
+def test_junction_temporary_root_is_safe_startup_failure(
+    tmp_path: Path,
+    directory_junction_factory: Callable[[Path, Path], None],
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    temporary_root = tmp_path / "runtime" / "temp"
+    temporary_root.parent.mkdir()
+    directory_junction_factory(temporary_root, outside)
+    config = make_config(
+        temporary_storage_path=temporary_root,
+        result_directory=tmp_path / "runtime" / "results",
+        log_path=tmp_path / "runtime" / "logs" / "application.jsonl",
+    )
+
+    with pytest.raises(RuntimeSetupError, match="^Runtime initialization failed\\.$"):
+        ensure_runtime_directories(config)
+
+    assert sentinel.read_bytes() == b"outside"
+
+
+def test_existing_result_root_symlink_is_safe_startup_failure(
+    tmp_path: Path,
+    directory_symlink_factory: Callable[[Path, Path], None],
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"outside")
+    result_directory = runtime / "results"
+    directory_symlink_factory(result_directory, outside)
+    config = make_config(
+        temporary_storage_path=runtime / "temp",
+        result_directory=result_directory,
+        log_path=runtime / "logs" / "application.jsonl",
+    )
+
+    with pytest.raises(RuntimeSetupError, match="^Runtime initialization failed\\.$"):
+        ensure_runtime_directories(config)
+
+    assert sentinel.read_bytes() == b"outside"
+
+
+def test_existing_log_target_symlink_is_safe_startup_failure(
+    tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "runtime"
+    logs = runtime / "logs"
+    logs.mkdir(parents=True)
+    outside = tmp_path / "outside.jsonl"
+    outside.write_bytes(b"outside")
+    log_path = logs / "application.jsonl"
+    try:
+        log_path.symlink_to(outside)
+    except OSError:
+        pytest.skip("file symlink creation is unavailable on this host")
+    config = make_config(
+        temporary_storage_path=runtime / "temp",
+        result_directory=runtime / "results",
+        log_path=log_path,
+    )
+
+    with pytest.raises(RuntimeSetupError, match="^Runtime initialization failed\\.$"):
+        ensure_runtime_directories(config)
+
+    assert outside.read_bytes() == b"outside"
+
+
+def test_new_runtime_directories_request_private_stdlib_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "runtime"
+    config = make_config(
+        temporary_storage_path=runtime / "temp",
+        result_directory=runtime / "results",
+        log_path=runtime / "logs" / "application.jsonl",
+    )
+    real_mkdir = Path.mkdir
+    modes: list[int] = []
+
+    def record_mkdir(
+        path: Path,
+        mode: int = 0o777,
+        parents: bool = False,
+        exist_ok: bool = False,
+    ) -> None:
+        modes.append(mode)
+        real_mkdir(path, mode=mode, parents=parents, exist_ok=exist_ok)
+
+    monkeypatch.setattr(Path, "mkdir", record_mkdir)
+
+    ensure_runtime_directories(config)
+
+    assert modes
+    assert set(modes) == {0o700}
 
 
 def test_config_is_not_modified(tmp_path: Path) -> None:

@@ -16,6 +16,7 @@ from fakedetector.core._bounded_process import (
     ProcessTimeoutError,
     run_bounded_process,
 )
+from fakedetector.core._cleanup_safety import _CleanupSafetyBarrier
 
 _PROBE_SIZE_BYTES = 5 * 1024 * 1024
 _ANALYZE_DURATION_MICROSECONDS = 5_000_000
@@ -27,9 +28,15 @@ _BOUNDED_VIDEO_FRAMES = 3
 class MediaToolSystemError(Exception):
     """Safe infrastructure failure that must not classify a file as invalid."""
 
-    def __init__(self, phase: str) -> None:
+    def __init__(
+        self,
+        phase: str,
+        *,
+        _cleanup_safety_barrier: _CleanupSafetyBarrier | None = None,
+    ) -> None:
         super().__init__("Media validation infrastructure failed.")
         self.phase = phase
+        self._cleanup_safety_barrier = _cleanup_safety_barrier
 
 
 class MediaRejectedError(Exception):
@@ -111,6 +118,8 @@ class FFmpegMediaInspector:
             ),
             "-of",
             "json",
+            "-protocol_whitelist",
+            "file",
             str(controlled_source_path),
         ]
         output = self._run_probe(arguments, cwd=controlled_source_path.parent)
@@ -136,6 +145,8 @@ class FFmpegMediaInspector:
                 str(_PROBE_SIZE_BYTES),
                 "-analyzeduration",
                 str(_ANALYZE_DURATION_MICROSECONDS),
+                "-protocol_whitelist",
+                "file",
                 "-i",
                 str(controlled_source_path),
                 "-map",
@@ -170,6 +181,8 @@ class FFmpegMediaInspector:
                 str(_PROBE_SIZE_BYTES),
                 "-analyzeduration",
                 str(_ANALYZE_DURATION_MICROSECONDS),
+                "-protocol_whitelist",
+                "file",
                 "-i",
                 str(controlled_source_path),
                 *mappings,
@@ -195,7 +208,10 @@ class FFmpegMediaInspector:
                 stdout_limit_bytes=_MAX_PROBE_OUTPUT_BYTES,
             )
         except ProcessInfrastructureError as error:
-            raise MediaToolSystemError(_probe_infrastructure_phase(error.phase)) from None
+            raise MediaToolSystemError(
+                _probe_infrastructure_phase(error.phase),
+                _cleanup_safety_barrier=error._cleanup_safety_barrier,
+            ) from None
         except ProcessTimeoutError:
             raise MediaRejectedError("ffprobe_timeout") from None
         except ProcessOutputLimitError:
@@ -214,7 +230,10 @@ class FFmpegMediaInspector:
             )
         except ProcessInfrastructureError as error:
             phase = "process_start" if error.phase == "start" else "process_wait"
-            raise MediaToolSystemError(phase) from None
+            raise MediaToolSystemError(
+                phase,
+                _cleanup_safety_barrier=error._cleanup_safety_barrier,
+            ) from None
         except ProcessTimeoutError:
             raise MediaRejectedError("ffmpeg_timeout") from None
         if result.return_code != 0:

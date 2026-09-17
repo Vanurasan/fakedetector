@@ -465,7 +465,7 @@ def descriptor(media_type: MediaType, analysis_id: str) -> ValidatedFileDescript
 
 
 def accepted_source(
-    owner: CountingOwner,
+    owner: LocalTemporaryInputOwner,
     analysis_id: str,
     media_type: MediaType,
 ) -> Stage3Accepted:
@@ -498,9 +498,11 @@ def make_runtime(
     video: int = 1,
     clock: Clock | None = None,
     scheduler_factory: Callable[..., BoundedLocalScheduler] = BoundedLocalScheduler,
+    owner: CountingOwner | None = None,
 ):
     config = make_config(root, image=image, audio=audio, video=video)
     registry = TaskRegistry()
+    actual_owner = owner or CountingOwner(root)
     raw_clock = clock or UtcClock()
     actual_clock = AuthoritativeLifecycleClock(raw_clock)
     scheduler = scheduler_factory(
@@ -508,6 +510,7 @@ def make_runtime(
         clock=actual_clock,
         registry=registry,
         result_finalizer=SuccessfulAcceptedResultFinalizer(),
+        temporary_input_owner=actual_owner,
     )
     receiver = Stage4TaskReceiver(
         config=config,
@@ -516,17 +519,17 @@ def make_runtime(
         router=MediaRouter(dict.fromkeys(MediaType, executor)),
         queue=scheduler,
     )
-    return config, registry, scheduler, receiver
+    return config, registry, scheduler, receiver, actual_owner
 
 
 def submit(
     receiver: Stage4TaskReceiver,
-    owner: CountingOwner,
+    owner: LocalTemporaryInputOwner,
     analysis_id: str,
     media_type: MediaType = MediaType.IMAGE,
 ) -> Stage3Accepted:
     accepted = accepted_source(owner, analysis_id, media_type)
-    receiver.accept(accepted)
+    accepted.controlled_source._commit_handoff(lambda: receiver.accept(accepted))
     return accepted
 
 
@@ -566,14 +569,13 @@ def test_configured_concurrency_limit_is_reached_and_not_exceeded_per_media(
     expected: int,
 ) -> None:
     executor = BlockingExecutor(expected_running=expected)
-    _config, registry, scheduler, receiver = make_runtime(
+    _config, registry, scheduler, receiver, owner = make_runtime(
         tmp_path / "temp",
         executor,
         image=limits[0],
         audio=limits[1],
         video=limits[2],
     )
-    owner = CountingOwner(tmp_path / "temp")
     scheduler.start()
 
     accepted = [
@@ -594,10 +596,9 @@ def test_configured_concurrency_limit_is_reached_and_not_exceeded_per_media(
 
 def test_media_limits_are_independent_and_execute_concurrently(tmp_path: Path) -> None:
     executor = BlockingExecutor(expected_running=4)
-    _config, _registry, scheduler, receiver = make_runtime(
+    _config, _registry, scheduler, receiver, owner = make_runtime(
         tmp_path / "temp", executor, image=1, audio=2, video=1
     )
-    owner = CountingOwner(tmp_path / "temp")
     scheduler.start()
 
     submit(receiver, owner, "cross-image", MediaType.IMAGE)
@@ -613,8 +614,9 @@ def test_media_limits_are_independent_and_execute_concurrently(tmp_path: Path) -
 
 def test_fifo_dispatch_and_executor_never_run_in_caller_thread(tmp_path: Path) -> None:
     executor = BlockingExecutor()
-    _config, _registry, scheduler, receiver = make_runtime(tmp_path / "temp", executor)
-    owner = CountingOwner(tmp_path / "temp")
+    _config, _registry, scheduler, receiver, owner = make_runtime(
+        tmp_path / "temp", executor
+    )
     caller_thread = get_ident()
     scheduler.start()
 
@@ -679,8 +681,9 @@ def test_queue_overflow_fails_before_confirmation_and_stage3_cleans(
     media_files: dict[str, Path],
 ) -> None:
     executor = BlockingExecutor()
-    config, registry, scheduler, receiver = make_runtime(tmp_path / "temp", executor)
-    owner = CountingOwner(tmp_path / "temp")
+    config, registry, scheduler, receiver, owner = make_runtime(
+        tmp_path / "temp", executor
+    )
     scheduler.start()
     submit(receiver, owner, "overflow-running")
     assert executor.expected_reached.wait(5)
@@ -709,11 +712,10 @@ def test_provisional_handoff_cannot_execute_and_losing_shutdown_stays_stage3_own
     media_files: dict[str, Path],
 ) -> None:
     executor = RecordingExecutor()
-    config, registry, scheduler, receiver = make_runtime(
+    config, registry, scheduler, receiver, owner = make_runtime(
         tmp_path / "temp", executor, scheduler_factory=CommitGateScheduler
     )
     assert isinstance(scheduler, CommitGateScheduler)
-    owner = CountingOwner(tmp_path / "temp")
     service = make_intake_service(config, owner, receiver, "commit-race")
     scheduler.start()
     outcomes: list[Stage3Accepted | Stage3Terminal] = []
@@ -748,8 +750,9 @@ def test_provisional_handoff_cannot_execute_and_losing_shutdown_stays_stage3_own
 
 def test_ordinary_executor_exception_does_not_destroy_worker(tmp_path: Path) -> None:
     executor = OrderedFailureExecutor()
-    _config, registry, scheduler, receiver = make_runtime(tmp_path / "temp", executor)
-    owner = CountingOwner(tmp_path / "temp")
+    _config, registry, scheduler, receiver, owner = make_runtime(
+        tmp_path / "temp", executor
+    )
     scheduler.start()
     submit(receiver, owner, "ordinary-a")
     assert executor.first_started.wait(5)
@@ -771,12 +774,13 @@ def test_ordinary_executor_exception_does_not_destroy_worker(tmp_path: Path) -> 
 def test_terminal_clock_failure_does_not_strand_task_or_destroy_worker(tmp_path: Path) -> None:
     clock = TerminalFailureClock()
     executor = BlockingExecutor()
-    _config, registry, scheduler, receiver = make_runtime(
+    owner = TerminalFailureOwner(tmp_path / "temp", clock)
+    _config, registry, scheduler, receiver, _runtime_owner = make_runtime(
         tmp_path / "temp",
         executor,
         clock=clock,
+        owner=owner,
     )
-    owner = TerminalFailureOwner(tmp_path / "temp", clock)
     scheduler.start()
     first = submit(receiver, owner, "worker-clock-first")
     assert executor.expected_reached.wait(5)
@@ -804,8 +808,9 @@ def test_worker_leaves_post_save_publication_failure_in_persistence_without_retr
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executor = RecordingExecutor()
-    _config, registry, scheduler, receiver = make_runtime(tmp_path / "temp", executor)
-    owner = CountingOwner(tmp_path / "temp")
+    _config, registry, scheduler, receiver, owner = make_runtime(
+        tmp_path / "temp", executor
+    )
     real_finalize = registry.finalize_terminal_settlement
     finalize_calls = 0
 
@@ -838,12 +843,13 @@ def test_regressing_raw_started_sample_degrades_and_worker_remains_usable(
 ) -> None:
     clock = WorkerArmableClock(initial=_REGISTERED)
     executor = SelectiveBlockingExecutor("valid-start-b")
-    _config, registry, scheduler, receiver = make_runtime(
+    owner = EventedOwner(tmp_path / "temp", "invalid-start-a")
+    _config, registry, scheduler, receiver, _runtime_owner = make_runtime(
         tmp_path / "temp",
         executor,
         clock=clock,
+        owner=owner,
     )
-    owner = EventedOwner(tmp_path / "temp", "invalid-start-a")
     scheduler.start()
     clock.arm_invalid_next_worker(offset=timedelta(days=-1))
     first = submit(receiver, owner, "invalid-start-a")
@@ -881,8 +887,9 @@ def test_non_draining_shutdown_fails_pending_without_start_and_waits_for_running
     tmp_path: Path,
 ) -> None:
     executor = BlockingExecutor()
-    _config, registry, scheduler, receiver = make_runtime(tmp_path / "temp", executor)
-    owner = CountingOwner(tmp_path / "temp")
+    _config, registry, scheduler, receiver, owner = make_runtime(
+        tmp_path / "temp", executor
+    )
     scheduler.start()
     submit(receiver, owner, "nondrain-running")
     assert executor.expected_reached.wait(5)
@@ -916,12 +923,13 @@ def test_non_draining_pending_terminal_clock_failure_cannot_strand_task(
 ) -> None:
     clock = TerminalFailureClock()
     executor = BlockingExecutor()
-    _config, registry, scheduler, receiver = make_runtime(
+    owner = TerminalFailureOwner(tmp_path / "temp", clock)
+    _config, registry, scheduler, receiver, _runtime_owner = make_runtime(
         tmp_path / "temp",
         executor,
         clock=clock,
+        owner=owner,
     )
-    owner = TerminalFailureOwner(tmp_path / "temp", clock)
     scheduler.start()
     submit(receiver, owner, "nondrain-clock-running")
     assert executor.expected_reached.wait(5)
@@ -949,10 +957,9 @@ def test_non_draining_pending_terminal_clock_failure_cannot_strand_task(
 
 def test_draining_shutdown_executes_all_confirmed_pending_tasks(tmp_path: Path) -> None:
     executor = BlockingExecutor(expected_running=2)
-    _config, registry, scheduler, receiver = make_runtime(
+    _config, registry, scheduler, receiver, owner = make_runtime(
         tmp_path / "temp", executor, image=2
     )
-    owner = CountingOwner(tmp_path / "temp")
     scheduler.start()
     analysis_ids = [f"drain-{index}" for index in range(4)]
     for analysis_id in analysis_ids[:2]:
@@ -977,8 +984,9 @@ def test_shutdown_stops_new_stage3_handoffs_but_keeps_confirmed_stage4_ownership
     media_files: dict[str, Path],
 ) -> None:
     executor = BlockingExecutor()
-    config, registry, scheduler, receiver = make_runtime(tmp_path / "temp", executor)
-    owner = CountingOwner(tmp_path / "temp")
+    config, registry, scheduler, receiver, owner = make_runtime(
+        tmp_path / "temp", executor
+    )
     scheduler.start()
     submit(receiver, owner, "confirmed-running")
     assert executor.expected_reached.wait(5)
@@ -1008,8 +1016,9 @@ def test_scheduler_lifecycle_operations_are_deterministic_and_unavailable_before
     tmp_path: Path,
 ) -> None:
     executor = RecordingExecutor()
-    _config, registry, scheduler, receiver = make_runtime(tmp_path / "temp", executor)
-    owner = CountingOwner(tmp_path / "temp")
+    _config, registry, scheduler, receiver, owner = make_runtime(
+        tmp_path / "temp", executor
+    )
     accepted = accepted_source(owner, "before-start", MediaType.IMAGE)
 
     with pytest.raises(Stage4ReceiverError):
@@ -1032,7 +1041,7 @@ def test_scheduler_ordinary_partial_start_failure_joins_started_threads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _config, _registry, scheduler, _receiver = make_runtime(
+    _config, _registry, scheduler, _receiver, _owner = make_runtime(
         tmp_path / "temp",
         RecordingExecutor(),
     )
@@ -1062,7 +1071,7 @@ def test_scheduler_interrupted_partial_start_preserves_exception_and_joins_threa
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _config, _registry, scheduler, _receiver = make_runtime(
+    _config, _registry, scheduler, _receiver, _owner = make_runtime(
         tmp_path / "temp",
         RecordingExecutor(),
     )
@@ -1094,7 +1103,7 @@ def test_scheduler_started_then_interrupted_thread_is_explicitly_joined(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _config, _registry, scheduler, _receiver = make_runtime(
+    _config, _registry, scheduler, _receiver, _owner = make_runtime(
         tmp_path / "temp",
         RecordingExecutor(),
     )
@@ -1127,7 +1136,7 @@ def test_scheduler_interruption_after_start_return_joins_preowned_thread(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _config, _registry, scheduler, _receiver = make_runtime(
+    _config, _registry, scheduler, _receiver, _owner = make_runtime(
         tmp_path / "temp",
         RecordingExecutor(),
     )
@@ -1211,7 +1220,7 @@ def test_scheduler_post_loop_failure_joins_all_started_workers(
     failure_type: type[BaseException],
     expected_type: type[BaseException],
 ) -> None:
-    _config, _registry, scheduler, _receiver = make_runtime(
+    _config, _registry, scheduler, _receiver, _owner = make_runtime(
         tmp_path / "temp",
         RecordingExecutor(),
     )
@@ -1384,10 +1393,12 @@ def test_production_lifespan_preserves_exception_precedence_after_worker_termina
         router=MediaRouter(dict.fromkeys(MediaType, FailingExecutor())),
         queue=scheduler,
     )
-    owner = CountingOwner(tmp_path / "temp")
+    owner = app.state.runtime.intake._owner
+    accepted: Stage3Accepted | None = None
 
     def run_worker_then_fail_caller() -> None:
-        submit(receiver, owner, "lifespan-worker-termination")
+        nonlocal accepted
+        accepted = submit(receiver, owner, "lifespan-worker-termination")
         assert scheduler.wait_until_not_accepting(5)
         assert scheduler._termination is termination
         assert not scheduler.is_running
@@ -1427,7 +1438,8 @@ def test_production_lifespan_preserves_exception_precedence_after_worker_termina
         snapshot = app.state.runtime.registry.snapshot("lifespan-worker-termination")
         assert snapshot.status is AnalysisStatus.FAILED
         assert snapshot.stage is ProcessingStage.FINISHED
-        assert owner.cleanup_calls("lifespan-worker-termination") == 1
+        assert accepted is not None
+        assert accepted.controlled_source.is_released
     finally:
         stop_scheduler_test_threads(scheduler, created)
 
@@ -1523,8 +1535,9 @@ def test_worker_base_exception_is_cleaned_and_reraised_at_controlled_shutdown(
     tmp_path: Path,
 ) -> None:
     executor = TerminatingExecutor()
-    _config, registry, scheduler, receiver = make_runtime(tmp_path / "temp", executor)
-    owner = CountingOwner(tmp_path / "temp")
+    _config, registry, scheduler, receiver, owner = make_runtime(
+        tmp_path / "temp", executor
+    )
     scheduler.start()
     submit(receiver, owner, "worker-termination")
     assert executor.started.wait(5)

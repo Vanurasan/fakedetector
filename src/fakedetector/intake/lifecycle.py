@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
 from fakedetector.core import AuthoritativeLifecycleClock
+from fakedetector.core._cleanup_safety import _CleanupSafetyBarrier, _CleanupSafetyInterruption
 from fakedetector.domain import (
     AnalysisStatus,
     CleanupResult,
@@ -36,7 +38,10 @@ from fakedetector.intake.temporary_input import (
     ReadableBinaryStream,
     TemporaryInputCleanupError,
 )
-from fakedetector.intake.validation import FileValidator
+from fakedetector.intake.validation import FileValidator, ValidationSystemError
+from fakedetector.logging_setup import emit_diagnostic
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class PreRegistrationError(Exception):
@@ -150,6 +155,13 @@ class FileIntakeService:
             registered = self._controlled_intake.register(source)
         except Exception:
             raise PreRegistrationError() from None
+        emit_diagnostic(
+            _LOGGER,
+            logging.INFO,
+            "analysis_registered",
+            analysis_id=registered.analysis_id,
+            stage=ProcessingStage.REGISTERED.value,
+        )
 
         controlled: ControlledInput | None = None
         validation: ValidationResult | None = None
@@ -167,9 +179,25 @@ class FileIntakeService:
                     declared_content_type=declared_content_type,
                 )
                 owned_source = controlled.owned_source
+                emit_diagnostic(
+                    _LOGGER,
+                    logging.INFO,
+                    "validation_started",
+                    analysis_id=registered.analysis_id,
+                    stage=ProcessingStage.VALIDATION.value,
+                )
                 validation = self._validator.validate(controlled)
 
                 if not validation.accepted:
+                    emit_diagnostic(
+                        _LOGGER,
+                        logging.INFO,
+                        "validation_rejected",
+                        analysis_id=registered.analysis_id,
+                        code=validation.errors[0].code if validation.errors else "internal_error",
+                        status=AnalysisStatus.REJECTED.value,
+                        stage=ProcessingStage.VALIDATION.value,
+                    )
                     cleanup_attempted = True
                     cleanup = self._cleanup_owned(owned_source)
                     return self._terminal(
@@ -184,6 +212,13 @@ class FileIntakeService:
                 validated_file = validation.validated_file
                 if validated_file is None:
                     raise RuntimeError("accepted validation omitted descriptor")
+                emit_diagnostic(
+                    _LOGGER,
+                    logging.INFO,
+                    "validation_completed",
+                    analysis_id=registered.analysis_id,
+                    stage=ProcessingStage.VALIDATION.value,
+                )
 
                 pending_source = self._owner.transfer(owned_source)
                 accepted = Stage3Accepted(
@@ -194,8 +229,18 @@ class FileIntakeService:
                     validated_file=validated_file,
                     controlled_source=pending_source,
                 )
-                self._accepted_receiver.accept(accepted)
+                pending_source._commit_handoff(
+                    lambda: self._accepted_receiver.accept(accepted)
+                )
                 handoff_confirmed = True
+                emit_diagnostic(
+                    _LOGGER,
+                    logging.INFO,
+                    "ownership_handoff_completed",
+                    analysis_id=registered.analysis_id,
+                    status=AnalysisStatus.QUEUED.value,
+                    stage=ProcessingStage.QUEUED.value,
+                )
                 return accepted
             except RegisteredIntakeError as error:
                 owned_source = error.owned_source
@@ -207,6 +252,12 @@ class FileIntakeService:
                     AnalysisStatus.REJECTED
                     if isinstance(error.primary_error, FileTooLargeError)
                     else AnalysisStatus.FAILED
+                )
+                self._log_intake_terminal(
+                    registered.analysis_id,
+                    status=status,
+                    phase=getattr(error.primary_error, "phase", "intake"),
+                    code=self._intake_error(error.primary_error).code,
                 )
                 return self._terminal(
                     registered=registered,
@@ -224,17 +275,39 @@ class FileIntakeService:
                     if isinstance(error.primary_error, FileTooLargeError)
                     else AnalysisStatus.FAILED
                 )
+                cleanup = self._cleanup_failure(error.cleanup_error)
+                self._emit_cleanup_result(registered.analysis_id, cleanup)
+                self._log_intake_terminal(
+                    registered.analysis_id,
+                    status=status,
+                    phase=getattr(error.primary_error, "phase", "intake"),
+                    code=self._intake_error(error.primary_error).code,
+                )
                 return self._terminal(
                     registered=registered,
                     controlled=None,
                     validation=None,
                     status=status,
-                    cleanup=self._cleanup_failure(error.cleanup_error),
+                    cleanup=cleanup,
                     errors=[self._intake_error(error.primary_error)],
                 )
-            except Exception:
+            except ValidationSystemError as error:
                 cleanup_attempted = owned_source is not None or pending_source is not None
-                failure_cleanup = self._cleanup_current(owned_source, pending_source)
+                failure_cleanup = self._cleanup_current(
+                    owned_source,
+                    pending_source,
+                    cleanup_safety_barrier=error._cleanup_safety_barrier,
+                )
+                emit_diagnostic(
+                    _LOGGER,
+                    logging.ERROR,
+                    "validation_failed",
+                    analysis_id=registered.analysis_id,
+                    phase=error.phase,
+                    code="internal_error",
+                    status=AnalysisStatus.FAILED.value,
+                    stage=ProcessingStage.VALIDATION.value,
+                )
                 return self._terminal(
                     registered=registered,
                     controlled=controlled,
@@ -243,6 +316,39 @@ class FileIntakeService:
                     cleanup=failure_cleanup,
                     errors=[_internal_error()],
                 )
+            except Exception:
+                cleanup_attempted = owned_source is not None or pending_source is not None
+                failure_cleanup = self._cleanup_current(owned_source, pending_source)
+                emit_diagnostic(
+                    _LOGGER,
+                    logging.ERROR,
+                    "validation_failed",
+                    analysis_id=registered.analysis_id,
+                    phase="handoff" if pending_source is not None else "intake",
+                    code="internal_error",
+                    status=AnalysisStatus.FAILED.value,
+                    stage=(
+                        ProcessingStage.ROUTING.value
+                        if pending_source is not None
+                        else ProcessingStage.VALIDATION.value
+                    ),
+                )
+                return self._terminal(
+                    registered=registered,
+                    controlled=controlled,
+                    validation=validation,
+                    status=AnalysisStatus.FAILED,
+                    cleanup=failure_cleanup,
+                    errors=[_internal_error()],
+                )
+            except _CleanupSafetyInterruption as error:
+                cleanup_attempted = owned_source is not None or pending_source is not None
+                self._cleanup_current(
+                    owned_source,
+                    pending_source,
+                    cleanup_safety_barrier=error._cleanup_safety_barrier,
+                )
+                raise error.interruption from error
         finally:
             if not handoff_confirmed and not cleanup_attempted:
                 self._best_effort_cleanup_current(owned_source, pending_source)
@@ -251,7 +357,38 @@ class FileIntakeService:
         self,
         owned_source: OwnedSource | None,
         pending_source: AcceptedSource | None,
+        *,
+        cleanup_safety_barrier: _CleanupSafetyBarrier | None = None,
     ) -> CleanupResult | None:
+        if cleanup_safety_barrier is not None and not self._try_confirm_cleanup_safe(
+            cleanup_safety_barrier
+        ):
+            analysis_id = (
+                pending_source.analysis_id
+                if pending_source is not None
+                else owned_source.analysis_id if owned_source is not None else None
+            )
+            if analysis_id is None:
+                return None
+            emit_diagnostic(
+                _LOGGER,
+                logging.INFO,
+                "cleanup_started",
+                analysis_id=analysis_id,
+                stage=ProcessingStage.CLEANUP.value,
+            )
+            cleanup = self._cleanup_failure(TemporaryInputCleanupError())
+            emit_diagnostic(
+                _LOGGER,
+                logging.ERROR,
+                "cleanup_failed",
+                analysis_id=analysis_id,
+                phase="safety_confirmation",
+                code="cleanup_safety_unconfirmed",
+                status=cleanup.status.value,
+                stage=ProcessingStage.CLEANUP.value,
+            )
+            return cleanup
         if pending_source is not None:
             return self._cleanup_accepted(pending_source)
         if owned_source is not None and not owned_source.is_handed_off:
@@ -259,22 +396,42 @@ class FileIntakeService:
         return None
 
     def _cleanup_owned(self, owned_source: OwnedSource) -> CleanupResult:
+        emit_diagnostic(
+            _LOGGER,
+            logging.INFO,
+            "cleanup_started",
+            analysis_id=owned_source.analysis_id,
+            stage=ProcessingStage.CLEANUP.value,
+        )
         try:
             self._owner.cleanup(owned_source)
         except TemporaryInputCleanupError as error:
-            return self._cleanup_failure(error)
+            cleanup = self._cleanup_failure(error)
         except Exception:
-            return self._cleanup_failure(TemporaryInputCleanupError())
-        return self._cleanup_completed()
+            cleanup = self._cleanup_failure(TemporaryInputCleanupError())
+        else:
+            cleanup = self._cleanup_completed()
+        self._emit_cleanup_result(owned_source.analysis_id, cleanup)
+        return cleanup
 
     def _cleanup_accepted(self, accepted_source: AcceptedSource) -> CleanupResult:
+        emit_diagnostic(
+            _LOGGER,
+            logging.INFO,
+            "cleanup_started",
+            analysis_id=accepted_source.analysis_id,
+            stage=ProcessingStage.CLEANUP.value,
+        )
         try:
             accepted_source.cleanup()
         except TemporaryInputCleanupError as error:
-            return self._cleanup_failure(error)
+            cleanup = self._cleanup_failure(error)
         except Exception:
-            return self._cleanup_failure(TemporaryInputCleanupError())
-        return self._cleanup_completed()
+            cleanup = self._cleanup_failure(TemporaryInputCleanupError())
+        else:
+            cleanup = self._cleanup_completed()
+        self._emit_cleanup_result(accepted_source.analysis_id, cleanup)
+        return cleanup
 
     def _cleanup_completed(self) -> CleanupResult:
         return CleanupResult(
@@ -328,6 +485,46 @@ class FileIntakeService:
                 and not owned_source.is_handed_off
             ):
                 self._owner.cleanup(owned_source)
+
+    @staticmethod
+    def _try_confirm_cleanup_safe(barrier: _CleanupSafetyBarrier) -> bool:
+        try:
+            return barrier.try_confirm_safe() is True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _emit_cleanup_result(analysis_id: str, cleanup: CleanupResult) -> None:
+        completed = cleanup.status is CleanupStatus.COMPLETED
+        emit_diagnostic(
+            _LOGGER,
+            logging.INFO if completed else logging.ERROR,
+            "cleanup_completed" if completed else "cleanup_failed",
+            analysis_id=analysis_id,
+            code=None if completed else "cleanup_failed",
+            status=cleanup.status.value,
+            stage=ProcessingStage.CLEANUP.value,
+        )
+
+    @staticmethod
+    def _log_intake_terminal(
+        analysis_id: str,
+        *,
+        status: AnalysisStatus,
+        phase: str,
+        code: str,
+    ) -> None:
+        event = "validation_rejected" if status is AnalysisStatus.REJECTED else "validation_failed"
+        emit_diagnostic(
+            _LOGGER,
+            logging.INFO if status is AnalysisStatus.REJECTED else logging.ERROR,
+            event,
+            analysis_id=analysis_id,
+            phase=phase,
+            code=code,
+            status=status.value,
+            stage=ProcessingStage.VALIDATION.value,
+        )
 
     @staticmethod
     def _terminal(

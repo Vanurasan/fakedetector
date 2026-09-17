@@ -9,6 +9,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+import fakedetector.result_finalization as result_finalization_module
 from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
 from fakedetector.core import AuthoritativeLifecycleClock
@@ -485,3 +486,27 @@ def test_stage3_persistence_failure_is_safe_typed_and_creates_no_fake_result(
     assert error.error_detail.code == "result_write_failed"
     assert "PRIVATE" not in str(error)
     assert str(tmp_path) not in str(error)
+
+
+def test_logging_failure_does_not_change_successful_persistence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    repository = _RecordingRepository()
+    service = ResultFinalizationService(
+        config=config,
+        clock=AuthoritativeLifecycleClock(_FixedClock(_FINISHED)),
+        repository=repository,
+    )
+    terminal = _stage3_terminal(AnalysisStatus.REJECTED, file_state="input")
+
+    def fail_log(*_args: object, **_kwargs: object) -> None:
+        raise OSError("PRIVATE logging failure")
+
+    monkeypatch.setattr(result_finalization_module._LOGGER, "log", fail_log)
+
+    result = service.finalize_stage3(terminal)
+
+    assert result.status is AnalysisStatus.REJECTED
+    assert repository.saved == [result]
