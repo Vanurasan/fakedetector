@@ -115,9 +115,9 @@ AFTER_MVP
 Статус Stage 8: DONE / CLOSED
 Следующий этап: Этап 9 — Надёжность, безопасность и сквозные тесты
 Статус Stage 9: IN_PROGRESS
-Ближайшее действие: owner review реализации Stage 9 Macro 4, затем отдельный independent final audit
+Ближайшее действие: owner review remediation findings S9-A01/S9-A02, затем independent post-remediation audit
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–8 завершены; Stage 9 Macro 1 committed at `ad6050c`; Macro 2 committed at `4e4ba3c`; Macro 3 committed at `bddcedb`; Macro 4 реализован pending owner review
+Реализация программы: Этапы 1–8 завершены; Stage 9 Macro 1–4 committed; independent final audit вернул REMEDIATE по S9-A01/S9-A02; remediation реализован pending owner review
 Документационная база: сформирована
 ```
 
@@ -154,7 +154,7 @@ AFTER_MVP
 | 6 | Базовые анализаторы и формирование признаков | DONE | Реальные нормализованные признаки |
 | 7 | Полнота, риск и рекомендации | DONE | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | DONE | Реализация и независимые аудиты завершены; этап закрыт |
-| 9 | Надёжность, безопасность и сквозные тесты | IN_PROGRESS | Macro 1–3 committed; Macro 4 реализован pending owner review и independent final audit |
+| 9 | Надёжность, безопасность и сквозные тесты | IN_PROGRESS | Macro 1–4 committed; S9-A01/S9-A02 remediation реализован pending owner review и post-remediation audit |
 | 10 | Сборка и демонстрация MVP | NOT_STARTED | Воспроизводимый прототип |
 | 11+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
 
@@ -1477,7 +1477,8 @@ Macro 1 и Macro 2 реализованы и покрыты контрактны
 `S8-A03` исправлены в remediation commit `7093922`. Post-remediation independent
 closure audit завершён с `PASS`, новых findings нет. Stage 8 имеет статус
 `DONE / CLOSED`; Stage 9 имеет статус `IN_PROGRESS`, Macro 1–3 committed, Macro 4
-реализован pending owner review и independent final audit.
+committed at `2ef98a3`; findings S9-A01/S9-A02 independent final audit исправлены
+реализацией pending owner review и independent post-remediation audit.
 
 Quality barrier closure audit: `1687 passed, 3 skipped`, coverage `90%`;
 `ruff`, `mypy`, `pre-commit`, lock, CLI/import и `git diff --check` — `PASS`.
@@ -1504,12 +1505,17 @@ Quality barrier closure audit: `1687 passed, 3 skipped`, coverage `90%`;
 - [x] Macro 3 — DONE / committed at `bddcedb`: bounded actual HTTP multipart
   body, receive/parse deadline, strict multipart structure и FFmpeg/process
   security;
-- [x] Macro 4 — IMPLEMENTED / pending owner review: Profile B full-path E2E,
+- [x] Macro 4 — DONE / committed at `2ef98a3`: Profile B full-path E2E,
   restart/failure/security/concurrency/shutdown proof и измеренный
   performance/resource envelope.
+- [x] Remediation S9-A01/S9-A02 — IMPLEMENTED / pending owner review:
+  multipart completeness подтверждается closing-boundary callback и завершением
+  ASGI stream; receive/parse deadline дополнен synchronous monotonic checkpoints
+  и финальной проверкой до возврата формы.
 
-Macro 1–3 committed. Macro 4 реализован pending owner review. Stage 9 остаётся
-`IN_PROGRESS` до owner review и отдельного independent final audit.
+Macro 1–4 committed. Independent final audit вернул `REMEDIATE` по S9-A01 и
+S9-A02; remediation реализован, но independent post-remediation audit ещё не
+выполнен. Stage 9 остаётся `IN_PROGRESS`.
 
 ## Зафиксированные owner decisions
 

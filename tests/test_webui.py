@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from base64 import b64encode
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from stage8_helpers import (
     make_status,
 )
 
+import fakedetector._http_upload as http_upload_module
 import fakedetector.webui as webui_module
 from fakedetector._http_upload import RequestBodyDeadlineError, multipart_body_limit_bytes
 from fakedetector.app import create_app
@@ -92,6 +94,47 @@ def _small_transport_config(tmp_path: Path) -> AppConfig:
     payload = config.model_dump(mode="python")
     payload["limits"]["max_file_size_mb"] = {"image": 1, "audio": 1, "video": 1}
     return AppConfig.model_validate(payload)
+
+
+def _one_second_request_timeout_config(tmp_path: Path) -> AppConfig:
+    config = make_config(tmp_path)
+    payload = config.model_dump(mode="python")
+    payload["server"]["request_timeout_seconds"] = 1
+    return AppConfig.model_validate(payload)
+
+
+def _raw_file_multipart(payload: bytes) -> tuple[bytes, str]:
+    boundary = "stage9-webui-deadline-boundary"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="sample.png"\r\n'
+        "Content-Type: image/png\r\n"
+        "\r\n"
+    ).encode() + payload + f"\r\n--{boundary}--\r\n".encode()
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def _truncated_multipart_after_file(
+    field_name: str,
+    *,
+    filename: str | None,
+) -> tuple[bytes, str]:
+    boundary = "stage9-webui-incomplete-boundary"
+    disposition = f'Content-Disposition: form-data; name="{field_name}"'
+    if filename is not None:
+        disposition += f'; filename="{filename}"'
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="one.png"\r\n'
+        "Content-Type: image/png\r\n"
+        "\r\n"
+        "one\r\n"
+        f"--{boundary}\r\n"
+        f"{disposition}\r\n"
+        "\r\n"
+        "truncated"
+    ).encode()
+    return body, f"multipart/form-data; boundary={boundary}"
 
 
 def test_http_basic_missing_wrong_and_valid_credentials(tmp_path: Path) -> None:
@@ -454,6 +497,67 @@ def test_webui_receive_or_parse_deadline_is_branded_safe_400(
     assert response.headers["content-type"].startswith("text/html")
     assert "invalid_multipart" in response.text
     assert service.sources == []
+
+
+def test_real_parser_elapsed_deadline_is_branded_400_before_webui_submission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StubApplicationService()
+    ticks = itertools.count(start=0.0, step=0.2)
+    monkeypatch.setattr(http_upload_module, "_monotonic_time", ticks.__next__)
+    body, content_type = _raw_file_multipart(b"payload")
+
+    response = _client(
+        tmp_path,
+        service,
+        config=_one_second_request_timeout_config(tmp_path),
+    ).post(
+        "/analyses",
+        content=body,
+        headers={**SAME_ORIGIN, "Content-Type": content_type},
+        auth=AUTH,
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("text/html")
+    assert "invalid_multipart" in response.text
+    assert "analysis-" not in response.text
+    assert service.sources == []
+    assert service.payloads == []
+
+
+@pytest.mark.parametrize(
+    ("field_name", "filename"),
+    [("file", "two.png"), ("unexpected", None)],
+    ids=["duplicate-file", "unknown-field"],
+)
+def test_incomplete_final_part_is_branded_400_before_webui_submission(
+    tmp_path: Path,
+    field_name: str,
+    filename: str | None,
+) -> None:
+    service = StubApplicationService()
+    body, content_type = _truncated_multipart_after_file(
+        field_name,
+        filename=filename,
+    )
+
+    response = _client(tmp_path, service).post(
+        "/analyses",
+        content=body,
+        headers={**SAME_ORIGIN, "Content-Type": content_type},
+        auth=AUTH,
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("text/html")
+    assert "invalid_multipart" in response.text
+    assert "analysis-" not in response.text
+    assert service.sources == []
+    assert service.payloads == []
 
 
 def test_webui_strict_multipart_structure_rejects_duplicates_and_unknown_fields(

@@ -340,6 +340,28 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-17
+
+### Исправлено
+
+- **[Stage 9/S9-A01] Multipart parsing теперь подтверждает полное завершение
+  сообщения.** Возврат `FormData` от Starlette больше не считается достаточным:
+  boundary требует фактического `on_end` от `python-multipart`, а ASGI body stream
+  должен завершиться нормально. Оборванная последняя file/field part возвращает
+  существующий `400 invalid_multipart` до регистрации; созданные parser spool
+  закрываются.
+
+- **[Stage 9/S9-A02] Receive/parse deadline усилен синхронными monotonic
+  checkpoints.** Один absolute deadline проверяется на stream boundary и сразу
+  после завершения parser до возврата `FormData`, поэтому готовые без suspension
+  chunks и длительная синхронная parser work больше не обходят лимит.
+  `asyncio.timeout()` сохранён для отмены блокирующего receive. Публичный
+  контракт, конфигурация, schema и зависимости не изменены.
+
+Оба finding независимого финального аудита исправлены в реализации, но Stage 9
+остаётся `IN_PROGRESS`: owner review и independent post-remediation audit ещё не
+выполнены. Stage 10 остаётся `NOT_STARTED`.
+
 ### 2026-09-16
 
 ### Добавлено

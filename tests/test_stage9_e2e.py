@@ -205,6 +205,21 @@ def _raw_file_multipart(payload: bytes) -> tuple[bytes, str]:
     return body, f"multipart/form-data; boundary={boundary}"
 
 
+def _truncated_duplicate_file_multipart() -> tuple[bytes, str]:
+    boundary = "stage9-e2e-incomplete-boundary"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="one.png"\r\n'
+        "Content-Type: image/png\r\n\r\n"
+        "one\r\n"
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="two.png"\r\n'
+        "Content-Type: image/png\r\n\r\n"
+        "truncated"
+    ).encode()
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
 def _create_stale_workspace(root: Path, analysis_id: str) -> Path:
     workspace = root / analysis_id
     workspace.mkdir(parents=True)
@@ -532,6 +547,41 @@ def test_assembled_app_guards_auth_and_actual_oversized_body_before_registration
         assert authenticated.status_code == 413
         assert authenticated.json()["error"]["code"] == "file_too_large"
         assert "analysis_id" not in authenticated.json()
+        assert app.state.runtime.registry._tasks == {}
+        assert not Path(config.temporary_storage.root_path).exists()
+        assert not Path(config.result.directory).exists()
+
+
+def test_assembled_app_rejects_incomplete_duplicate_before_any_runtime_state(
+    tmp_path: Path,
+) -> None:
+    config = _profile_b_config(tmp_path)
+    app = create_app(config)
+    body, content_type = _truncated_duplicate_file_multipart()
+
+    with TestClient(app) as client:
+        api_response = client.post(
+            "/api/v1/analyses",
+            content=body,
+            headers={**API_AUTH, "Content-Type": content_type},
+        )
+        webui_response = client.post(
+            "/analyses",
+            content=body,
+            headers={
+                "Origin": "http://testserver",
+                "Content-Type": content_type,
+            },
+            auth=WEB_AUTH,
+            follow_redirects=False,
+        )
+
+        assert api_response.status_code == 400
+        assert api_response.json()["error"]["code"] == "invalid_multipart"
+        assert "analysis_id" not in api_response.json()
+        assert webui_response.status_code == 400
+        assert "invalid_multipart" in webui_response.text
+        assert "analysis-" not in webui_response.text
         assert app.state.runtime.registry._tasks == {}
         assert not Path(config.temporary_storage.root_path).exists()
         assert not Path(config.result.directory).exists()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 from pathlib import Path
@@ -17,6 +18,7 @@ from stage8_helpers import (
     make_status,
 )
 
+import fakedetector._http_upload as http_upload_module
 import fakedetector.api as api_module
 from fakedetector._http_upload import (
     RequestBodyDeadlineError,
@@ -102,6 +104,36 @@ def _raw_file_multipart(payload: bytes) -> tuple[bytes, str]:
         "\r\n"
     ).encode() + payload + f"\r\n--{boundary}--\r\n".encode()
     return body, f"multipart/form-data; boundary={boundary}"
+
+
+def _truncated_multipart_after_file(
+    field_name: str,
+    *,
+    filename: str | None,
+) -> tuple[bytes, str]:
+    boundary = "stage9-incomplete-boundary"
+    disposition = f'Content-Disposition: form-data; name="{field_name}"'
+    if filename is not None:
+        disposition += f'; filename="{filename}"'
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="one.png"\r\n'
+        "Content-Type: image/png\r\n"
+        "\r\n"
+        "one\r\n"
+        f"--{boundary}\r\n"
+        f"{disposition}\r\n"
+        "\r\n"
+        "truncated"
+    ).encode()
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def _one_second_request_timeout_config() -> AppConfig:
+    config = make_config(Path("test-runtime"))
+    payload = config.model_dump(mode="python")
+    payload["server"]["request_timeout_seconds"] = 1
+    return AppConfig.model_validate(payload)
 
 
 def test_accepted_multipart_upload_uses_factual_sampled_state_and_default_source() -> None:
@@ -332,6 +364,59 @@ def test_receive_or_parse_deadline_uses_safe_existing_multipart_mapping(
     assert response.json()["error"]["code"] == "invalid_multipart"
     assert set(response.json()) == {"error", "request_id"}
     assert service.sources == []
+
+
+def test_real_parser_elapsed_deadline_is_400_before_api_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StubApplicationService()
+    ticks = itertools.count(start=0.0, step=0.2)
+    monkeypatch.setattr(http_upload_module, "_monotonic_time", ticks.__next__)
+    body, content_type = _raw_file_multipart(b"payload")
+
+    response = _client(service, config=_one_second_request_timeout_config()).post(
+        "/api/v1/analyses",
+        content=body,
+        headers={**AUTH, "Content-Type": content_type},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_multipart"
+    assert set(response.json()) == {"error", "request_id"}
+    assert service.sources == []
+    assert service.payloads == []
+
+
+@pytest.mark.parametrize(
+    ("field_name", "filename"),
+    [
+        ("file", "two.png"),
+        ("unexpected", None),
+        ("source_context", None),
+    ],
+    ids=["duplicate-file", "unknown-field", "source-context"],
+)
+def test_incomplete_final_part_is_400_before_api_submission(
+    field_name: str,
+    filename: str | None,
+) -> None:
+    service = StubApplicationService()
+    body, content_type = _truncated_multipart_after_file(
+        field_name,
+        filename=filename,
+    )
+
+    response = _client(service).post(
+        "/api/v1/analyses",
+        content=body,
+        headers={**AUTH, "Content-Type": content_type},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_multipart"
+    assert set(response.json()) == {"error", "request_id"}
+    assert service.sources == []
+    assert service.payloads == []
 
 
 def test_strict_multipart_structure_rejects_duplicate_and_unknown_fields() -> None:

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 
 import pytest
+import starlette.formparsers as starlette_formparsers
 from starlette.datastructures import UploadFile
+from starlette.formparsers import MultiPartException
 from starlette.requests import Request
 from starlette.types import Message
 
@@ -19,25 +22,105 @@ from fakedetector._http_upload import (
 _BOUNDARY = "fakedetector-boundary"
 
 
-def _multipart_body(payload: bytes = b"payload") -> bytes:
+def _file_part(
+    payload: bytes,
+    *,
+    field_name: str = "file",
+    filename: str = "sample.png",
+) -> bytes:
     return (
-        f"--{_BOUNDARY}\r\n"
-        'Content-Disposition: form-data; name="file"; filename="sample.png"\r\n'
+        f'Content-Disposition: form-data; name="{field_name}"; '
+        f'filename="{filename}"\r\n'
         "Content-Type: image/png\r\n"
         "\r\n"
-    ).encode() + payload + f"\r\n--{_BOUNDARY}--\r\n".encode()
+    ).encode() + payload
+
+
+def _field_part(field_name: str, payload: bytes) -> bytes:
+    return (
+        f'Content-Disposition: form-data; name="{field_name}"\r\n\r\n'.encode()
+        + payload
+    )
+
+
+def _multipart_message(parts: list[bytes], *, complete: bool) -> bytes:
+    separator = f"\r\n--{_BOUNDARY}\r\n".encode()
+    body = f"--{_BOUNDARY}\r\n".encode() + separator.join(parts)
+    if complete:
+        body += f"\r\n--{_BOUNDARY}--\r\n".encode()
+    return body
+
+
+def _multipart_body(payload: bytes = b"payload") -> bytes:
+    return _multipart_message([_file_part(payload)], complete=True)
+
+
+class _ManualClock:
+    def __init__(self, initial: float = 0.0) -> None:
+        self.now = initial
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class _AdvancingClock:
+    def __init__(self, step: float) -> None:
+        self.now = 0.0
+        self.step = step
+
+    def __call__(self) -> float:
+        current = self.now
+        self.now += self.step
+        return current
+
+
+def _track_spooled_files(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tempfile.SpooledTemporaryFile[bytes]]:
+    created: list[tempfile.SpooledTemporaryFile[bytes]] = []
+
+    def create_spooled_file(*args: object, **kwargs: object):
+        # The real parser owns and must close this returned spool.
+        file = tempfile.SpooledTemporaryFile(*args, **kwargs)  # noqa: SIM115
+        created.append(file)
+        return file
+
+    monkeypatch.setattr(
+        starlette_formparsers,
+        "SpooledTemporaryFile",
+        create_spooled_file,
+    )
+    return created
+
+
+def _advance_clock_after_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    request: Request,
+    clock: _ManualClock,
+    *,
+    elapsed: float,
+) -> None:
+    original_stream = request.stream
+
+    async def stream():
+        async for chunk in original_stream():
+            yield chunk
+        clock.now = elapsed
+
+    monkeypatch.setattr(request, "stream", stream)
 
 
 def _request(
     chunks: list[bytes],
     *,
     content_length: str | None = None,
+    stream_completed: bool = True,
 ) -> Request:
     messages: list[Message] = [
         {
             "type": "http.request",
             "body": chunk,
-            "more_body": index < len(chunks) - 1,
+            "more_body": not stream_completed or index < len(chunks) - 1,
         }
         for index, chunk in enumerate(chunks)
     ]
@@ -106,6 +189,60 @@ def test_large_upload_uses_starlette_spooled_file_instead_of_request_body_buffer
         assert upload.file._rolled is True
     finally:
         asyncio.run(form.close())
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        _multipart_message(
+            [_file_part(b"one", filename="one.png"), _file_part(b"two", filename="two.png")],
+            complete=False,
+        ),
+        _multipart_message(
+            [_file_part(b"one"), _field_part("unexpected", b"value")],
+            complete=False,
+        ),
+        _multipart_message(
+            [_file_part(b"one"), _field_part("source_context", b'{"channel":"api"}')],
+            complete=False,
+        ),
+        _multipart_message([_file_part(b"incomplete")], complete=False),
+    ],
+    ids=[
+        "completed-file-truncated-duplicate",
+        "completed-file-truncated-unknown-field",
+        "completed-file-truncated-source-context",
+        "truncated-first-file",
+    ],
+)
+def test_real_parser_rejects_multipart_without_complete_closing_boundary(
+    body: bytes,
+) -> None:
+    request = _request([body])
+
+    with pytest.raises(MultiPartException):
+        _parse(request, body_limit_bytes=len(body))
+
+
+def test_incomplete_real_parser_closes_partial_framework_spool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spooled_files = _track_spooled_files(monkeypatch)
+    body = _multipart_message([_file_part(b"partial")], complete=False)
+
+    with pytest.raises(MultiPartException):
+        _parse(_request([body]), body_limit_bytes=len(body))
+
+    assert len(spooled_files) == 1
+    assert spooled_files[0].closed is True
+
+
+def test_completed_parser_message_requires_completed_asgi_body_stream() -> None:
+    body = _multipart_body()
+    request = _request([body], stream_completed=False)
+
+    with pytest.raises(MultiPartException):
+        _parse(request, body_limit_bytes=len(body))
 
 
 @pytest.mark.parametrize("content_length", [None, "1"])
@@ -179,28 +316,45 @@ def test_receive_deadline_is_safe_and_deterministic() -> None:
         _parse(request, body_limit_bytes=1024, timeout_seconds=0.01)
 
 
-def test_parse_deadline_closes_partial_framework_spool(
+def test_non_suspending_receive_checks_elapsed_deadline_between_ready_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class CloseProbe:
-        closed = False
-
-        def close(self) -> None:
-            self.closed = True
-
-    close_probe = CloseProbe()
-
-    class BlockingParser:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            self._files_to_close_on_error = [close_probe]
-
-        async def parse(self) -> None:
-            await asyncio.Event().wait()
-
-    monkeypatch.setattr(http_upload_module, "MultiPartParser", BlockingParser)
-    request = _request([_multipart_body()])
+    body = _multipart_body()
+    monkeypatch.setattr(http_upload_module, "_monotonic_time", _AdvancingClock(0.2))
 
     with pytest.raises(RequestBodyDeadlineError):
-        _parse(request, body_limit_bytes=1024, timeout_seconds=0.01)
+        _parse(
+            _request([bytes([byte]) for byte in body]),
+            body_limit_bytes=len(body),
+            timeout_seconds=1.0,
+        )
 
-    assert close_probe.closed is True
+
+def test_final_deadline_check_rejects_parser_completion_after_elapsed_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _ManualClock()
+    monkeypatch.setattr(http_upload_module, "_monotonic_time", clock)
+    body = _multipart_body()
+    request = _request([body])
+    _advance_clock_after_stream(monkeypatch, request, clock, elapsed=2.0)
+
+    with pytest.raises(RequestBodyDeadlineError):
+        _parse(request, body_limit_bytes=len(body), timeout_seconds=1.0)
+
+
+def test_elapsed_deadline_closes_partial_real_parser_spool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spooled_files = _track_spooled_files(monkeypatch)
+    clock = _ManualClock()
+    monkeypatch.setattr(http_upload_module, "_monotonic_time", clock)
+    body = _multipart_message([_file_part(b"partial")], complete=False)
+    request = _request([body])
+    _advance_clock_after_stream(monkeypatch, request, clock, elapsed=2.0)
+
+    with pytest.raises(RequestBodyDeadlineError):
+        _parse(request, body_limit_bytes=len(body), timeout_seconds=1.0)
+
+    assert len(spooled_files) == 1
+    assert spooled_files[0].closed is True
