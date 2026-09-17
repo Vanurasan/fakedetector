@@ -342,6 +342,14 @@ YYYY-MM-DD
 
 ### 2026-09-17
 
+### Изменено
+
+- **[Stage 9/Closure] Stage 9 закрыт после independent post-remediation audit с
+  `PASS`.** Findings `S9-A01` и `S9-A02` имеют статус `CLOSED`; новых findings
+  нет (`0 BLOCKER`, `0 HIGH`, `0 MEDIUM`, `0 LOW`). Финальный barrier:
+  `1763 passed, 17 skipped`, coverage `90%`. Следующим этапом становится Stage 10,
+  который остаётся `NOT_STARTED`.
+
 ### Исправлено
 
 - **[Stage 9/S9-A01] Multipart parsing теперь подтверждает полное завершение

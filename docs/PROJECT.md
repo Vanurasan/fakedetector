@@ -1459,9 +1459,9 @@ runtime/results/<analysis_id>.json
 Запись использует детерминированную сериализацию UTF-8 и выполняется атомарно:
 временный файл в том же каталоге, `flush`, `fsync`, затем `os.replace`. Каталог
 создаётся лениво при первом `save()`; операции чтения не создают его.
-Существующая прямая символическая ссылка на целевой файл отклоняется. Более
-широкое targeted устранение TOCTOU/reparse hazards остаётся задачей Stage 9
-Macro 2; полный Win32 handle-based redesign не требуется.
+Существующая прямая символическая ссылка на целевой файл отклоняется. Stage 9
+Macro 2 выполнил targeted устранение TOCTOU/reparse hazards; полный Win32
+handle-based redesign не вводился и не требуется.
 
 Crash может оставить `.result-*.tmp`. Macro 1 журналирует доступный безопасный
 сбой удаления, но не выполняет автоматическую startup-очистку и не обещает
@@ -1709,6 +1709,11 @@ FFmpeg и другие внешние инструменты вызываютс�
 
 ### 15.6. Зафиксированные границы Stage 9
 
+Stage 9 завершён со статусом **DONE / CLOSED**. Closure chain:
+implementation → independent final audit `REMEDIATE` по `S9-A01`/`S9-A02` →
+remediation → independent post-remediation audit `PASS`; оба finding закрыты,
+новых findings нет.
+
 Runtime считается приватным для account приложения. Stage 9 не обещает защиту
 от hostile process под той же Windows account или с Administrator privileges.
 
@@ -1802,6 +1807,16 @@ Reference measurement 2026-09-16 на Windows 11 `10.0.26200`, AMD64, Python
 requirement или основание для OS-level quota. Автоматическая проверка требует
 только корректных конечных неотрицательных измерений и завершённых workflow; она
 не падает из-за произвольного порога времени или RSS.
+
+Принятые ограничения Stage 9 сохраняются после закрытия этапа и не являются
+незакрытыми findings: Windows ACL остаётся deployment prerequisite; hostile
+same-account / Administrator и полный filesystem/process sandbox находятся вне
+гарантированной threat model; OS CPU/RAM hard quotas не вводились; durable
+recovery незавершённых задач и persistence retry отсутствуют; автоматическое
+удаление `.result-*.tmp` crash residue не вводилось; resource measurements имеют
+informational характер и не являются SLA. На текущем Windows host 17
+symlink-related тестов пропущены из-за отсутствия symlink privileges, при этом
+native Windows junction coverage выполнено.
 
 ---
 

@@ -111,13 +111,13 @@ AFTER_MVP
 
 ```text
 Общий статус: IN_PROGRESS
-Последний закрытый этап: Этап 8 — JSON, API и WebUI
-Статус Stage 8: DONE / CLOSED
-Следующий этап: Этап 9 — Надёжность, безопасность и сквозные тесты
-Статус Stage 9: IN_PROGRESS
-Ближайшее действие: owner review remediation findings S9-A01/S9-A02, затем independent post-remediation audit
+Последний закрытый этап: Этап 9 — Надёжность, безопасность и сквозные тесты
+Статус Stage 9: DONE / CLOSED
+Следующий этап: Этап 10 — Сборка и демонстрация MVP
+Статус Stage 10: NOT_STARTED
+Ближайшее действие: Stage 10 — сборка и демонстрация MVP
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–8 завершены; Stage 9 Macro 1–4 committed; independent final audit вернул REMEDIATE по S9-A01/S9-A02; remediation реализован pending owner review
+Реализация программы: Этапы 1–9 завершены; Stage 9 закрыт после independent post-remediation audit с PASS
 Документационная база: сформирована
 ```
 
@@ -137,7 +137,7 @@ AFTER_MVP
 
 1. Stage 7 формирует полноту, риск и рекомендации без псевдовероятности.
 2. Stage 8 собирает итоговый JSON и внешние границы API/WebUI.
-3. Stage 9 завершает повышение надёжности и сквозную проверку MVP.
+3. Stage 9 завершил повышение надёжности и сквозную проверку MVP.
 
 ---
 
@@ -154,7 +154,7 @@ AFTER_MVP
 | 6 | Базовые анализаторы и формирование признаков | DONE | Реальные нормализованные признаки |
 | 7 | Полнота, риск и рекомендации | DONE | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | DONE | Реализация и независимые аудиты завершены; этап закрыт |
-| 9 | Надёжность, безопасность и сквозные тесты | IN_PROGRESS | Macro 1–4 committed; S9-A01/S9-A02 remediation реализован pending owner review и post-remediation audit |
+| 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
 | 10 | Сборка и демонстрация MVP | NOT_STARTED | Воспроизводимый прототип |
 | 11+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
 
@@ -1476,16 +1476,16 @@ Macro 1 и Macro 2 реализованы и покрыты контрактны
 завершены; независимый финальный аудит выполнен, findings `S8-A01`, `S8-A02` и
 `S8-A03` исправлены в remediation commit `7093922`. Post-remediation independent
 closure audit завершён с `PASS`, новых findings нет. Stage 8 имеет статус
-`DONE / CLOSED`; Stage 9 имеет статус `IN_PROGRESS`, Macro 1–3 committed, Macro 4
-committed at `2ef98a3`; findings S9-A01/S9-A02 independent final audit исправлены
-реализацией pending owner review и independent post-remediation audit.
+`DONE / CLOSED`; Stage 9 также завершён и закрыт после independent
+post-remediation audit с `PASS`: findings `S9-A01` и `S9-A02` закрыты, новых
+findings нет. Stage 10 остаётся `NOT_STARTED`.
 
-Quality barrier closure audit: `1687 passed, 3 skipped`, coverage `90%`;
+Quality barrier closure audit Stage 8: `1687 passed, 3 skipped`, coverage `90%`;
 `ruff`, `mypy`, `pre-commit`, lock, CLI/import и `git diff --check` — `PASS`.
 
 ---
 
-# Этап 9. Надёжность, безопасность и сквозные тесты — IN_PROGRESS
+# Этап 9. Надёжность, безопасность и сквозные тесты — DONE / CLOSED
 
 ## Цель
 
@@ -1508,14 +1508,23 @@ Quality barrier closure audit: `1687 passed, 3 skipped`, coverage `90%`;
 - [x] Macro 4 — DONE / committed at `2ef98a3`: Profile B full-path E2E,
   restart/failure/security/concurrency/shutdown proof и измеренный
   performance/resource envelope.
-- [x] Remediation S9-A01/S9-A02 — IMPLEMENTED / pending owner review:
-  multipart completeness подтверждается closing-boundary callback и завершением
-  ASGI stream; receive/parse deadline дополнен synchronous monotonic checkpoints
-  и финальной проверкой до возврата формы.
+- [x] Final audit remediation — DONE / committed at `111a832`: `S9-A01` и
+  `S9-A02` устранены; multipart completeness подтверждается closing-boundary
+  callback и завершением ASGI stream; receive/parse deadline дополнен
+  synchronous monotonic checkpoints и финальной проверкой до возврата формы.
 
-Macro 1–4 committed. Independent final audit вернул `REMEDIATE` по S9-A01 и
-S9-A02; remediation реализован, но independent post-remediation audit ещё не
-выполнен. Stage 9 остаётся `IN_PROGRESS`.
+Macro 1–4 и remediation committed. Independent final audit вернул `REMEDIATE`
+по `S9-A01` и `S9-A02`. Independent post-remediation audit завершён с `PASS`:
+`S9-A01` — `CLOSED`, `S9-A02` — `CLOSED`; новых findings нет.
+
+Финальное состояние findings:
+
+```text
+BLOCKER 0
+HIGH 0
+MEDIUM 0
+LOW 0
+```
 
 ## Зафиксированные owner decisions
 
@@ -1649,6 +1658,33 @@ measurement этой среды, не SLA и не deployment guarantee.
 ## Критерий завершения
 
 Все обязательные сквозные, негативные и безопасностные тесты проходят; известные ограничения зафиксированы; исходные и промежуточные данные удаляются фактически.
+
+Stage 9 имеет статус `DONE / CLOSED`. Финальный quality barrier:
+
+- full pytest: `1763 passed, 17 skipped`;
+- coverage: `90%`;
+- targeted remediation/post-remediation suite: `116 passed`;
+- `uv lock --check`: `PASS`;
+- Ruff: `PASS`;
+- mypy: `PASS`, 64 source files;
+- pre-commit: все 8 hooks `PASS`;
+- CLI/import smoke: `PASS`;
+- `git diff --check`: `PASS`.
+
+Принятые ограничения Stage 9 не являются незакрытыми findings:
+
+- Windows ACL остаётся deployment prerequisite;
+- hostile same-account / Administrator находится вне гарантированной threat model;
+- полный filesystem/process sandbox отсутствует;
+- OS CPU/RAM hard quotas не вводились;
+- durable unfinished-job recovery отсутствует;
+- persistence retry отсутствует;
+- автоматическое удаление `.result-*.tmp` crash residue не вводилось;
+- resource measurements имеют informational характер и не являются SLA;
+- 17 symlink-related skips на текущем Windows host связаны с отсутствием
+  symlink privileges; native Windows junction coverage при этом выполнялась.
+
+Следующий этап — Stage 10, который остаётся `NOT_STARTED`.
 
 ---
 
