@@ -115,7 +115,7 @@ AFTER_MVP
 Статус Stage 9: DONE / CLOSED
 Следующий этап: Этап 10 — Сборка и демонстрация MVP
 Статус Stage 10: IN_PROGRESS
-Ближайшее действие: owner review Stage 10 Macro 1; Macro 2 после приёмки
+Ближайшее действие: owner review Stage 10 Macro 2; Macro 3 после приёмки
 Критические блокеры: отсутствуют
 Реализация программы: Этапы 1–9 завершены; Stage 9 закрыт после independent post-remediation audit с PASS
 Документационная база: сформирована
@@ -155,7 +155,7 @@ AFTER_MVP
 | 7 | Полнота, риск и рекомендации | DONE | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | DONE | Реализация и независимые аудиты завершены; этап закрыт |
 | 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
-| 10 | Сборка и демонстрация MVP | IN_PROGRESS | Macro 1 implemented / pending owner review; Macro 2/3 not started |
+| 10 | Сборка и демонстрация MVP | IN_PROGRESS | Macro 1 DONE / owner accepted; Macro 2 implemented / pending owner review; Macro 3 not started |
 | 11+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
 
 ---
@@ -1698,12 +1698,12 @@ Stage 9 имеет статус `DONE / CLOSED`. Финальный quality barr
 
 - [x] зафиксировать версии runtime-зависимостей через механический export `uv.lock`;
 - [x] проверить чистую установку exact wheel через uv во внешнем venv;
-- [ ] описать установку FFmpeg для Windows;
-- [ ] создать README запуска;
-- [ ] создать безопасный пример `.env.example`;
-- [ ] создать минимальную конфигурацию;
-- [ ] подготовить небольшой набор легальных тестовых файлов;
-- [ ] описать ограничения анализаторов;
+- [x] описать установку FFmpeg для Windows;
+- [x] создать README запуска;
+- [x] создать безопасный пример `.env.example`;
+- [x] создать минимальную конфигурацию;
+- [x] подготовить deterministic generator небольшого набора легальных тестовых файлов;
+- [x] описать ограничения анализаторов;
 - [ ] проверить запуск без IDE;
 - [ ] проверить очистку после демонстрации;
 - [x] зафиксировать номер версии MVP `0.1.0`;
@@ -1712,10 +1712,13 @@ Stage 9 имеет статус `DONE / CLOSED`. Финальный quality barr
 
 ## Статус макрозадач
 
-- Macro 1 — **IMPLEMENTED / pending owner review**: package-version source,
+- Macro 1 — **DONE / owner accepted**, committed SHA
+  `841213f299dd6eb5052cabff95d7bb34fa3f91ab`: package-version source,
   sdist→wheel build, runtime constraints из `uv.lock`, package resources и
   isolated installed-wheel verification.
-- Macro 2 — **NOT_STARTED**.
+- Macro 2 — **IMPLEMENTED / pending owner review**: user-facing README и единый
+  handoff guide, Windows FFmpeg prerequisite, config/secrets workflow,
+  deterministic demo-media generator и его Profile B regression coverage.
 - Macro 3 — **NOT_STARTED**.
 
 ## Критерии готовности MVP

@@ -1,101 +1,61 @@
 # FakeDetector
 
-FakeDetector — прототип системы предварительного анализа изображений, аудио и
-видео на признаки искусственного создания или модификации.
+FakeDetector 0.1.0 — локальный CPU-only MVP для предварительного анализа
+изображений, аудио и видео на технические признаки искусственного создания или
+модификации. Он формирует findings, полноту, объяснимый risk и рекомендацию, но
+не доказывает подделку или подлинность и не заменяет экспертную проверку.
 
-Проект является вспомогательным инструментом оценки риска: он собирает
-результаты анализаторов, формирует объяснимую оценку и предоставляет один
-канонический результат через API и WebUI. Такая оценка не устанавливает
-подлинность материала окончательно и не заменяет экспертную проверку.
+Stage 10 имеет статус `IN_PROGRESS`: Macro 1 (wheel и воспроизводимая установка)
+принят владельцем; Macro 2 (handoff, документация и demo generator) реализован и
+ожидает review; финальный release kit и installed-artifact gate принадлежат
+Macro 3.
 
-## Состояние проекта
+## Поддерживаемая среда
 
-**Stage 8 — DONE / CLOSED.** Macro 1 хранения результата и Macro 2 внешнего
-вертикального среза завершены. Независимый финальный аудит выполнен, findings
-`S8-A01`–`S8-A03` исправлены, а post-remediation closure audit завершён с
-`PASS` без новых findings. Stage 9 имеет статус `NOT_STARTED`.
+- Windows 11 x64;
+- Python 3.12;
+- CPU-only;
+- wheel как основной install artifact;
+- внешние `ffmpeg` и `ffprobe` в `PATH`.
 
-| Stage | Status | Что реализовано или запланировано |
-|---:|---|---|
-| 1 | DONE | Каркас приложения, конфигурация, CLI, logging и FastAPI health |
-| 2 | DONE | Доменные контракты, типизированные модели и нормативные правила |
-| 3 | DONE | Intake, validation и контролируемое владение source |
-| 4 | DONE | Lifecycle задачи, routing, scheduler, workspace и cleanup/recovery |
-| 5 | DONE | Preprocessing image/audio/video и analyzer framework |
-| 6 | DONE | Profile B и рабочий путь Finding реализованы; этап закрыт |
-| 7 | DONE | Полнота анализа, риск и рекомендации |
-| 8 | DONE | `AnalysisResult` 1.0, репозиторий JSON, асинхронный API и WebUI реализованы; этап закрыт |
-| 9 | NOT_STARTED | Надёжность, безопасность и сквозные тесты |
+Standalone executable, installer, Docker, PyPI и GitHub Release не входят в
+MVP. Проверенный Stage 10 media-tool baseline — Gyan Windows x64 full build
+`9.0.1-full_build-www.gyan.dev`; это tested build, не заявленная минимальная
+версия.
 
-## Что уже умеет система
+## Быстрый старт из release kit
 
-- Запускаться через CLI, загружать YAML-конфигурацию с env overrides,
-  валидировать её через Pydantic и вести ротационные JSONL-логи.
-- Потоково принимать и проверять image/audio/video: контролировать размер,
-  расширение, MIME, сигнатуру, безопасное чтение и SHA-256, а также управлять
-  владением временным source.
-- Создавать и маршрутизировать задачи, выполнять их с ограниченной
-  параллельностью, учитывать workspace artifacts и проводить детерминированный
-  cleanup/recovery.
-- Подготавливать изображения, аудио и видео для анализа, включая bounded-вызовы
-  внешних процессов и ограничения количества и общего размера артефактов.
-- Регистрировать и включать анализаторы по конфигурации, проверять их
-  применимость, изолировать timeout и ошибки, а затем собирать упорядоченные
-  `AnalyzerResult`.
-- Применять детерминированную политику выполнения и хранить внутреннее состояние
-  Stage 5 в неизменяемом виде.
-- Выполнять четыре CPU-only анализатора Profile B для image/audio/video и
-  преобразовывать authoritative `AnalyzerResult` в нормализованные weak `Finding`
-  с отдельным immutable Stage 6 task state.
-- Формировать `AnalysisCompleteness`, `RiskAssessment` и `Recommendation`, затем
-  сохранять терминальный `AnalysisResult` 1.0 атомарным JSON до публикации
-  `FINISHED`.
-- Принимать загрузку `multipart/form-data` через асинхронный API с задачами,
-  возвращать статус и сохранённый результат ровно через три маршрута
-  `/api/v1/analyses`.
-- Обслуживать серверный WebUI со страницами загрузки, статуса, результата и
-  ошибки без SPA и без повторного расчёта доменных данных.
-- Использовать один `AnalysisApplicationService`, один `TaskRegistry` и один
-  `ResultRepository` для API и WebUI.
-
-## Что пока не реализовано
-
-- Восстановление незавершённых задач после перезапуска и автоматическая повторная
-  попытка после ошибки сохранения.
-- Ограничение частоты запросов, долговечная очередь, API истории, перечисления,
-  удаления, отмены и повторного запуска, а также база данных.
-- Рабочее развёртывание, завершение TLS и эксплуатационное усиление безопасности
-  Stage 9.
-
-## Общая схема pipeline
-
-```text
-РЕАЛИЗОВАНО — ЭТАПЫ 1–8, MACRO 2
-Input → Validation → Task lifecycle → Preprocessing
-→ Profile B analyzers → Finding formation
-→ Оценка риска / полнота / рекомендация
-→ FACT_READY → PERSISTENCE → ResultRepository.save() → FINISHED
-→ общий AnalysisApplicationService → API / WebUI
-
-ДАЛЕЕ — планирование Stage 9; усиление надёжности и расширенная
-сквозная проверка ещё не начаты
-```
-
-## Запуск и проверки
-
-Запуск приложения с примером конфигурации:
+Release producer передаёт exact wheel и механически созданный из `uv.lock`
+`runtime-constraints.txt`. Получателю не нужны checkout, IDE, editable install
+или dev-зависимости.
 
 ```powershell
-$env:MEDIA_ANALYZER_API_TOKEN = "replace-with-a-strong-token"
-$env:MEDIA_ANALYZER_WEBUI_CREDENTIALS = "analyst:replace-with-a-strong-password"
-uv run fakedetector --config config/config.example.yaml
+uv venv --python 3.12 --no-project .venv
+uv pip install --python .\.venv\Scripts\python.exe `
+  --constraint .\runtime-constraints.txt `
+  .\fakedetector-0.1.0-py3-none-any.whl
+uv pip check --python .\.venv\Scripts\python.exe
+
+New-Item -ItemType Directory -Path .\work
+Copy-Item .\config.example.yaml .\work\config.yaml
+Set-Location .\work
+
+$apiBytes = New-Object byte[] 32
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($apiBytes)
+$env:MEDIA_ANALYZER_API_TOKEN = ([BitConverter]::ToString($apiBytes)).Replace("-", "")
+$passwordBytes = New-Object byte[] 24
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($passwordBytes)
+$webPassword = ([BitConverter]::ToString($passwordBytes)).Replace("-", "")
+$env:MEDIA_ANALYZER_WEBUI_CREDENTIALS = "analyst:$webPassword"
+$webPassword
+
+..\.venv\Scripts\python.exe ..\generate_stage10_demo_media.py `
+  --output-dir .\demo-media
+..\.venv\Scripts\fakedetector.exe --config .\config.yaml
 ```
 
-HTTP Basic предназначен для локального MVP. За пределами локального интерфейса
-запускайте его только за HTTPS и обратным прокси. Учётные данные и Bearer-токен
-не записывайте в YAML или Git.
-
-API использует ровно три маршрута:
+Откройте `http://127.0.0.1:8080/` и используйте HTTP Basic credentials из
+environment. API использует `Authorization: Bearer <token>` и маршруты:
 
 ```text
 POST /api/v1/analyses
@@ -103,60 +63,56 @@ GET  /api/v1/analyses/{analysis_id}
 GET  /api/v1/analyses/{analysis_id}/result
 ```
 
-`POST` принимает `multipart/form-data`: обязательный `file` и необязательную
-JSON-строку `source_context`. При отсутствии контекста используется
-`SourceContext(channel=api)`; переданный контекст также обязан иметь
-`channel=api`.
+`.env.example` — только reference/template: FakeDetector не загружает `.env`
+автоматически. Секреты должны быть установлены в environment процесса.
 
-WebUI доступен на `/`. Его изменяющий состояние `POST /analyses` принимает только
-запросы с тем же источником по `Origin` либо `Referer`; JavaScript используется
-только для блокировки повторной отправки формы, сеансы cookie не используются.
+Относительные config/runtime/result/log paths разрешаются от текущего working
+directory. Запускайте приложение с явным `--config` из стабильного каталога.
+Остановка — `Ctrl+C`. При повторном запуске с тем же working directory и result
+storage сохранённые terminal results доступны по прежнему `analysis_id`;
+незавершённые задачи не восстанавливаются.
 
-Проверка запуска реального сервера и endpoint `GET /health`:
+Полный пошаговый Windows/FFmpeg/install/demo/API/restart/troubleshooting guide:
+[MVP_HANDOFF](docs/MVP_HANDOFF.md).
 
-```text
-uv run poe server-smoke
+## Что проверяет Profile B
+
+| Media | Analyzer |
+|---|---|
+| image | `image_metadata_consistency@1.0.0` |
+| image | `image_copy_move_correspondence@1.0.0` |
+| audio | `audio_pcm_quality@1.0.0` |
+| video | `video_sampled_frame_quality@1.0.0` |
+
+`completeness=complete` означает завершение настроенного набора, а не
+универсальную forensic completeness. Low risk не доказывает подлинность;
+`probability=null` ожидаем; audio/video Profile B — технические quality и
+sampled-frame checks, не универсальные deepfake classifiers.
+
+## Security boundaries
+
+Локальный demo по умолчанию слушает только loopback. WebUI Basic вне loopback
+допустим только за HTTPS/reverse proxy; public bind без deployment review не
+рекомендуется. Runtime directories должны принадлежать доверенной Windows
+account и иметь подходящие ACL. Hostile same-account/Administrator actor,
+OS sandbox, hard CPU/RAM quotas, rate limiting и TLS не входят в гарантии MVP.
+
+## Разработка и проверки
+
+Из source checkout:
+
+```powershell
+uv lock --check
+uv run ruff check .
+uv run mypy src
+uv run pytest
+uv run pre-commit run --all-files
+uv run fakedetector --help
 ```
 
-Полный quality pipeline:
-
-```text
-uv run poe check
-```
-
-## Семантика доступности результата
-
-- Текущее состояние читается из `TaskRegistry` раньше репозитория JSON.
-- `FINISHED` означает, что канонический результат уже сохранён.
-- Текущее состояние `PERSISTENCE` с `result_write_failed` остаётся видимым, но
-  результат недоступен и API возвращает `503`.
-- После перезапуска сохранённый терминальный результат доступен; потерянный ID без
-  JSON возвращает `404`.
-- Обработчик `multipart/form-data` может поместить загружаемый файл во временное
-  хранилище до применения жёсткого лимита Stage 3. Потоковое ограничение размера
-  тела запроса на транспортном уровне относится к усилению безопасности и
-  развёртыванию Stage 9.
-
-## Документация
-
-- [PROJECT](docs/PROJECT.md) — назначение, архитектура, границы и основной стек.
-- [CONTRACTS](docs/CONTRACTS.md) — модели данных, интерфейсы и нормативное
-  поведение.
-- [ROADMAP](docs/ROADMAP.md) — этапы разработки и текущий статус.
-- [REFERENCES](docs/REFERENCES.md) — происхождение методов и реализаций анализаторов.
-- [CHANGELOG](docs/CHANGELOG.md) — история существенных изменений и принятых
-  решений.
-
-## Технологический стек
-
-- Python 3.12 и uv;
-- FastAPI и Uvicorn;
-- Pydantic v2, PyYAML, Jinja2 и python-multipart;
-- Pillow;
-- FFmpeg/ffprobe как системная зависимость;
-- локальная файловая система и стандартные механизмы Python для очередей,
-  потоков и процессов;
-- pytest, pytest-cov, Ruff, mypy и pre-commit для контроля качества.
+Источники истины: [PROJECT](docs/PROJECT.md), [CONTRACTS](docs/CONTRACTS.md),
+[ROADMAP](docs/ROADMAP.md), [REFERENCES](docs/REFERENCES.md) и
+[CHANGELOG](docs/CHANGELOG.md).
 
 ## Лицензия
 

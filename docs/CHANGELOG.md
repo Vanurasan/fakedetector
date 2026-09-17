@@ -344,6 +344,17 @@ YYYY-MM-DD
 
 ### Добавлено
 
+- **[Stage 10/Macro 2] Добавлен пользовательский handoff и воспроизводимая
+  демонстрация установленного MVP.** README и единое подробное руководство
+  разделяют действия производителя и получателя exact wheel + constraints,
+  описывают требования Windows, конфигурацию и секреты, WebUI/API,
+  интерпретацию результата, persistence/restart, границы безопасности и
+  диагностику. Независимый от tests/source helpers generator создаёт и проверяет
+  bounded Profile B PNG/WAV/MP4; generated media в Git не хранится.
+- **[Stage 10/Macro 2] Добавлен безопасный `.env.example`.** Он содержит только
+  пустые `MEDIA_ANALYZER_API_TOKEN` и
+  `MEDIA_ANALYZER_WEBUI_CREDENTIALS`; документация явно фиксирует отсутствие
+  dotenv autoload и необходимость process environment.
 - **[Stage 10/Macro 1] Добавлена воспроизводимая проверка release-
   артефакта.** Harness собирает sdist, затем wheel из sdist,
   механически экспортирует runtime constraints из `uv.lock`,
