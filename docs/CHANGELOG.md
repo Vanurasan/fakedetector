@@ -340,6 +340,37 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-18
+
+### Добавлено
+
+- **[Stage 10/Macro 1] Добавлена воспроизводимая проверка release-
+  артефакта.** Harness собирает sdist, затем wheel из sdist,
+  механически экспортирует runtime constraints из `uv.lock`,
+  устанавливает exact wheel во внешнее fresh venv и проверяет
+  dependency versions, import origin, CLI и WebUI resources.
+
+### Изменено
+
+- **[Versioning] Package version `0.1.0` получила один authoritative
+  source.** Build metadata в `pyproject.toml` владеет package version, а
+  `fakedetector.__version__`, FastAPI metadata и default
+  `server.application_version` читают installed distribution metadata.
+  Явный provenance override сохранён; schema, risk-model и analyzer
+  versions не изменены.
+- **[Build] Build backend зафиксирован как `hatchling==1.32.3`.**
+  Причина: исключить неконтролируемое изменение build tool при
+  повторной сборке; runtime dependency set не изменён.
+
+### Решение
+
+- **[Stage 10] Зафиксированы distribution decisions MVP.**
+  Гарантируемый baseline — Windows 11 x64, Python 3.12, CPU-only;
+  основной install artifact — wheel; FFmpeg/ffprobe — внешние
+  prerequisites; standalone executable, installer и публикация не входят в
+  scope. Runtime constraints не хранятся как второй lock и всегда
+  генерируются из `uv.lock`.
+
 ### 2026-09-17
 
 ### Изменено

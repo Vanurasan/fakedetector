@@ -9,6 +9,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from fakedetector import __version__
+
 LoggingLevel = Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]
 
 _IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp"]
@@ -27,7 +29,7 @@ class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = Field(default=8080, ge=1, le=65535)
     request_timeout_seconds: int = Field(default=600, ge=1)
-    application_version: str = "0.1.0"
+    application_version: str = __version__
 
 
 class WebUIConfig(BaseModel):

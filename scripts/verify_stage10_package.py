@@ -1,0 +1,495 @@
+"""Build and verify the Stage 10 Macro 1 release artifacts."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import textwrap
+import tomllib
+import zipfile
+from pathlib import Path
+from typing import Any
+
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+
+_PROJECT_NAME = "fakedetector"
+_REQUIRED_RESOURCES = (
+    "templates/error.html",
+    "templates/result.html",
+    "templates/status.html",
+    "templates/upload.html",
+    "static/styles.css",
+)
+_IGNORED_VENV_TOOLING = frozenset({"pip", "setuptools", "wheel"})
+
+
+class VerificationError(RuntimeError):
+    """Raised when an installed artifact does not satisfy the release checks."""
+
+
+def _run(
+    args: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            args,
+            cwd=cwd,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.CalledProcessError as error:
+        command = subprocess.list2cmdline(args)
+        raise VerificationError(
+            f"Command failed: {command}\nstdout:\n{error.stdout}\nstderr:\n{error.stderr}"
+        ) from error
+
+
+def _single_artifact(directory: Path, pattern: str) -> Path:
+    matches = sorted(directory.glob(pattern))
+    if len(matches) != 1:
+        raise VerificationError(
+            f"Expected exactly one artifact matching {pattern!r}, found {len(matches)}."
+        )
+    return matches[0].resolve()
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sanitized_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    for name in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
+        environment.pop(name, None)
+    environment["PYTHONNOUSERSITE"] = "1"
+    environment["PIP_CONFIG_FILE"] = os.devnull
+    return environment
+
+
+def _parse_constraints(
+    path: Path,
+    marker_environment: dict[str, str],
+) -> dict[str, str]:
+    expected: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        requirement = Requirement(line)
+        if requirement.marker is not None and not requirement.marker.evaluate(
+            environment=marker_environment
+        ):
+            continue
+        exact_versions = [
+            specifier.version
+            for specifier in requirement.specifier
+            if specifier.operator == "==" and not specifier.version.endswith(".*")
+        ]
+        if len(exact_versions) != 1 or len(requirement.specifier) != 1:
+            raise VerificationError(f"Constraint is not one exact pin: {line}")
+        name = canonicalize_name(requirement.name)
+        previous = expected.setdefault(name, exact_versions[0])
+        if previous != exact_versions[0]:
+            raise VerificationError(f"Conflicting applicable constraints for {name}.")
+    return expected
+
+
+def _direct_dev_names(pyproject_path: Path) -> set[str]:
+    pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    requirements = pyproject.get("dependency-groups", {}).get("dev", [])
+    return {canonicalize_name(Requirement(item).name) for item in requirements}
+
+
+def _assert_runtime_matches_constraints(
+    *,
+    installed: dict[str, str],
+    expected: dict[str, str],
+    direct_dev_names: set[str],
+) -> dict[str, Any]:
+    project_name = canonicalize_name(_PROJECT_NAME)
+    normalized_installed = {
+        canonicalize_name(name): version for name, version in installed.items()
+    }
+    runtime_installed = {
+        name: version
+        for name, version in normalized_installed.items()
+        if name != project_name and name not in _IGNORED_VENV_TOOLING
+    }
+    missing = sorted(name for name in expected if name not in runtime_installed)
+    unexpected = sorted(name for name in runtime_installed if name not in expected)
+    mismatched = {
+        name: {"expected": expected[name], "installed": runtime_installed[name]}
+        for name in sorted(expected.keys() & runtime_installed.keys())
+        if expected[name] != runtime_installed[name]
+    }
+    dev_only_installed = sorted(
+        name
+        for name in direct_dev_names
+        if name in runtime_installed and name not in expected
+    )
+    if missing or unexpected or mismatched or dev_only_installed:
+        raise VerificationError(
+            "Runtime dependency comparison failed: "
+            + json.dumps(
+                {
+                    "missing": missing,
+                    "unexpected": unexpected,
+                    "mismatched": mismatched,
+                    "dev_only_installed": dev_only_installed,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+    return {
+        "status": "match",
+        "approved_distribution_count": len(expected),
+        "installed_runtime_distribution_count": len(runtime_installed),
+        "dev_only_installed": dev_only_installed,
+    }
+
+
+def _installed_probe(python: Path, *, cwd: Path, env: dict[str, str]) -> dict[str, Any]:
+    probe = textwrap.dedent(
+        f"""
+        import importlib.metadata as metadata
+        import importlib.resources as resources
+        import json
+        import os
+        import platform
+        import sys
+        from pathlib import Path
+
+        import fakedetector
+        from fakedetector.app import create_app
+        from fakedetector.config.models import AppConfig, ServerConfig
+
+        distribution = metadata.distribution("{_PROJECT_NAME}")
+        direct_url_text = distribution.read_text("direct_url.json")
+        direct_url = json.loads(direct_url_text) if direct_url_text else None
+        resource_root = resources.files("fakedetector")
+        resource_paths = {{
+            name: str(resource_root.joinpath(name))
+            for name in {list(_REQUIRED_RESOURCES)!r}
+            if resource_root.joinpath(name).is_file()
+        }}
+        installed = {{
+            item.metadata["Name"]: item.version
+            for item in metadata.distributions()
+            if item.metadata["Name"]
+        }}
+        implementation = sys.implementation.version
+        implementation_version = ".".join(
+            str(part)
+            for part in (implementation.major, implementation.minor, implementation.micro)
+        )
+        marker_environment = {{
+            "implementation_name": sys.implementation.name,
+            "implementation_version": implementation_version,
+            "os_name": os.name,
+            "platform_machine": platform.machine(),
+            "platform_python_implementation": platform.python_implementation(),
+            "platform_release": platform.release(),
+            "platform_system": platform.system(),
+            "platform_version": platform.version(),
+            "python_full_version": platform.python_version(),
+            "python_version": ".".join(platform.python_version_tuple()[:2]),
+            "sys_platform": sys.platform,
+            "extra": "",
+        }}
+        config = AppConfig.model_validate({{
+            "schema_version": "1.0",
+            "server": {{}},
+            "access_channels": {{
+                "webui": {{"enabled": False}},
+                "api": {{"enabled": False}},
+            }},
+            "limits": {{}},
+            "allowed_formats": {{}},
+            "validation": {{}},
+            "temporary_storage": {{}},
+            "preprocessing": {{}},
+            "analyzers": {{}},
+            "risk_assessment": {{}},
+            "result": {{}},
+            "error_handling": {{}},
+            "logging": {{}},
+            "external_systems": {{}},
+        }})
+        app = create_app(config)
+        print(json.dumps({{
+            "package_version": distribution.version,
+            "module_version": fakedetector.__version__,
+            "config_default_application_version": ServerConfig().application_version,
+            "fastapi_version": app.version,
+            "module_origin": str(Path(fakedetector.__file__).resolve()),
+            "create_app_module": create_app.__module__,
+            "direct_url": direct_url,
+            "resources": resource_paths,
+            "installed": installed,
+            "marker_environment": marker_environment,
+            "python_version": platform.python_version(),
+            "sys_path": sys.path,
+            "user_site_enabled": bool(__import__("site").ENABLE_USER_SITE),
+        }}, sort_keys=True))
+        """
+    )
+    completed = _run([str(python), "-I", "-c", probe], cwd=cwd, env=env)
+    return json.loads(completed.stdout)
+
+
+def _prepare_output_directory(requested: Path | None) -> Path:
+    if requested is None:
+        return Path(tempfile.mkdtemp(prefix="fakedetector-stage10-")).resolve()
+    output = requested.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    if any(output.iterdir()):
+        raise VerificationError("The verification output directory must be empty.")
+    return output
+
+
+def verify(output_directory: Path | None = None) -> dict[str, Any]:
+    """Build from sdist, install the exact wheel, and return verification evidence."""
+    repository = Path(__file__).resolve().parents[1]
+    output = _prepare_output_directory(output_directory)
+    if output == repository or repository in output.parents:
+        raise VerificationError("Verification output must be outside the repository.")
+
+    uv = shutil.which("uv")
+    if uv is None:
+        raise VerificationError("uv is required for Stage 10 package verification.")
+
+    artifacts = output / "artifacts"
+    artifacts.mkdir()
+    constraints = output / "runtime-constraints.txt"
+    environment = _sanitized_environment()
+
+    source_sha = _run(
+        ["git", "rev-parse", "HEAD"], cwd=repository, env=environment
+    ).stdout.strip()
+    source_status = _run(
+        ["git", "status", "--short", "--untracked-files=all"],
+        cwd=repository,
+        env=environment,
+    ).stdout.splitlines()
+    uv_version = _run([uv, "--version"], cwd=output, env=environment).stdout.strip()
+    pyproject = tomllib.loads((repository / "pyproject.toml").read_text(encoding="utf-8"))
+    project_version = pyproject["project"]["version"]
+
+    _run(
+        [
+            uv,
+            "build",
+            "--sdist",
+            "--no-create-gitignore",
+            "--out-dir",
+            str(artifacts),
+            str(repository),
+        ],
+        cwd=output,
+        env=environment,
+    )
+    sdist = _single_artifact(artifacts, f"{_PROJECT_NAME}-*.tar.gz")
+    _run(
+        [
+            uv,
+            "build",
+            "--wheel",
+            "--no-create-gitignore",
+            "--out-dir",
+            str(artifacts),
+            str(sdist),
+        ],
+        cwd=output,
+        env=environment,
+    )
+    wheel = _single_artifact(artifacts, f"{_PROJECT_NAME}-*.whl")
+    expected_wheel_resources = {
+        f"fakedetector/{resource}" for resource in _REQUIRED_RESOURCES
+    }
+    with zipfile.ZipFile(wheel) as archive:
+        wheel_names = set(archive.namelist())
+    missing_wheel_resources = sorted(expected_wheel_resources - wheel_names)
+    if missing_wheel_resources:
+        raise VerificationError(
+            f"Wheel resources are missing: {missing_wheel_resources}"
+        )
+
+    constraints_command = [
+        uv,
+        "export",
+        "--locked",
+        "--no-dev",
+        "--no-emit-project",
+        "--format",
+        "requirements.txt",
+        "--no-annotate",
+        "--no-header",
+        "--no-hashes",
+        "--output-file",
+        str(constraints),
+    ]
+    _run(constraints_command, cwd=repository, env=environment)
+
+    venv = output / "venv"
+    _run(
+        [uv, "venv", "--python", "3.12", "--no-project", str(venv)],
+        cwd=output,
+        env=environment,
+    )
+    scripts_directory = venv / ("Scripts" if os.name == "nt" else "bin")
+    python = scripts_directory / ("python.exe" if os.name == "nt" else "python")
+    cli = scripts_directory / ("fakedetector.exe" if os.name == "nt" else "fakedetector")
+    _run(
+        [
+            uv,
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--constraint",
+            str(constraints),
+            str(wheel),
+        ],
+        cwd=output,
+        env=environment,
+    )
+    _run(
+        [uv, "pip", "check", "--python", str(python)],
+        cwd=output,
+        env=environment,
+    )
+    probe = _installed_probe(python, cwd=output, env=environment)
+
+    if probe["package_version"] != project_version:
+        raise VerificationError("Installed distribution version differs from build metadata.")
+    if probe["module_version"] != probe["package_version"]:
+        raise VerificationError("fakedetector.__version__ differs from package metadata.")
+    if probe["config_default_application_version"] != probe["package_version"]:
+        raise VerificationError("Default application provenance differs from package metadata.")
+    if probe["fastapi_version"] != probe["package_version"]:
+        raise VerificationError("FastAPI metadata differs from package metadata.")
+    if probe["create_app_module"] != "fakedetector.app":
+        raise VerificationError("create_app was not imported from the installed package.")
+    if probe["user_site_enabled"]:
+        raise VerificationError("The isolated probe unexpectedly enabled user-site packages.")
+
+    module_origin = Path(probe["module_origin"])
+    if venv.resolve() not in module_origin.parents or "site-packages" not in {
+        part.casefold() for part in module_origin.parts
+    }:
+        raise VerificationError("Imported module does not originate from venv site-packages.")
+    if repository in module_origin.parents:
+        raise VerificationError("Imported module leaked from the source checkout.")
+    checkout_on_sys_path = False
+    for raw_path in probe["sys_path"]:
+        if not raw_path:
+            continue
+        candidate = Path(raw_path).resolve()
+        if candidate == repository or repository in candidate.parents:
+            checkout_on_sys_path = True
+            break
+    if checkout_on_sys_path:
+        raise VerificationError("The source checkout leaked into isolated sys.path.")
+
+    direct_url = probe["direct_url"]
+    if not isinstance(direct_url, dict) or direct_url.get("url") != wheel.as_uri():
+        raise VerificationError("Installed project does not identify the exact built wheel.")
+    if direct_url.get("dir_info", {}).get("editable", False):
+        raise VerificationError("Editable installation is not allowed.")
+
+    missing_resources = sorted(set(_REQUIRED_RESOURCES) - probe["resources"].keys())
+    if missing_resources:
+        raise VerificationError(f"Installed resources are missing: {missing_resources}")
+    expected = _parse_constraints(constraints, probe["marker_environment"])
+    comparison = _assert_runtime_matches_constraints(
+        installed=probe["installed"],
+        expected=expected,
+        direct_dev_names=_direct_dev_names(repository / "pyproject.toml"),
+    )
+
+    cli_result = _run([str(cli), "--help"], cwd=output, env=environment)
+    if "usage:" not in cli_result.stdout.casefold():
+        raise VerificationError("Installed CLI help did not return argparse usage.")
+
+    report: dict[str, Any] = {
+        "source_sha": source_sha,
+        "source_tree_clean": not source_status,
+        "package_version": probe["package_version"],
+        "build_method": "uv build --sdist, then uv build --wheel from the sdist",
+        "build_tooling": {
+            "uv": uv_version,
+            "backend": pyproject["build-system"]["build-backend"],
+            "requires": pyproject["build-system"]["requires"],
+        },
+        "sdist_filename": sdist.name,
+        "wheel_filename": wheel.name,
+        "wheel_sha256": _sha256(wheel),
+        "constraints_generation_command": subprocess.list2cmdline(constraints_command),
+        "constraints_file": str(constraints),
+        "fresh_venv_class": "temporary directory outside repository",
+        "python_version": probe["python_version"],
+        "installed_project_origin": probe["module_origin"],
+        "installed_from_exact_wheel": True,
+        "editable_install": False,
+        "dependency_check": "passed",
+        "runtime_dependency_comparison": comparison,
+        "cli_help": "passed",
+        "source_checkout_on_sys_path": False,
+        "pythonpath_sanitized": True,
+        "user_site_enabled": False,
+        "wheel_resource_inventory": sorted(expected_wheel_resources),
+        "installed_resource_inventory": sorted(probe["resources"]),
+        "output_directory": str(output),
+    }
+    (output / "verification-report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return report
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Build and verify the Stage 10 Macro 1 wheel in an isolated venv."
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="empty directory outside the repository; defaults to a new OS temp directory",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    """Run the release verification and emit its machine-readable report."""
+    args = _parse_args()
+    try:
+        report = verify(args.output_dir)
+    except VerificationError as error:
+        print(f"Stage 10 package verification failed: {error}", file=sys.stderr)
+        return 1
+    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

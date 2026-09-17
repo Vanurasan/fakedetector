@@ -1873,6 +1873,29 @@ uv add --dev <package>
 
 `.venv` не включается в Git.
 
+### 16.2.1. Основа поставки Stage 10
+
+Версия package/MVP равна `0.1.0`. Единственный authoritative source package
+version — build metadata `[project].version` в `pyproject.toml`; установленный runtime
+получает её из distribution metadata. Версии схем `AnalysisResult` и
+конфигурации, версии risk-model и анализаторов остаются
+независимыми. Явное `server.application_version` остаётся разрешённым
+deployment/provenance override; при его отсутствии используется package
+version.
+
+Гарантируемая базовая платформа MVP: Windows 11 x64, Python 3.12,
+CPU-only. Основной артефакт установки — wheel; sdist служит для
+сборки/проверки. Standalone executable, installer, PyPI и GitHub Release не
+входят в Stage 10. FFmpeg и ffprobe остаются внешними prerequisites и
+не включаются в wheel.
+
+Runtime constraints генерируются механически из `uv.lock` через
+`uv export --locked --no-dev --no-emit-project`; отдельный вручную
+поддерживаемый lock не вводится. `scripts/verify_stage10_package.py`
+собирает sdist и wheel, устанавливает точный wheel с constraints в
+свежее внешнее venv и проверяет distribution versions, import origin,
+console script и package resources.
+
 ### 16.3. Базовые зависимости
 
 Начальный набор:
@@ -2223,7 +2246,6 @@ MVP должен включать:
 - rate limiting;
 - эксплуатационный мониторинг;
 - резервное копирование служебных результатов;
-- формат поставки;
 - способ установки FFmpeg;
 - требования к развёртыванию.
 

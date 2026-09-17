@@ -114,8 +114,8 @@ AFTER_MVP
 Последний закрытый этап: Этап 9 — Надёжность, безопасность и сквозные тесты
 Статус Stage 9: DONE / CLOSED
 Следующий этап: Этап 10 — Сборка и демонстрация MVP
-Статус Stage 10: NOT_STARTED
-Ближайшее действие: Stage 10 — сборка и демонстрация MVP
+Статус Stage 10: IN_PROGRESS
+Ближайшее действие: owner review Stage 10 Macro 1; Macro 2 после приёмки
 Критические блокеры: отсутствуют
 Реализация программы: Этапы 1–9 завершены; Stage 9 закрыт после independent post-remediation audit с PASS
 Документационная база: сформирована
@@ -155,7 +155,7 @@ AFTER_MVP
 | 7 | Полнота, риск и рекомендации | DONE | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | DONE | Реализация и независимые аудиты завершены; этап закрыт |
 | 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
-| 10 | Сборка и демонстрация MVP | NOT_STARTED | Воспроизводимый прототип |
+| 10 | Сборка и демонстрация MVP | IN_PROGRESS | Macro 1 implemented / pending owner review; Macro 2/3 not started |
 | 11+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
 
 ---
@@ -1688,7 +1688,7 @@ Stage 9 имеет статус `DONE / CLOSED`. Финальный quality barr
 
 ---
 
-# Этап 10. Сборка и демонстрация MVP — NOT_STARTED
+# Этап 10. Сборка и демонстрация MVP — IN_PROGRESS
 
 ## Цель
 
@@ -1696,8 +1696,8 @@ Stage 9 имеет статус `DONE / CLOSED`. Финальный quality barr
 
 ## Обязательные задачи
 
-- [ ] зафиксировать версии зависимостей;
-- [ ] проверить чистую установку через uv;
+- [x] зафиксировать версии runtime-зависимостей через механический export `uv.lock`;
+- [x] проверить чистую установку exact wheel через uv во внешнем venv;
 - [ ] описать установку FFmpeg для Windows;
 - [ ] создать README запуска;
 - [ ] создать безопасный пример `.env.example`;
@@ -1706,9 +1706,17 @@ Stage 9 имеет статус `DONE / CLOSED`. Финальный quality barr
 - [ ] описать ограничения анализаторов;
 - [ ] проверить запуск без IDE;
 - [ ] проверить очистку после демонстрации;
-- [ ] сформировать номер версии MVP;
-- [ ] обновить `CHANGELOG.md`;
+- [x] зафиксировать номер версии MVP `0.1.0`;
+- [x] обновить `CHANGELOG.md` для Macro 1;
 - [ ] отметить все выполненные критерии MVP.
+
+## Статус макрозадач
+
+- Macro 1 — **IMPLEMENTED / pending owner review**: package-version source,
+  sdist→wheel build, runtime constraints из `uv.lock`, package resources и
+  isolated installed-wheel verification.
+- Macro 2 — **NOT_STARTED**.
+- Macro 3 — **NOT_STARTED**.
 
 ## Критерии готовности MVP
 
