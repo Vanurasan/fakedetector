@@ -5,10 +5,12 @@ FakeDetector 0.1.0 — локальный CPU-only MVP для предварит
 модификации. Он формирует findings, полноту, объяснимый risk и рекомендацию, но
 не доказывает подделку или подлинность и не заменяет экспертную проверку.
 
-Stage 10 имеет статус `IN_PROGRESS`: Macro 1 (wheel и воспроизводимая установка)
-и Macro 2 (handoff, документация и demo generator) приняты владельцем; Macro 3
-(release kit, manifest, ZIP и installed-artifact gate) реализован и ожидает
-review владельца.
+Stage 10 имеет статус `IN_PROGRESS`: Macro 1–3 реализованы и приняты владельцем.
+Strict certification прошла на baseline SHA
+`273a62951efebb0d2f10f4456ff4ebe4dd377a1f`. Independent final audit вернул
+`REMEDIATE` по findings `S10-A01`–`S10-A04`; выполняется remediation, после
+которой требуется отдельный independent post-remediation audit. Stage 10 ещё не
+закрыт.
 
 ## Поддерживаемая среда
 

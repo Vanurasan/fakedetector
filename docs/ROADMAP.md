@@ -115,7 +115,7 @@ AFTER_MVP
 Статус Stage 9: DONE / CLOSED
 Следующий этап: Этап 10 — Сборка и демонстрация MVP
 Статус Stage 10: IN_PROGRESS
-Ближайшее действие: review владельцем Stage 10 Macro 3 и strict gate после commit
+Ближайшее действие: remediation findings S10-A01–S10-A04, затем independent post-remediation audit
 Критические блокеры: отсутствуют
 Реализация программы: Этапы 1–9 завершены; Stage 9 закрыт после independent post-remediation audit с PASS
 Документационная база: сформирована
@@ -155,7 +155,7 @@ AFTER_MVP
 | 7 | Полнота, риск и рекомендации | DONE | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | DONE | Реализация и независимые аудиты завершены; этап закрыт |
 | 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
-| 10 | Сборка и демонстрация MVP | IN_PROGRESS | Macro 1–2 DONE / owner accepted; Macro 3 IMPLEMENTED / pending owner review |
+| 10 | Сборка и демонстрация MVP | IN_PROGRESS | Macro 1–3 DONE / owner accepted; independent-audit remediation выполняется |
 | 11+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
 
 ---
@@ -1478,7 +1478,8 @@ Macro 1 и Macro 2 реализованы и покрыты контрактны
 closure audit завершён с `PASS`, новых findings нет. Stage 8 имеет статус
 `DONE / CLOSED`; Stage 9 также завершён и закрыт после independent
 post-remediation audit с `PASS`: findings `S9-A01` и `S9-A02` закрыты, новых
-findings нет. Stage 10 остаётся `NOT_STARTED`.
+findings нет. Stage 10 сейчас имеет статус `IN_PROGRESS`; Macro 1–3 приняты
+владельцем, а independent-audit remediation ожидает post-remediation audit.
 
 Quality barrier closure audit Stage 8: `1687 passed, 3 skipped`, coverage `90%`;
 `ruff`, `mypy`, `pre-commit`, lock, CLI/import и `git diff --check` — `PASS`.
@@ -1684,7 +1685,8 @@ Stage 9 имеет статус `DONE / CLOSED`. Финальный quality barr
 - 17 symlink-related skips на текущем Windows host связаны с отсутствием
   symlink privileges; native Windows junction coverage при этом выполнялась.
 
-Следующий этап — Stage 10, который остаётся `NOT_STARTED`.
+Stage 10 сейчас имеет статус `IN_PROGRESS`; Macro 1–3 приняты владельцем, а
+independent-audit remediation ожидает post-remediation audit.
 
 ---
 
@@ -1719,13 +1721,19 @@ Stage 9 имеет статус `DONE / CLOSED`. Финальный quality barr
 - Macro 2 — **DONE / owner accepted**: user-facing README и единый
   handoff guide, Windows FFmpeg prerequisite, config/secrets workflow,
   deterministic demo-media generator и его Profile B regression coverage.
-- Macro 3 — **IMPLEMENTED / pending owner review**: внешний release assembler и
+- Macro 3 — **DONE / owner accepted**: внешний release assembler и
   verifier создаёт manifest + SHA-256 + versioned ZIP, устанавливает exact wheel
   из проверенной распаковки в fresh venv, запускает kit-копию demo generator и
   два реальных процесса установленного CLI. Development gate подтвердил real
   loopback HTTP, Basic/Bearer, WebUI upload, API image/audio/video, каноническую
   JSON persistence, cleanup, restart retrieval и signal-aware graceful shutdown;
   strict clean-source certification выполняется только после owner commit.
+
+Strict certification на baseline SHA
+`273a62951efebb0d2f10f4456ff4ebe4dd377a1f` завершилась с `PASS`. Independent
+Stage 10 audit вернул `REMEDIATE`: findings `S10-A01`–`S10-A04` находятся в
+remediation, после которой требуется отдельный independent post-remediation
+audit. Это не отменяет owner acceptance Macro 3 и не закрывает Stage 10.
 
 ## Критерии готовности MVP
 

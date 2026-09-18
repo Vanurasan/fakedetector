@@ -66,6 +66,109 @@ def test_development_mode_is_explicitly_non_certifying(release_gate: ModuleType)
     }
 
 
+def test_supported_host_accepts_windows_11_x64_python_312(
+    release_gate: ModuleType,
+) -> None:
+    release_gate._validate_supported_host(
+        platform_name="win32",
+        machine="AMD64",
+        python_version=(3, 12),
+        windows_major=10,
+        windows_build=22000,
+        windows_product_type=1,
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "machine",
+        "python_version",
+        "windows_major",
+        "windows_build",
+        "windows_product_type",
+    ),
+    [
+        ("AMD64", (3, 12), 10, 19045, 1),
+        ("ARM64", (3, 12), 10, 22631, 1),
+        ("AMD64", (3, 11), 10, 22631, 1),
+        ("AMD64", (3, 12), 6, 22631, 1),
+        ("AMD64", (3, 12), 10, 22631, 2),
+    ],
+)
+def test_supported_host_rejects_unsupported_windows_matrix(
+    release_gate: ModuleType,
+    machine: str,
+    python_version: tuple[int, int],
+    windows_major: int,
+    windows_build: int,
+    windows_product_type: int,
+) -> None:
+    with pytest.raises(release_gate.ReleaseGateError, match="Windows 11 x64"):
+        release_gate._validate_supported_host(
+            platform_name="win32",
+            machine=machine,
+            python_version=python_version,
+            windows_major=windows_major,
+            windows_build=windows_build,
+            windows_product_type=windows_product_type,
+        )
+
+
+def test_supported_host_rejects_server_despite_high_windows_build(
+    release_gate: ModuleType,
+) -> None:
+    with pytest.raises(release_gate.ReleaseGateError, match="workstation"):
+        release_gate._validate_supported_host(
+            platform_name="win32",
+            machine="AMD64",
+            python_version=(3, 12),
+            windows_major=10,
+            windows_build=26100,
+            windows_product_type=3,
+        )
+
+
+def test_graceful_exit_code_accepts_observed_windows_ctrl_break_code(
+    release_gate: ModuleType,
+) -> None:
+    release_gate._validate_graceful_exit_code(
+        returncode=3,
+        signal_method="CTRL_BREAK_EVENT",
+        platform_name="win32",
+    )
+
+
+@pytest.mark.parametrize("returncode", [0, 42, 3221225477, -9])
+def test_graceful_exit_code_rejects_unexpected_windows_codes(
+    release_gate: ModuleType,
+    returncode: int,
+) -> None:
+    with pytest.raises(release_gate.ReleaseGateError, match="Unexpected") as caught:
+        release_gate._validate_graceful_exit_code(
+            returncode=returncode,
+            signal_method="CTRL_BREAK_EVENT",
+            platform_name="win32",
+        )
+
+    assert caught.value.process_returncode == returncode
+
+
+def test_graceful_exit_code_uses_narrow_non_windows_policy(
+    release_gate: ModuleType,
+) -> None:
+    release_gate._validate_graceful_exit_code(
+        returncode=0,
+        signal_method="SIGINT",
+        platform_name="linux",
+    )
+    with pytest.raises(release_gate.ReleaseGateError, match="Unexpected"):
+        release_gate._validate_graceful_exit_code(
+            returncode=-2,
+            signal_method="SIGINT",
+            platform_name="linux",
+        )
+
+
 def test_project_identity_has_no_release_tool_version_source(release_gate: ModuleType) -> None:
     assert release_gate._project_identity(
         {"project": {"name": "sample-product", "version": "7.8.9"}}

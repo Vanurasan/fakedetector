@@ -72,6 +72,21 @@ uv run python scripts/verify_stage10_release.py
 - внешние `ffmpeg.exe` и `ffprobe.exe`, доступные через `PATH` тому же процессу,
   который запускает FakeDetector.
 
+Один воспроизводимый ручной workflow установки FFmpeg для Windows:
+
+1. Скачайте Windows x64 full build со страницы
+   [Gyan FFmpeg builds](https://www.gyan.dev/ffmpeg/builds/).
+2. Распакуйте архив в стабильный каталог, например `C:\Tools\ffmpeg`, так чтобы
+   исполняемые файлы находились по путям `C:\Tools\ffmpeg\bin\ffmpeg.exe` и
+   `C:\Tools\ffmpeg\bin\ffprobe.exe`.
+3. Откройте `System Properties` → `Advanced` → `Environment Variables`, выберите
+   пользовательскую переменную `Path`, нажмите `Edit` → `New` и добавьте
+   `C:\Tools\ffmpeg\bin`. Не заменяйте существующее содержимое `Path`.
+4. После изменения `Path` закройте текущий терминал и откройте новый PowerShell.
+5. Выполните приведённые ниже команды `ffmpeg -version` и `ffprobe -version`.
+6. После установки wheel выполните generator из раздела 5 как практическую
+   проверку media capabilities, необходимых демонстрации FakeDetector.
+
 Проверка в новом PowerShell:
 
 ```powershell

@@ -73,6 +73,8 @@ _PHASE_TIMEOUTS = {
 }
 _MAX_HTTP_BODY_BYTES = 2 * 1024 * 1024
 _SERVER_TAIL_LINES = 200
+_WINDOWS_11_MIN_BUILD = 22000
+_WINDOWS_NT_WORKSTATION = 1
 
 
 class ReleaseGateError(RuntimeError):
@@ -185,6 +187,57 @@ def _certification_state(*, development: bool, source_status: list[str]) -> dict
         "source_tree_clean": source_tree_clean,
         "certified": bool(not development and source_tree_clean),
     }
+
+
+def _validate_supported_host(
+    *,
+    platform_name: str,
+    machine: str,
+    python_version: tuple[int, int],
+    windows_major: int | None,
+    windows_build: int | None,
+    windows_product_type: int | None,
+) -> None:
+    if (
+        platform_name != "win32"
+        or machine.casefold() not in {"amd64", "x86_64"}
+        or python_version != (3, 12)
+        or windows_major != 10
+        or windows_build is None
+        or windows_build < _WINDOWS_11_MIN_BUILD
+        or windows_product_type != _WINDOWS_NT_WORKSTATION
+    ):
+        raise ReleaseGateError(
+            "prerequisites",
+            "Stage 10 certification requires Windows 11 x64 workstation "
+            "(build 22000 or newer) and Python 3.12.",
+        )
+
+
+def _validate_graceful_exit_code(
+    *,
+    returncode: int | None,
+    signal_method: str,
+    platform_name: str,
+) -> None:
+    if platform_name == "win32" and signal_method == "CTRL_BREAK_EVENT":
+        accepted_codes = {3}
+    elif platform_name != "win32" and signal_method == "SIGINT":
+        accepted_codes = {0}
+    else:
+        raise ReleaseGateError(
+            "shutdown",
+            f"Unsupported graceful shutdown method {signal_method!r} "
+            f"for platform {platform_name!r}.",
+            process_returncode=returncode,
+        )
+    if returncode not in accepted_codes:
+        raise ReleaseGateError(
+            "shutdown",
+            f"Unexpected graceful shutdown return code {returncode!r} "
+            f"for {signal_method} on {platform_name}.",
+            process_returncode=returncode,
+        )
 
 
 def _project_identity(pyproject: dict[str, Any]) -> tuple[str, str]:
@@ -1258,6 +1311,11 @@ def _graceful_shutdown(
             process_returncode=process.poll(),
             server_output_tail=output,
         )
+    _validate_graceful_exit_code(
+        returncode=process.returncode,
+        signal_method=signal_method,
+        platform_name=sys.platform,
+    )
     return {
         "status": "passed",
         "signal": signal_method,
@@ -1755,19 +1813,27 @@ def run_release_gate(
         report.update(certification)
 
         machine = platform.machine()
-        if (
-            sys.platform != "win32"
-            or machine.casefold() not in {"amd64", "x86_64"}
-            or sys.version_info[:2] != (3, 12)
-        ):
-            raise ReleaseGateError(
-                "prerequisites",
-                "Stage 10 certification requires Windows x64 and Python 3.12.",
-            )
+        windows_version = sys.getwindowsversion() if sys.platform == "win32" else None
+        windows_major = windows_version.major if windows_version is not None else None
+        windows_build = windows_version.build if windows_version is not None else None
+        windows_product_type = (
+            windows_version.product_type if windows_version is not None else None
+        )
+        _validate_supported_host(
+            platform_name=sys.platform,
+            machine=machine,
+            python_version=sys.version_info[:2],
+            windows_major=windows_major,
+            windows_build=windows_build,
+            windows_product_type=windows_product_type,
+        )
         report["host_platform"] = {
             "system": platform.system(),
             "release": platform.release(),
             "machine": machine,
+            "windows_major": windows_major,
+            "windows_build": windows_build,
+            "windows_product_type": windows_product_type,
             "python_version": platform.python_version(),
         }
 
