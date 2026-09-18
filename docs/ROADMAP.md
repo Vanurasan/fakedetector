@@ -111,13 +111,11 @@ AFTER_MVP
 
 ```text
 Общий статус: IN_PROGRESS
-Последний закрытый этап: Этап 9 — Надёжность, безопасность и сквозные тесты
-Статус Stage 9: DONE / CLOSED
-Следующий этап: Этап 10 — Сборка и демонстрация MVP
-Статус Stage 10: IN_PROGRESS
-Ближайшее действие: remediation findings S10-A01–S10-A04, затем independent post-remediation audit
+Последний закрытый этап: Этап 10 — Сборка и демонстрация MVP
+Статус Stage 10: DONE / CLOSED
+Ближайшее действие: реструктуризация post-MVP roadmap и планирование промежуточной фазы укрепления и нормализации кодовой базы между Stage 10 и текущим Stage 11
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–9 завершены; Stage 9 закрыт после independent post-remediation audit с PASS
+Реализация программы: Этапы 1–10 завершены; MVP 0.1.0; independent post-remediation audit Stage 10 — PASS
 Документационная база: сформирована
 ```
 
@@ -133,11 +131,17 @@ AFTER_MVP
 - [x] разделены серьёзность признака, риск и полнота анализа;
 - [x] итоговая псевдовероятность запрещена без валидированного метода.
 
-### 2.2. Ближайшие три результата
+### 2.2. Ближайшая задача
 
-1. Stage 7 формирует полноту, риск и рекомендации без псевдовероятности.
-2. Stage 8 собирает итоговый JSON и внешние границы API/WebUI.
-3. Stage 9 завершил повышение надёжности и сквозную проверку MVP.
+Реструктурировать post-MVP roadmap и спланировать промежуточную фазу укрепления
+и нормализации кодовой базы между закрытым Stage 10 и текущим Stage 11.
+Предполагаемые темы для планирования: аудит кода и архитектуры всего проекта,
+поиск ошибок и технического долга, нормализация кодовой базы, удаление названий
+этапов разработки из production-структур, согласованность комментариев,
+docstrings и имён, проверка мёртвого кода и устаревших артефактов, оценка
+пригодности архитектуры и общая полировка MVP перед расширением функций.
+Состав и номер фазы ещё не определены; существующий план Stage 11+ сохраняется
+до отдельной задачи планирования.
 
 ---
 
@@ -155,7 +159,7 @@ AFTER_MVP
 | 7 | Полнота, риск и рекомендации | DONE | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | DONE | Реализация и независимые аудиты завершены; этап закрыт |
 | 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
-| 10 | Сборка и демонстрация MVP | IN_PROGRESS | Macro 1–3 DONE / owner accepted; independent-audit remediation выполняется |
+| 10 | Сборка и демонстрация MVP | DONE / CLOSED | Macro 1–3 DONE / owner accepted; independent post-remediation audit — PASS; S10-A01–S10-A04 CLOSED |
 | 11+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
 
 ---
@@ -1478,8 +1482,8 @@ Macro 1 и Macro 2 реализованы и покрыты контрактны
 closure audit завершён с `PASS`, новых findings нет. Stage 8 имеет статус
 `DONE / CLOSED`; Stage 9 также завершён и закрыт после independent
 post-remediation audit с `PASS`: findings `S9-A01` и `S9-A02` закрыты, новых
-findings нет. Stage 10 сейчас имеет статус `IN_PROGRESS`; Macro 1–3 приняты
-владельцем, а independent-audit remediation ожидает post-remediation audit.
+findings нет. Актуальный статус Stage 10 приведён в разделе «Текущее состояние»
+и подробном разделе Этапа 10.
 
 Quality barrier closure audit Stage 8: `1687 passed, 3 skipped`, coverage `90%`;
 `ruff`, `mypy`, `pre-commit`, lock, CLI/import и `git diff --check` — `PASS`.
@@ -1685,12 +1689,12 @@ Stage 9 имеет статус `DONE / CLOSED`. Финальный quality barr
 - 17 symlink-related skips на текущем Windows host связаны с отсутствием
   symlink privileges; native Windows junction coverage при этом выполнялась.
 
-Stage 10 сейчас имеет статус `IN_PROGRESS`; Macro 1–3 приняты владельцем, а
-independent-audit remediation ожидает post-remediation audit.
+Актуальный статус Stage 10 приведён в разделе «Текущее состояние» и подробном
+разделе Этапа 10.
 
 ---
 
-# Этап 10. Сборка и демонстрация MVP — IN_PROGRESS
+# Этап 10. Сборка и демонстрация MVP — DONE / CLOSED
 
 ## Цель
 
@@ -1727,13 +1731,36 @@ independent-audit remediation ожидает post-remediation audit.
   два реальных процесса установленного CLI. Development gate подтвердил real
   loopback HTTP, Basic/Bearer, WebUI upload, API image/audio/video, каноническую
   JSON persistence, cleanup, restart retrieval и signal-aware graceful shutdown;
-  strict clean-source certification выполняется только после owner commit.
+  strict clean-SHA certification после remediation commit завершилась с `PASS`.
 
-Strict certification на baseline SHA
-`273a62951efebb0d2f10f4456ff4ebe4dd377a1f` завершилась с `PASS`. Independent
-Stage 10 audit вернул `REMEDIATE`: findings `S10-A01`–`S10-A04` находятся в
-remediation, после которой требуется отдельный independent post-remediation
-audit. Это не отменяет owner acceptance Macro 3 и не закрывает Stage 10.
+## Аудит, исправления и закрытие
+
+Первоначальная strict certification на baseline SHA
+`273a62951efebb0d2f10f4456ff4ebe4dd377a1f` завершилась с `PASS`.
+Первоначальный независимый аудит Stage 10 вернул `REMEDIATE` по findings
+`S10-A01`–`S10-A04`. Все четыре finding исправлены и проверены владельцем;
+remediation commit — `7ee5e27755f4bb8f18a0a3924f8b79a1eb8e5217`.
+
+Strict clean-SHA certification на этом remediation SHA — **PASS**:
+
+- `certification_mode = strict`;
+- `certified = true`;
+- `overall_status = passed`;
+- source SHA start/end = `7ee5e27755f4bb8f18a0a3924f8b79a1eb8e5217`;
+- source SHA stable = `true`;
+- source tree clean = `true`.
+
+Это сертифицированная база исправлений до текущего документационного закрытия,
+а не SHA будущего коммита закрытия документации.
+
+Независимый аудит после исправлений (independent post-remediation audit) —
+**PASS**. Итоговые статусы: `S10-A01 CLOSED`, `S10-A02 CLOSED`,
+`S10-A03 CLOSED`, `S10-A04 CLOSED`. Новых findings нет:
+**BLOCKER 0 / HIGH 0 / MEDIUM 0 / LOW 0**.
+
+Stage 10 — **DONE / CLOSED**; Macro 1, Macro 2 и Macro 3 —
+**DONE / owner accepted**. Версия MVP остаётся `0.1.0`, поддерживаемая база —
+Windows 11 x64 / Python 3.12 / CPU-only.
 
 ## Критерии готовности MVP
 
@@ -1761,6 +1788,10 @@ image/audio/video через real HTTP, Profile B analyzers, полный result
 ## Критерий завершения
 
 Прототип воспроизводимо устанавливается и демонстрирует полный цикл на подготовленных тестовых данных.
+
+Критерий выполнен; Stage 10 закрыт. Ближайшая задача — реструктуризация
+post-MVP roadmap и планирование промежуточной фазы укрепления и нормализации
+кодовой базы, описанное в разделе 2.2.
 
 ---
 

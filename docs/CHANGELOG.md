@@ -342,6 +342,18 @@ YYYY-MM-DD
 
 ### 2026-09-18
 
+### Изменено
+
+- **[Stage 10/Closure] Сборка, упаковка и демонстрация MVP `0.1.0` завершены;
+  Stage 10 — `DONE / CLOSED`.** Macro 1–3 приняты владельцем: подготовлены
+  воспроизводимый release kit с wheel и ZIP и сквозная проверка установленного
+  артефакта (installed-artifact E2E gate). Findings `S10-A01`–`S10-A04` исправлены
+  и закрыты; independent post-remediation audit — `PASS`. Strict clean-SHA
+  certification — `PASS` на remediation baseline
+  `7ee5e27755f4bb8f18a0a3924f8b79a1eb8e5217`, предшествующем этому
+  документационному закрытию. Версия продукта не изменена; подробная история
+  закрытия зафиксирована в `ROADMAP.md`.
+
 ### Добавлено
 
 - **[Stage 10/Macro 3] Добавлен финальный release assembler и installed-artifact
