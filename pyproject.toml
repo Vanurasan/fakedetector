@@ -22,6 +22,7 @@ fakedetector = "fakedetector.main:main"
 [dependency-groups]
 dev = [
     "httpx2>=0.28.0",
+    "packaging>=26.2",
     "pytest>=8.3.0",
     "ruff>=0.9.0",
     "mypy>=1.13.0",
@@ -98,7 +99,7 @@ check = { sequence = ["precommit", "typecheck", "test", "smoke"] }
 [tool.uv.sources]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.32.3"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

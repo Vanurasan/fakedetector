@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from fakedetector import __version__
 from fakedetector._runtime import _build_production_runtime
 from fakedetector.api import install_api
 from fakedetector.auth import load_api_authenticator, load_webui_authenticator
@@ -43,7 +44,7 @@ def create_app(config: AppConfig) -> FastAPI:
         else:
             runtime.scheduler.shutdown()
 
-    app = FastAPI(title="FakeDetector", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="FakeDetector", version=__version__, lifespan=lifespan)
     app.state.config = config
     app.state.runtime = runtime
     app.state.application_service = runtime.application_service

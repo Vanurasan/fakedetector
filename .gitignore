@@ -115,6 +115,7 @@ data/
 # Generated multimedia and intermediate analysis data
 # ============================================================
 
+/demo-media/
 *.spectrogram.png
 *.normalized.png
 *.keyframe.jpg

@@ -354,6 +354,30 @@ def test_finalizer_applies_raw_metrics_policy_without_mutating_terminal_facts(
     assert repository.saved[0] is not result
 
 
+def test_finalizer_preserves_explicit_application_version_override(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    config.server.application_version = "deployment-build-override"
+    repository = _RecordingRepository()
+    service = ResultFinalizationService(
+        config=config,
+        clock=AuthoritativeLifecycleClock(_FixedClock(_FINISHED)),
+        repository=repository,
+    )
+    facts = _terminal_facts(
+        config,
+        status=AnalysisStatus.COMPLETED,
+        completeness_status=CompletenessStatus.COMPLETE,
+    )
+
+    result = service.finalize_accepted(
+        facts,
+        finished_at=_FINISHED,
+        before_save=lambda: None,
+    )
+
+    assert result.processing.application_version == "deployment-build-override"
+
+
 def _stage3_terminal(
     status: AnalysisStatus,
     *,

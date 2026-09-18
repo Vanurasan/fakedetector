@@ -2102,6 +2102,11 @@ internal
 - `queued_at` не участвует в расчёте;
 - нулевая длительность допустима, а интервал менее миллисекунды даёт `0`.
 
+`application_version` равен явно заданному `server.application_version`.
+Если override не задан, config model использует версию
+установленного package из distribution metadata. Это provenance обработки,
+а не `schema_version` и не версия risk-model или анализатора.
+
 ### 14.3. Блок `cleanup`
 
 ```json
@@ -2638,6 +2643,10 @@ external_systems
 - `request_timeout_seconds`;
 - `application_version`.
 
+Значение по умолчанию берётся из installed distribution metadata
+FakeDetector. Явно заданное значение остаётся допустимым override
+и переносится в `processing.application_version` без изменения.
+
 `request_timeout_seconds` является deadline только для HTTP body receive и
 multipart parse mutation-запроса. Он начинается после обязательных transport
 security guards и заканчивается до вызова application intake. Истечение
@@ -2807,7 +2816,6 @@ server:
   host: "127.0.0.1"
   port: 8080
   request_timeout_seconds: 600
-  application_version: "0.1.0"
 
 access_channels:
   webui:

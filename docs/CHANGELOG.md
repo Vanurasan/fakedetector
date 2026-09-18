@@ -340,6 +340,70 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-18
+
+### Изменено
+
+- **[Stage 10/Closure] Сборка, упаковка и демонстрация MVP `0.1.0` завершены;
+  Stage 10 — `DONE / CLOSED`.** Macro 1–3 приняты владельцем: подготовлены
+  воспроизводимый release kit с wheel и ZIP и сквозная проверка установленного
+  артефакта (installed-artifact E2E gate). Findings `S10-A01`–`S10-A04` исправлены
+  и закрыты; independent post-remediation audit — `PASS`. Strict clean-SHA
+  certification — `PASS` на remediation baseline
+  `7ee5e27755f4bb8f18a0a3924f8b79a1eb8e5217`, предшествующем этому
+  документационному закрытию. Версия продукта не изменена; подробная история
+  закрытия зафиксирована в `ROADMAP.md`.
+
+### Добавлено
+
+- **[Stage 10/Macro 3] Добавлен финальный release assembler и installed-artifact
+  gate.** Единый инструмент собирает sdist и wheel из него, механически
+  экспортирует runtime constraints, формирует recipient-facing release kit,
+  manifest с SHA-256 и versioned ZIP, проверяет безопасный inventory и чистую
+  распаковку, после чего устанавливает exact ZIP wheel во внешний fresh venv.
+  Реальный установленный CLI запускается двумя OS processes и через loopback
+  HTTP подтверждает health, Basic/Bearer, WebUI upload, API image/audio/video,
+  каноническую JSON persistence, cleanup, restart retrieval и signal-aware
+  graceful shutdown. Strict режим требует clean source tree; `--development`
+  выполняет тот же функциональный gate, но явно сохраняет `certified=false`.
+- **[Stage 10/Macro 2] Добавлен пользовательский handoff и воспроизводимая
+  демонстрация установленного MVP.** README и единое подробное руководство
+  разделяют действия производителя и получателя exact wheel + constraints,
+  описывают требования Windows, конфигурацию и секреты, WebUI/API,
+  интерпретацию результата, persistence/restart, границы безопасности и
+  диагностику. Независимый от tests/source helpers generator создаёт и проверяет
+  bounded Profile B PNG/WAV/MP4; generated media в Git не хранится.
+- **[Stage 10/Macro 2] Добавлен безопасный `.env.example`.** Он содержит только
+  пустые `MEDIA_ANALYZER_API_TOKEN` и
+  `MEDIA_ANALYZER_WEBUI_CREDENTIALS`; документация явно фиксирует отсутствие
+  dotenv autoload и необходимость process environment.
+- **[Stage 10/Macro 1] Добавлена воспроизводимая проверка release-
+  артефакта.** Harness собирает sdist, затем wheel из sdist,
+  механически экспортирует runtime constraints из `uv.lock`,
+  устанавливает exact wheel во внешнее fresh venv и проверяет
+  dependency versions, import origin, CLI и WebUI resources.
+
+### Изменено
+
+- **[Versioning] Package version `0.1.0` получила один authoritative
+  source.** Build metadata в `pyproject.toml` владеет package version, а
+  `fakedetector.__version__`, FastAPI metadata и default
+  `server.application_version` читают installed distribution metadata.
+  Явный provenance override сохранён; schema, risk-model и analyzer
+  versions не изменены.
+- **[Build] Build backend зафиксирован как `hatchling==1.32.3`.**
+  Причина: исключить неконтролируемое изменение build tool при
+  повторной сборке; runtime dependency set не изменён.
+
+### Решение
+
+- **[Stage 10] Зафиксированы distribution decisions MVP.**
+  Гарантируемый baseline — Windows 11 x64, Python 3.12, CPU-only;
+  основной install artifact — wheel; FFmpeg/ffprobe — внешние
+  prerequisites; standalone executable, installer и публикация не входят в
+  scope. Runtime constraints не хранятся как второй lock и всегда
+  генерируются из `uv.lock`.
+
 ### 2026-09-17
 
 ### Изменено

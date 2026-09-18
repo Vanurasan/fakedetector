@@ -11,7 +11,6 @@ server:
   host: "127.0.0.1"
   port: 8080
   request_timeout_seconds: 600
-  application_version: "0.1.0"
 
 access_channels:
   webui:
@@ -70,7 +69,7 @@ preprocessing:
     build_spectrogram: true
   video:
     extract_metadata: true
-    keyframe_interval_seconds: 2
+    keyframe_interval_seconds: 1
     extract_audio_track: true
 
 analyzers:

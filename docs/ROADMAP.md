@@ -111,13 +111,11 @@ AFTER_MVP
 
 ```text
 Общий статус: IN_PROGRESS
-Последний закрытый этап: Этап 9 — Надёжность, безопасность и сквозные тесты
-Статус Stage 9: DONE / CLOSED
-Следующий этап: Этап 10 — Сборка и демонстрация MVP
-Статус Stage 10: NOT_STARTED
-Ближайшее действие: Stage 10 — сборка и демонстрация MVP
+Последний закрытый этап: Этап 10 — Сборка и демонстрация MVP
+Статус Stage 10: DONE / CLOSED
+Ближайшее действие: реструктуризация post-MVP roadmap и планирование промежуточной фазы укрепления и нормализации кодовой базы между Stage 10 и текущим Stage 11
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–9 завершены; Stage 9 закрыт после independent post-remediation audit с PASS
+Реализация программы: Этапы 1–10 завершены; MVP 0.1.0; independent post-remediation audit Stage 10 — PASS
 Документационная база: сформирована
 ```
 
@@ -133,11 +131,17 @@ AFTER_MVP
 - [x] разделены серьёзность признака, риск и полнота анализа;
 - [x] итоговая псевдовероятность запрещена без валидированного метода.
 
-### 2.2. Ближайшие три результата
+### 2.2. Ближайшая задача
 
-1. Stage 7 формирует полноту, риск и рекомендации без псевдовероятности.
-2. Stage 8 собирает итоговый JSON и внешние границы API/WebUI.
-3. Stage 9 завершил повышение надёжности и сквозную проверку MVP.
+Реструктурировать post-MVP roadmap и спланировать промежуточную фазу укрепления
+и нормализации кодовой базы между закрытым Stage 10 и текущим Stage 11.
+Предполагаемые темы для планирования: аудит кода и архитектуры всего проекта,
+поиск ошибок и технического долга, нормализация кодовой базы, удаление названий
+этапов разработки из production-структур, согласованность комментариев,
+docstrings и имён, проверка мёртвого кода и устаревших артефактов, оценка
+пригодности архитектуры и общая полировка MVP перед расширением функций.
+Состав и номер фазы ещё не определены; существующий план Stage 11+ сохраняется
+до отдельной задачи планирования.
 
 ---
 
@@ -155,7 +159,7 @@ AFTER_MVP
 | 7 | Полнота, риск и рекомендации | DONE | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | DONE | Реализация и независимые аудиты завершены; этап закрыт |
 | 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
-| 10 | Сборка и демонстрация MVP | NOT_STARTED | Воспроизводимый прототип |
+| 10 | Сборка и демонстрация MVP | DONE / CLOSED | Macro 1–3 DONE / owner accepted; independent post-remediation audit — PASS; S10-A01–S10-A04 CLOSED |
 | 11+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
 
 ---
@@ -1478,7 +1482,8 @@ Macro 1 и Macro 2 реализованы и покрыты контрактны
 closure audit завершён с `PASS`, новых findings нет. Stage 8 имеет статус
 `DONE / CLOSED`; Stage 9 также завершён и закрыт после independent
 post-remediation audit с `PASS`: findings `S9-A01` и `S9-A02` закрыты, новых
-findings нет. Stage 10 остаётся `NOT_STARTED`.
+findings нет. Актуальный статус Stage 10 приведён в разделе «Текущее состояние»
+и подробном разделе Этапа 10.
 
 Quality barrier closure audit Stage 8: `1687 passed, 3 skipped`, coverage `90%`;
 `ruff`, `mypy`, `pre-commit`, lock, CLI/import и `git diff --check` — `PASS`.
@@ -1684,11 +1689,12 @@ Stage 9 имеет статус `DONE / CLOSED`. Финальный quality barr
 - 17 symlink-related skips на текущем Windows host связаны с отсутствием
   symlink privileges; native Windows junction coverage при этом выполнялась.
 
-Следующий этап — Stage 10, который остаётся `NOT_STARTED`.
+Актуальный статус Stage 10 приведён в разделе «Текущее состояние» и подробном
+разделе Этапа 10.
 
 ---
 
-# Этап 10. Сборка и демонстрация MVP — NOT_STARTED
+# Этап 10. Сборка и демонстрация MVP — DONE / CLOSED
 
 ## Цель
 
@@ -1696,38 +1702,96 @@ Stage 9 имеет статус `DONE / CLOSED`. Финальный quality barr
 
 ## Обязательные задачи
 
-- [ ] зафиксировать версии зависимостей;
-- [ ] проверить чистую установку через uv;
-- [ ] описать установку FFmpeg для Windows;
-- [ ] создать README запуска;
-- [ ] создать безопасный пример `.env.example`;
-- [ ] создать минимальную конфигурацию;
-- [ ] подготовить небольшой набор легальных тестовых файлов;
-- [ ] описать ограничения анализаторов;
-- [ ] проверить запуск без IDE;
-- [ ] проверить очистку после демонстрации;
-- [ ] сформировать номер версии MVP;
-- [ ] обновить `CHANGELOG.md`;
-- [ ] отметить все выполненные критерии MVP.
+- [x] зафиксировать версии runtime-зависимостей через механический export `uv.lock`;
+- [x] проверить чистую установку exact wheel через uv во внешнем venv;
+- [x] описать установку FFmpeg для Windows;
+- [x] создать README запуска;
+- [x] создать безопасный пример `.env.example`;
+- [x] подготовить рабочую конфигурацию Profile B для handoff/demo;
+- [x] подготовить deterministic generator небольшого набора легальных тестовых файлов;
+- [x] описать ограничения анализаторов;
+- [x] проверить запуск без IDE;
+- [x] проверить очистку после демонстрации;
+- [x] зафиксировать номер версии MVP `0.1.0`;
+- [x] обновить `CHANGELOG.md` для Macro 1;
+- [x] отметить все выполненные критерии MVP.
+
+## Статус макрозадач
+
+- Macro 1 — **DONE / owner accepted**, committed SHA
+  `841213f299dd6eb5052cabff95d7bb34fa3f91ab`: package-version source,
+  sdist→wheel build, runtime constraints из `uv.lock`, package resources и
+  isolated installed-wheel verification.
+- Macro 2 — **DONE / owner accepted**: user-facing README и единый
+  handoff guide, Windows FFmpeg prerequisite, config/secrets workflow,
+  deterministic demo-media generator и его Profile B regression coverage.
+- Macro 3 — **DONE / owner accepted**: внешний release assembler и
+  verifier создаёт manifest + SHA-256 + versioned ZIP, устанавливает exact wheel
+  из проверенной распаковки в fresh venv, запускает kit-копию demo generator и
+  два реальных процесса установленного CLI. Development gate подтвердил real
+  loopback HTTP, Basic/Bearer, WebUI upload, API image/audio/video, каноническую
+  JSON persistence, cleanup, restart retrieval и signal-aware graceful shutdown;
+  strict clean-SHA certification после remediation commit завершилась с `PASS`.
+
+## Аудит, исправления и закрытие
+
+Первоначальная strict certification на baseline SHA
+`273a62951efebb0d2f10f4456ff4ebe4dd377a1f` завершилась с `PASS`.
+Первоначальный независимый аудит Stage 10 вернул `REMEDIATE` по findings
+`S10-A01`–`S10-A04`. Все четыре finding исправлены и проверены владельцем;
+remediation commit — `7ee5e27755f4bb8f18a0a3924f8b79a1eb8e5217`.
+
+Strict clean-SHA certification на этом remediation SHA — **PASS**:
+
+- `certification_mode = strict`;
+- `certified = true`;
+- `overall_status = passed`;
+- source SHA start/end = `7ee5e27755f4bb8f18a0a3924f8b79a1eb8e5217`;
+- source SHA stable = `true`;
+- source tree clean = `true`.
+
+Это сертифицированная база исправлений до текущего документационного закрытия,
+а не SHA будущего коммита закрытия документации.
+
+Независимый аудит после исправлений (independent post-remediation audit) —
+**PASS**. Итоговые статусы: `S10-A01 CLOSED`, `S10-A02 CLOSED`,
+`S10-A03 CLOSED`, `S10-A04 CLOSED`. Новых findings нет:
+**BLOCKER 0 / HIGH 0 / MEDIUM 0 / LOW 0**.
+
+Stage 10 — **DONE / CLOSED**; Macro 1, Macro 2 и Macro 3 —
+**DONE / owner accepted**. Версия MVP остаётся `0.1.0`, поддерживаемая база —
+Windows 11 x64 / Python 3.12 / CPU-only.
 
 ## Критерии готовности MVP
 
-- [ ] запускается на целевом компьютере;
-- [ ] принимает image/audio/video через предусмотренные каналы;
-- [ ] отклоняет неподдерживаемые файлы;
-- [ ] запускает утверждённые анализаторы;
-- [ ] формирует признаки;
-- [ ] формирует полноту, риск и рекомендацию;
-- [ ] сохраняет JSON;
-- [ ] показывает WebUI-результат;
-- [ ] удаляет временные данные;
-- [ ] проходит тесты, Ruff и mypy;
-- [ ] не требует необязательной инфраструктуры;
-- [ ] не выдаёт результат за окончательную экспертизу.
+- [x] запускается на целевом компьютере;
+- [x] принимает image/audio/video через предусмотренные каналы;
+- [x] отклоняет неподдерживаемые файлы;
+- [x] запускает утверждённые анализаторы;
+- [x] формирует признаки;
+- [x] формирует полноту, риск и рекомендацию;
+- [x] сохраняет JSON;
+- [x] показывает WebUI-результат;
+- [x] удаляет временные данные;
+- [x] проходит тесты, Ruff и mypy;
+- [x] не требует необязательной инфраструктуры;
+- [x] не выдаёт результат за окончательную экспертизу.
+
+Macro 3 development evidence подтверждает запуск exact wheel без IDE,
+image/audio/video через real HTTP, Profile B analyzers, полный result contract,
+каноническую persistence, WebUI, cleanup и restart. Отклонение неподдерживаемых
+входов и формирование findings/risk/recommendation уже покрыты закрытыми Stage
+8–9 и общим regression barrier. Внешними prerequisites остаются только
+утверждённые Python 3.12, uv и FFmpeg/ffprobe; предупреждение об отсутствии
+окончательной экспертизы сохранено в WebUI и handoff.
 
 ## Критерий завершения
 
 Прототип воспроизводимо устанавливается и демонстрирует полный цикл на подготовленных тестовых данных.
+
+Критерий выполнен; Stage 10 закрыт. Ближайшая задача — реструктуризация
+post-MVP roadmap и планирование промежуточной фазы укрепления и нормализации
+кодовой базы, описанное в разделе 2.2.
 
 ---
 
