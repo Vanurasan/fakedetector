@@ -113,9 +113,13 @@ AFTER_MVP
 Общий статус: IN_PROGRESS
 Последний закрытый этап: Этап 10 — Сборка и демонстрация MVP
 Статус Stage 10: DONE / CLOSED
-Ближайшее действие: реструктуризация post-MVP roadmap и планирование промежуточной фазы укрепления и нормализации кодовой базы между Stage 10 и текущим Stage 11
+Текущий этап: Stage 11 — Post-MVP Normalization & Hardening
+Статус Stage 11: IN_PROGRESS
+Последний завершённый Macro: Macro 0 — Roadmap Restructuring (DONE / owner accepted)
+Текущая задача: Macro 1 — Confirmed Defect Remediation (NOT_STARTED)
+Ближайшее действие: начать Stage 11 / Macro 1 — Confirmed Defect Remediation
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–10 завершены; MVP 0.1.0; independent post-remediation audit Stage 10 — PASS
+Реализация программы: Этапы 1–10 завершены; MVP 0.1.0 DONE / CLOSED; post-MVP whole-codebase audit — READY_FOR_NORMALIZATION_PLANNING
 Документационная база: сформирована
 ```
 
@@ -133,15 +137,9 @@ AFTER_MVP
 
 ### 2.2. Ближайшая задача
 
-Реструктурировать post-MVP roadmap и спланировать промежуточную фазу укрепления
-и нормализации кодовой базы между закрытым Stage 10 и текущим Stage 11.
-Предполагаемые темы для планирования: аудит кода и архитектуры всего проекта,
-поиск ошибок и технического долга, нормализация кодовой базы, удаление названий
-этапов разработки из production-структур, согласованность комментариев,
-docstrings и имён, проверка мёртвого кода и устаревших артефактов, оценка
-пригодности архитектуры и общая полировка MVP перед расширением функций.
-Состав и номер фазы ещё не определены; существующий план Stage 11+ сохраняется
-до отдельной задачи планирования.
+Начать Stage 11 / Macro 1 — Confirmed Defect Remediation. Macro 1 ограничен
+четырьмя подтверждёнными дефектами post-MVP аудита и сфокусированными
+regression-тестами; несвязанный рефакторинг в него не входит.
 
 ---
 
@@ -160,7 +158,8 @@ docstrings и имён, проверка мёртвого кода и устар
 | 8 | JSON, API и WebUI | DONE | Реализация и независимые аудиты завершены; этап закрыт |
 | 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
 | 10 | Сборка и демонстрация MVP | DONE / CLOSED | Macro 1–3 DONE / owner accepted; independent post-remediation audit — PASS; S10-A01–S10-A04 CLOSED |
-| 11+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
+| 11 | Post-MVP Normalization & Hardening | IN_PROGRESS | Нормализация и укрепление MVP без широкого расширения возможностей |
+| 12+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
 
 ---
 
@@ -1789,15 +1788,300 @@ image/audio/video через real HTTP, Profile B analyzers, полный result
 
 Прототип воспроизводимо устанавливается и демонстрирует полный цикл на подготовленных тестовых данных.
 
-Критерий выполнен; Stage 10 закрыт. Ближайшая задача — реструктуризация
-post-MVP roadmap и планирование промежуточной фазы укрепления и нормализации
-кодовой базы, описанное в разделе 2.2.
+Критерий выполнен; Stage 10 закрыт. Следующим этапом стал Stage 11 — Post-MVP
+Normalization & Hardening, описанный ниже.
 
 ---
 
-# После MVP — AFTER_MVP
+# Stage 11 — Post-MVP Normalization & Hardening — IN_PROGRESS
 
-Работы выполняются только после завершения этапа 10 и отдельного решения.
+## Цель и принцип
+
+Преобразовать успешно завершённый staged MVP в целостную, долгоживущую
+продуктовую кодовую базу, не потеряв гарантии, полученные на этапах 1–10.
+
+На этом этапе не добавляются широкие новые продуктовые возможности. Stage 11
+устраняет случайную сложность, остатки поэтапной разработки, подтверждённые
+дефекты и угрозы масштабируемости при сохранении доказанного поведения.
+
+Краткий принцип: **«Не добавлять возможности. Удалять случайность.»**
+
+Post-MVP whole-codebase audit завершён с вердиктом
+`READY_FOR_NORMALIZATION_PLANNING`: `BLOCKER 0`, `HIGH 0`, `MEDIUM 2`, `LOW 2`.
+Отдельно классифицированы `ARCHITECTURE 4`, `TECH_DEBT 3`, `NORMALIZATION 1`,
+`STYLE 1`, `DOCUMENTATION 2`, `TEST_QUALITY 2`, `DEFERRED 1`.
+
+## Статус макрозадач
+
+- Macro 0 — Roadmap Restructuring: **DONE / owner accepted**;
+- Macro 1 — Confirmed Defect Remediation: **NOT_STARTED**;
+- Macro 2 — Runtime State Retention: **NOT_STARTED**;
+- Macro 3 — Analyzer Registration Normalization: **NOT_STARTED**;
+- Macro 4 — Product Naming & Architecture Normalization: **NOT_STARTED**;
+- Macro 5 — Technical Debt / Config / Test-Support Cleanup: **NOT_STARTED**;
+- Macro 6 — Tests / Comments / Documentation Normalization: **NOT_STARTED**;
+- Macro 7 — Release Tooling Normalization: **NOT_STARTED**;
+- Macro 8 — Final Whole-Project Audit / Certification / Graphify Review:
+  **NOT_STARTED**.
+
+## Macro 0 — Roadmap Restructuring — DONE / owner accepted
+
+Цель:
+
+- [x] формально ввести Stage 11;
+- [x] перенести существующие будущие работы Stage 11+ в Stage 12+;
+- [x] зафиксировать scope Stage 11 и уже принятые owner decisions;
+- [x] не изменять production-код и runtime-поведение.
+
+Macro 0 завершён и принят владельцем. Реализация Macro 1–8 в него не входила.
+
+## Macro 1 — Confirmed Defect Remediation — NOT_STARTED
+
+Цель — исправить четыре подтверждённых post-MVP аудитом дефекта и добавить
+сфокусированные regression-тесты. Несвязанный рефакторинг запрещён.
+
+- **D01 — MEDIUM.** M4A с embedded attached-picture artwork может быть ошибочно
+  классифицирован как видео, поскольку disposition-данные `ffprobe`
+  запрашиваются и разбираются несогласованно.
+- **D02 — MEDIUM.** WebUI startup принимает credentials, которые HTTP Basic
+  впоследствии не может декодировать или аутентифицировать, в частности
+  неподдерживаемые non-ASCII credentials.
+- **D03 — LOW.** Чрезмерно вложенный `source_context` JSON может обойти обычный
+  HTTP error envelope и привести к внутреннему текстовому ответу 500.
+- **D04 — LOW.** Ошибки конфигурации анализаторов могут пройти мимо CLI startup
+  boundary как необработанные исключения вместо управляемых безопасных ошибок
+  конфигурации.
+
+## Macro 2 — Runtime State Retention — NOT_STARTED
+
+Цель — устранить неограниченное удержание в RAM завершённых агрегатов
+`AnalysisTask`.
+
+Отдельное независимое исследование подтвердило:
+
+- полное удержание `AnalysisTask` после `FINISHED` не требуется для штатного
+  получения production-результата;
+- удержание является историческим остатком staged lifecycle development/testing;
+- завершённые задачи остаются под сильными ссылками `TaskRegistry`, поэтому его
+  размер растёт с числом завершённых анализов;
+- `gc.collect()` не может освободить задачи, пока ими владеет registry;
+- это намеренное неограниченное логическое удержание, а не доказанная
+  классическая потеря объектов Python GC.
+
+**OWNER DECISION — после успешного `FINISHED` использовать только repository-only
+semantics.** Предпочтительная архитектура:
+
+```text
+TaskRegistry = unfinished/live work
+ResultRepository = completed history
+```
+
+После успешного persistence и terminal settlement необходимо согласованно
+опубликовать `FINISHED`, сохранить только краткоживущие detached return data,
+нужные текущему caller, и удалить полный завершённый агрегат из `TaskRegistry`.
+Постоянный terminal cache, TTL, LRU/FIFO и конфигурация terminal-state retention
+не вводятся.
+
+Обязательные поведенческие условия:
+
+- persistence по-прежнему предшествует `FINISHED`;
+- persistence failure остаётся в `PERSISTENCE` и не вытесняется;
+- unsafe/incomplete cleanup остаётся live и не вытесняется;
+- успешно сохранённые completed/partial/failed outcomes следуют одному правилу
+  вытеснения;
+- fast submit поддерживает согласованный live-or-persisted status lookup;
+- worker не удерживает предыдущую завершённую задачу неограниченно во время idle;
+- получение после restart остаётся repository-backed.
+
+**OWNER DECISION — missing result after eviction.** После `FINISHED` durable
+source of truth — сохранённый repository:
+
+```text
+valid persisted result
+→ normal terminal status/result
+
+persisted result absent
+→ 404 / not found
+
+persisted result present but corrupt/unreadable/storage failure
+→ controlled storage/internal error
+```
+
+Прежнее поведение, при котором RAM помнила о когда-то существовавшем удалённом
+JSON, сохранять не требуется. Post-`FINISHED` registry inspection из Stage 5/6/7
+больше не считается обязательным продуктовым контрактом.
+
+## Macro 3 — Analyzer Registration Normalization — NOT_STARTED
+
+Цель — сделать добавление собственных built-in анализаторов контролируемым и
+локализованным.
+
+**OWNER DECISION:** Stage 11 не вводит third-party plugin system, внешний plugin
+loader, каталог `mods`, динамическую загрузку стороннего Python, plugin
+marketplace/API или внешнюю расширяемость анализаторов. Все анализаторы остаются
+first-party компонентами FakeDetector, которые разрабатываются, проверяются,
+тестируются и поставляются вместе с продуктом.
+
+Знание об одном анализаторе сейчас распределено между registry/catalog,
+конкретной реализацией и finding specifications, из-за чего возможна частичная
+регистрация. Требуемое направление:
+
+- свести регистрацию к одной согласованной декларации или минимальному
+  практически необходимому числу authoritative locations;
+- валидировать полноту регистрации;
+- сохранить закрытую и доверенную регистрацию;
+- сохранить identity/version/media/settings/preprocessing/finding rules;
+- упростить добавление следующего built-in анализатора;
+- не проектировать plugin framework.
+
+## Macro 4 — Product Naming & Architecture Normalization — NOT_STARTED
+
+Цель — убрать vocabulary этапов разработки из текущей production-архитектуры и
+исправить небольшое нарушение adapter boundary, найденное аудитом.
+
+Направление переименований по ответственности:
+
+```text
+_stage5_resources.py → semantic responsibility-based name
+lifecycle/_stage5.py → analysis execution name
+lifecycle/_stage6.py → finding formation name
+lifecycle/_stage7.py → assessment name
+Stage5ExecutionService → AnalysisExecutionService
+Stage6FindingService → FindingFormationService
+Stage7AssessmentService → AnalysisAssessmentService
+```
+
+Также Macro включает architecture finding A03: WebUI не должен напрямую
+зависеть от реализации API adapter ради общей политики HTTP status/error mapping.
+Только действительно общая HTTP-политика переносится в нейтральное внутреннее
+место.
+
+Публичные и внешне наблюдаемые compatibility identifiers механически не
+переименовываются. Например, error code `stage5_resource_limit` требует явного
+рассмотрения совместимости. Исторические ссылки на Stage в ROADMAP, CHANGELOG и
+архиве остаются историческими и массово не переименовываются.
+
+## Macro 5 — Technical Debt / Config / Test-Support Cleanup — NOT_STARTED
+
+Цель — устранить точечный технический долг, найденный аудитом:
+
+- **TD01:** подтверждённо мёртвый `_ALLOWED_MIME_TYPES`;
+- **TD02:** configuration fields с неактивным или неясным runtime-смыслом,
+  включая `hide_internal_error_details` и `external_systems.enabled`; schema
+  fields нельзя молча удалять, сначала принимается решение об их совместимости
+  и семантике;
+- **TD03:** test-only framework definitions/fake workers в production analyzer
+  catalog/package; требуется определить правильное размещение с сохранением
+  spawn-safe tests;
+- непосредственно подтверждённые мелкие stale suppressions и obsolete helpers.
+
+Широкая спекулятивная очистка не входит в Macro.
+
+## Macro 6 — Tests / Comments / Documentation Normalization — NOT_STARTED
+
+Цель — нормализовать архитектуру тестов и текущую техническую документацию после
+стабилизации production-имён и контрактов.
+
+Тесты:
+
+- разделять только действительно чрезмерно большие файлы, где это полезно;
+- объединять только фактически дублирующиеся builders/fixtures;
+- сохранять explicit и fault-injection tests;
+- сохранять проверки cleanup, `BaseException`, процессов, persistence,
+  filesystem и auth;
+- добавлять отсутствующие реальные integration-boundary tests там, где mocks
+  скрывали проблемы;
+- не сокращать число тестов ради уменьшения suite.
+
+Целевая политика comments/docstrings:
+
+- identifiers, technical comments и docstrings — English;
+- русскоязычная пользовательская документация может оставаться русской;
+- комментарии объясняют WHY и инварианты, а не очевидное WHAT;
+- устаревшая staged-development терминология заменяется текущей ответственностью;
+- obsolete comments удаляются, а не переводятся механически.
+
+Текущие архитектурные разделы `CONTRACTS.md` и `PROJECT.md` синхронизируются
+только после фактического изменения соответствующей реализации или контракта.
+Исторические записи о закрытии этапов остаются историческими.
+
+## Macro 7 — Release Tooling Normalization — NOT_STARTED
+
+Цель — преобразовать Stage 10 release tooling в долгоживущий product release
+tooling без ослабления сертификационных гарантий.
+
+Предполагаемое семантическое переименование:
+
+```text
+generate_stage10_demo_media.py → semantic release/demo name
+verify_stage10_package.py → semantic package verification name
+verify_stage10_release.py → semantic release certification name
+```
+
+Ответственности постепенно разделяются на build/provenance, kit
+manifest/extraction, installed environment, server lifecycle, HTTP/result probes
+и report generation. Чисто эстетическая перепись не требуется.
+
+Должны сохраниться все доказанные гарантии Stage 10: sdist → wheel; constraints
+из lock; exact release kit; manifest/hashes; clean extraction; fresh environment;
+provenance установленного wheel; отсутствие checkout import; реальные HTTP
+API/WebUI; анализ image/audio/video; persistence; restart retrieval; cleanup;
+graceful shutdown; clean-SHA certification.
+
+## Macro 8 — Final Whole-Project Audit / Certification / Graphify Review — NOT_STARTED
+
+После завершения нормализации необходимо:
+
+- выполнить полный project quality barrier;
+- выполнить release certification установленного артефакта;
+- провести независимый whole-project audit;
+- подтвердить отсутствие Stage-history residue в текущей production-архитектуре;
+- подтвердить сохранность гарантий этапов 1–10;
+- повторно оценить Graphify на нормализованном repository.
+
+Решение по Graphify **DEFERRED** до Macro 8. Сейчас известно, что Graphify полезен
+как средство навигации агента, не является production dependency, а текущий
+generated graph устарел относительно последнего `main` и будет в значительной
+части инвалидирован структурной нормализацией. Только после неё владелец выбирает
+`KEEP`, `REMOVE` или `REBUILD POLICY`.
+
+## Гарантии MVP, обязательные к сохранению
+
+Stage 11 не должен нарушить:
+
+- единый `AnalysisApplicationService` для API и WebUI;
+- immutable config snapshot;
+- различие status/stage/completeness/risk;
+- detached/canonical reads;
+- exactly-once execution и terminal settlement;
+- cleanup safety barriers;
+- порядок `FACT_READY → PERSISTENCE → save → FINISHED`;
+- live precedence, пока работа не завершена;
+- canonical persisted result после завершения;
+- atomic result write и identity validation;
+- bounded worker protocol;
+- trusted/closed analyzer catalog;
+- subprocess/artifact/finding safety budgets;
+- correlation handling;
+- запрет fake calibrated probability claims;
+- safe diagnostics;
+- installed-wheel release guarantees;
+- negative failure-path tests.
+
+Этот список фиксирует границы Stage 11 и не заменяет подробные контракты в
+`CONTRACTS.md`.
+
+## Критерий завершения
+
+Macro 1–7 выполнены и проверены; Macro 8 подтвердил полный quality barrier,
+installed-artifact certification, независимый аудит, отсутствие актуальной
+Stage-терминологии в production-архитектуре и сохранение гарантий MVP.
+
+---
+
+# Stage 12+ — Расширения — AFTER_MVP
+
+Работы выполняются только после завершения Stage 11 и отдельного решения.
 
 ## Анализ и качество
 

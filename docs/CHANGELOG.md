@@ -344,6 +344,14 @@ YYYY-MM-DD
 
 ### Изменено
 
+- **[Post-MVP planning] Завершён whole-codebase audit и введён Stage 11 —
+  Post-MVP Normalization & Hardening.** Аудит завершился с вердиктом
+  `READY_FOR_NORMALIZATION_PLANNING` без blocker/high findings; `ROADMAP.md`
+  фиксирует Macro 0–8: Macro 0 завершён и принят владельцем, Macro 1 — следующий.
+  Существующий блок будущих расширений перенумерован из Stage 11+ в Stage 12+
+  без изменения
+  продуктовых приоритетов. Версия продукта остаётся `0.1.0`; runtime-поведение
+  этим документационным изменением не меняется.
 - **[Stage 10/Closure] Сборка, упаковка и демонстрация MVP `0.1.0` завершены;
   Stage 10 — `DONE / CLOSED`.** Macro 1–3 приняты владельцем: подготовлены
   воспроизводимый release kit с wheel и ZIP и сквозная проверка установленного
@@ -397,6 +405,16 @@ YYYY-MM-DD
 
 ### Решение
 
+- **[Stage 11/Runtime state] После успешного `FINISHED` завершённая история
+  становится repository-only.** `TaskRegistry` должен владеть только live/
+  unfinished работой, а `ResultRepository` — завершённой историей; постоянный
+  terminal cache и политики TTL/LRU/FIFO не вводятся. После eviction отсутствующий
+  persisted result означает `404`, а повреждение или storage failure —
+  управляемую storage/internal error. Реализация отложена до Macro 2.
+- **[Stage 11/Analyzers] Нормализация регистрации ограничена first-party built-in
+  analyzers.** Внешний plugin loader, каталог `mods`, динамическая загрузка
+  стороннего Python и plugin marketplace/API не входят в Stage 11. Реализация
+  отложена до Macro 3.
 - **[Stage 10] Зафиксированы distribution decisions MVP.**
   Гарантируемый baseline — Windows 11 x64, Python 3.12, CPU-only;
   основной install artifact — wheel; FFmpeg/ffprobe — внешние
