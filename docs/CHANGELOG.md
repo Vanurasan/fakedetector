@@ -342,6 +342,21 @@ YYYY-MM-DD
 
 ### 2026-09-19
 
+### Изменено
+
+- **[Stage 11/Macro 2] Runtime State Retention завершён и принят владельцем.**
+  `TaskRegistry` теперь хранит только незавершённую live/recoverable работу, а
+  `ResultRepository` — завершённую историю; успешно сохранённые `FINISHED` задачи
+  точно вытесняются без terminal cache, TTL или LRU. Persistence failure остаётся
+  live в `PERSISTENCE`, unsafe/deferred cleanup — live/recoverable. Terminal
+  preparation завершается до persistence, а успешный `save()` предшествует
+  подготовленному commit `FINISHED` и exact eviction. Fast-submit и
+  repository-backed reads корректны после быстрого eviction, idle worker не
+  удерживает завершённую задачу, полная безопасная status error projection
+  сохранена. Owner review, независимый аудит и focused remediation re-audits
+  завершены; финальный независимый вердикт — `PASS`. Stage 11 остаётся
+  `IN_PROGRESS`; следующая задача — Macro 3, Analyzer Registration Normalization.
+
 ### Исправлено
 
 - **[Stage 11/Macro 1] Confirmed Defect Remediation завершён; D01–D04 исправлены
