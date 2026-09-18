@@ -344,6 +344,24 @@ YYYY-MM-DD
 
 ### Изменено
 
+- **[Stage 11/Macro 3] Analyzer Registration Normalization завершён и принят
+  владельцем.** Один authoritative static internal catalog теперь определяет
+  production built-in анализаторы и централизует их identity, version, media,
+  factory, typed settings, preprocessing requirements и trusted result-contract
+  metadata. Runtime registry, worker resolution, Stage 5 completeness и Stage 6
+  validation выводят соответствующие представления из этого каталога; порядок
+  выполнения остаётся порядком конфигурации, а Stage 7 completeness использует
+  точный validated active analyzer plan. Каталог остаётся закрытым доверенным
+  first-party механизмом без plugin API, dynamic discovery и third-party loading.
+  Import-time construction production analyzer instances удалён, при этом
+  consistency конкретной реализации с каталогом и worker-side instance validation
+  сохранены. Алгоритмы анализаторов, публичные схемы, API/config/CLI-контракты и
+  семантика риска не изменены. Implementation self-review, owner review,
+  independent audit, remediation `M3-AUD-001` и focused independent re-audit
+  завершены; финальный независимый вердикт — `PASS`. Stage 11 остаётся
+  `IN_PROGRESS`; следующая задача — Macro 4, Product Naming & Architecture
+  Normalization.
+
 - **[Stage 11/Macro 2] Runtime State Retention завершён и принят владельцем.**
   `TaskRegistry` теперь хранит только незавершённую live/recoverable работу, а
   `ResultRepository` — завершённую историю; успешно сохранённые `FINISHED` задачи
