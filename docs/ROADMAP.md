@@ -115,9 +115,9 @@ AFTER_MVP
 Статус Stage 10: DONE / CLOSED
 Текущий этап: Stage 11 — Post-MVP Normalization & Hardening
 Статус Stage 11: IN_PROGRESS
-Последний завершённый Macro: Macro 0 — Roadmap Restructuring (DONE / owner accepted)
-Текущая задача: Macro 1 — Confirmed Defect Remediation (NOT_STARTED)
-Ближайшее действие: начать Stage 11 / Macro 1 — Confirmed Defect Remediation
+Последний завершённый Macro: Macro 1 — Confirmed Defect Remediation (DONE / owner accepted)
+Текущая задача: Macro 2 — Runtime State Retention (NOT_STARTED / next action)
+Ближайшее действие: начать Stage 11 / Macro 2 — Runtime State Retention
 Критические блокеры: отсутствуют
 Реализация программы: Этапы 1–10 завершены; MVP 0.1.0 DONE / CLOSED; post-MVP whole-codebase audit — READY_FOR_NORMALIZATION_PLANNING
 Документационная база: сформирована
@@ -137,9 +137,8 @@ AFTER_MVP
 
 ### 2.2. Ближайшая задача
 
-Начать Stage 11 / Macro 1 — Confirmed Defect Remediation. Macro 1 ограничен
-четырьмя подтверждёнными дефектами post-MVP аудита и сфокусированными
-regression-тестами; несвязанный рефакторинг в него не входит.
+Начать Stage 11 / Macro 2 — Runtime State Retention в рамках уже принятых
+repository-only решений для завершённой истории.
 
 ---
 
@@ -1814,8 +1813,8 @@ Post-MVP whole-codebase audit завершён с вердиктом
 ## Статус макрозадач
 
 - Macro 0 — Roadmap Restructuring: **DONE / owner accepted**;
-- Macro 1 — Confirmed Defect Remediation: **NOT_STARTED**;
-- Macro 2 — Runtime State Retention: **NOT_STARTED**;
+- Macro 1 — Confirmed Defect Remediation: **DONE / owner accepted**;
+- Macro 2 — Runtime State Retention: **NOT_STARTED / next action**;
 - Macro 3 — Analyzer Registration Normalization: **NOT_STARTED**;
 - Macro 4 — Product Naming & Architecture Normalization: **NOT_STARTED**;
 - Macro 5 — Technical Debt / Config / Test-Support Cleanup: **NOT_STARTED**;
@@ -1835,22 +1834,26 @@ Post-MVP whole-codebase audit завершён с вердиктом
 
 Macro 0 завершён и принят владельцем. Реализация Macro 1–8 в него не входила.
 
-## Macro 1 — Confirmed Defect Remediation — NOT_STARTED
+## Macro 1 — Confirmed Defect Remediation — DONE / owner accepted
 
-Цель — исправить четыре подтверждённых post-MVP аудитом дефекта и добавить
-сфокусированные regression-тесты. Несвязанный рефакторинг запрещён.
+Четыре подтверждённых post-MVP аудитом дефекта исправлены и приняты владельцем.
 
-- **D01 — MEDIUM.** M4A с embedded attached-picture artwork может быть ошибочно
-  классифицирован как видео, поскольку disposition-данные `ffprobe`
-  запрашиваются и разбираются несогласованно.
-- **D02 — MEDIUM.** WebUI startup принимает credentials, которые HTTP Basic
-  впоследствии не может декодировать или аутентифицировать, в частности
-  неподдерживаемые non-ASCII credentials.
-- **D03 — LOW.** Чрезмерно вложенный `source_context` JSON может обойти обычный
-  HTTP error envelope и привести к внутреннему текстовому ответу 500.
-- **D04 — LOW.** Ошибки конфигурации анализаторов могут пройти мимо CLI startup
-  boundary как необработанные исключения вместо управляемых безопасных ошибок
-  конфигурации.
+- **D01 — MEDIUM — CLOSED.** `ffprobe` теперь корректно запрашивает disposition
+  attached picture: реальный M4A с embedded cover art принимается как аудио, а
+  поведение для настоящего видео остаётся защищённым.
+- **D02 — MEDIUM — CLOSED.** WebUI HTTP Basic credentials намеренно ограничены
+  ASCII; неподдерживаемые non-ASCII credentials безопасно отклоняются при
+  startup.
+- **D03 — LOW — CLOSED.** Патологическая вложенность `source_context` JSON
+  отображается в существующий управляемый ответ
+  `400 invalid_source_context_json`, а не выходит как text/plain 500.
+- **D04 — LOW — CLOSED.** `AnalyzerConfigurationError` обрабатывается как
+  управляемый CLI startup failure: Uvicorn не запускается, ожидаемые ошибки
+  конфигурации не выходят как traceback.
+
+Проверка закрытия: targeted regression suite — `219 passed`; полный pytest —
+`1813 passed, 17 skipped`; coverage — `90%`; lock, Ruff, mypy, pre-commit,
+smoke-проверки и diff-check — `PASS`; owner implementation review — `PASS`.
 
 ## Macro 2 — Runtime State Retention — NOT_STARTED
 

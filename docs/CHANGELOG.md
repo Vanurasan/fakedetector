@@ -340,6 +340,20 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-19
+
+### Исправлено
+
+- **[Stage 11/Macro 1] Confirmed Defect Remediation завершён; D01–D04 исправлены
+  и приняты владельцем.** Исправлена классификация M4A с attached cover art;
+  неподдерживаемые non-ASCII WebUI Basic credentials безопасно отклоняются при
+  startup; патологическая вложенность `source_context` получает управляемый
+  validation response; CLI безопасно обрабатывает ошибки конфигурации
+  анализаторов. Targeted regression suite: `219 passed`; полный pytest: `1813
+  passed, 17 skipped`; coverage: `90%`; lock, Ruff, mypy, pre-commit,
+  smoke-проверки и diff-check — `PASS`; owner implementation review — `PASS`.
+  Stage 11 остаётся `IN_PROGRESS`, версия продукта — `0.1.0`.
+
 ### 2026-09-18
 
 ### Изменено
