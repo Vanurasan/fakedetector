@@ -115,9 +115,9 @@ AFTER_MVP
 Статус Stage 10: DONE / CLOSED
 Текущий этап: Stage 11 — Post-MVP Normalization & Hardening
 Статус Stage 11: IN_PROGRESS
-Последний завершённый Macro: Macro 1 — Confirmed Defect Remediation (DONE / owner accepted)
-Текущая задача: Macro 2 — Runtime State Retention (NOT_STARTED / next action)
-Ближайшее действие: начать Stage 11 / Macro 2 — Runtime State Retention
+Последний завершённый Macro: Macro 2 — Runtime State Retention (DONE / owner accepted)
+Текущая задача: Macro 3 — Analyzer Registration Normalization (NOT_STARTED / next action)
+Ближайшее действие: начать Stage 11 / Macro 3 — Analyzer Registration Normalization
 Критические блокеры: отсутствуют
 Реализация программы: Этапы 1–10 завершены; MVP 0.1.0 DONE / CLOSED; post-MVP whole-codebase audit — READY_FOR_NORMALIZATION_PLANNING
 Документационная база: сформирована
@@ -137,8 +137,8 @@ AFTER_MVP
 
 ### 2.2. Ближайшая задача
 
-Начать Stage 11 / Macro 2 — Runtime State Retention в рамках уже принятых
-repository-only решений для завершённой истории.
+Начать Stage 11 / Macro 3 — Analyzer Registration Normalization в рамках уже
+принятого ограничения на first-party built-in analyzers.
 
 ---
 
@@ -1814,8 +1814,8 @@ Post-MVP whole-codebase audit завершён с вердиктом
 
 - Macro 0 — Roadmap Restructuring: **DONE / owner accepted**;
 - Macro 1 — Confirmed Defect Remediation: **DONE / owner accepted**;
-- Macro 2 — Runtime State Retention: **NOT_STARTED / next action**;
-- Macro 3 — Analyzer Registration Normalization: **NOT_STARTED**;
+- Macro 2 — Runtime State Retention: **DONE / owner accepted**;
+- Macro 3 — Analyzer Registration Normalization: **NOT_STARTED / next action**;
 - Macro 4 — Product Naming & Architecture Normalization: **NOT_STARTED**;
 - Macro 5 — Technical Debt / Config / Test-Support Cleanup: **NOT_STARTED**;
 - Macro 6 — Tests / Comments / Documentation Normalization: **NOT_STARTED**;
@@ -1855,7 +1855,7 @@ Macro 0 завершён и принят владельцем. Реализац�
 `1813 passed, 17 skipped`; coverage — `90%`; lock, Ruff, mypy, pre-commit,
 smoke-проверки и diff-check — `PASS`; owner implementation review — `PASS`.
 
-## Macro 2 — Runtime State Retention — NOT_STARTED
+## Macro 2 — Runtime State Retention — DONE / owner accepted
 
 Цель — устранить неограниченное удержание в RAM завершённых агрегатов
 `AnalysisTask`.
@@ -1913,6 +1913,20 @@ persisted result present but corrupt/unreadable/storage failure
 Прежнее поведение, при котором RAM помнила о когда-то существовавшем удалённом
 JSON, сохранять не требуется. Post-`FINISHED` registry inspection из Stage 5/6/7
 больше не считается обязательным продуктовым контрактом.
+
+Macro 2 завершён и принят владельцем. `TaskRegistry` теперь владеет только
+незавершённой live/recoverable работой, а `ResultRepository` — завершённой
+историей. Успешно сохранённые задачи после подготовленного commit `FINISHED`
+точно удаляются из registry; terminal cache и политики TTL/LRU не добавлены.
+Ошибка persistence оставляет задачу live в `PERSISTENCE`, а unsafe/deferred
+cleanup — live/recoverable.
+
+Terminal preparation завершается до persistence; после успешного `save()`
+атомарно применяются подготовленный `FINISHED` и exact eviction. Repository-backed
+чтения, включая fast-submit после быстрого eviction, сохраняют корректное
+поведение, idle worker больше не удерживает завершённую задачу, а полная безопасная
+проекция status errors сохранена. Owner review, независимый аудит и focused
+remediation re-audits завершены; финальный независимый вердикт — **PASS**.
 
 ## Macro 3 — Analyzer Registration Normalization — NOT_STARTED
 

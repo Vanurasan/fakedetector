@@ -83,6 +83,7 @@ from fakedetector.lifecycle import (
     Stage4TaskProcessor,
     Stage4TaskReceiver,
     TaskExecutionOutcome,
+    TaskNotFoundError,
     TaskRegistry,
     WorkspaceArtifactRegistry,
     config_snapshot_fingerprint,
@@ -567,12 +568,13 @@ def _stage4_processor(
     config: AppConfig,
     clock: AuthoritativeLifecycleClock,
     registry: TaskRegistry,
+    result_finalizer: SuccessfulAcceptedResultFinalizer | None = None,
 ) -> Stage4TaskProcessor:
     return Stage4TaskProcessor(
         config=config,
         clock=clock,
         registry=registry,
-        result_finalizer=SuccessfulAcceptedResultFinalizer(),
+        result_finalizer=result_finalizer or SuccessfulAcceptedResultFinalizer(),
     )
 
 
@@ -850,11 +852,13 @@ def test_state_machine_and_registry_enforce_stage5_publication_order(
         registry=registry,
     ).settle_terminal(task.context.analysis_id)
     assert final.stage is ProcessingStage.FINISHED
-    with pytest.raises(LifecycleStateError):
+    assert not registry.contains(task.context.analysis_id)
+    with pytest.raises(TaskNotFoundError):
         registry.publish_stage5_prepared(task, prepared)
-    with pytest.raises(LifecycleStateError):
+    with pytest.raises(TaskNotFoundError):
         registry.append_stage5_analyzer_result(task, result)
-    assert registry._read_stage5_analyzer_results(task) == (result,)
+    with pytest.raises(TaskNotFoundError):
+        registry._read_stage5_analyzer_results(task)
 
 
 def _start_result_publication(task: AnalysisTask, registry: TaskRegistry) -> None:
@@ -1148,10 +1152,9 @@ def test_stage6_sibling_state_uses_canonical_bytes_and_detached_reads(tmp_path: 
         registry=registry,
     ).settle_terminal(task.context.analysis_id)
     assert final.stage is ProcessingStage.FINISHED
-    assert (
-        tuple(finding.model_dump(mode="json") for finding in registry._read_stage6_findings(task))
-        == expected
-    )
+    assert not registry.contains(task.context.analysis_id)
+    with pytest.raises(TaskNotFoundError):
+        registry._read_stage6_findings(task)
 
 
 def test_stage7_publication_requires_stage6_risk_stage_and_authoritative_task(
@@ -1383,6 +1386,9 @@ def test_stage7_usable_outcomes_cleanup_and_keep_detached_state(
     registry.record_outcome(task.context.analysis_id, outcome)
     assert task.context.status is terminal_status
     assert task.context.stage is ProcessingStage.CLEANUP
+    detached = registry._read_stage7_assessment(task)
+    assert detached is not None
+    assert detached == (completeness, risk_assessment, recommendation)
 
     final = _stage4_processor(
         config=config,
@@ -1394,9 +1400,7 @@ def test_stage7_usable_outcomes_cleanup_and_keep_detached_state(
     assert final.stage is ProcessingStage.FINISHED
     assert final.cleanup is not None
     assert task.accepted_source.is_released
-    detached = registry._read_stage7_assessment(task)
-    assert detached is not None
-    assert detached == (completeness, risk_assessment, recommendation)
+    assert not registry.contains(task.context.analysis_id)
 
 
 def test_stage7_internal_failure_can_finish_without_assessment(tmp_path: Path) -> None:
@@ -1496,7 +1500,7 @@ def test_authoritative_results_remain_immutable_through_terminal_settlement(
             analyzer_results=cast(tuple[_StoredAnalyzerResult, ...], (original,)),
         )
 
-    for phase in (ProcessingStage.ANALYSIS, ProcessingStage.CLEANUP, ProcessingStage.FINISHED):
+    for phase in (ProcessingStage.ANALYSIS, ProcessingStage.CLEANUP):
         if phase is ProcessingStage.CLEANUP:
             outcome = (
                 TaskExecutionOutcome.failed(
@@ -1511,14 +1515,6 @@ def test_authoritative_results_remain_immutable_through_terminal_settlement(
                 else TaskExecutionOutcome.completed()
             )
             registry.record_outcome(task.context.analysis_id, outcome)
-        elif phase is ProcessingStage.FINISHED:
-            _stage4_processor(
-                config=config,
-                clock=AuthoritativeLifecycleClock(
-                    _IncrementingClock(_CREATED_AT + timedelta(minutes=1))
-                ),
-                registry=registry,
-            ).settle_terminal(task.context.analysis_id)
         assert task.context.stage is phase
         first_read = registry._read_stage5_analyzer_results(task)[0]
         second_read = registry._read_stage5_analyzer_results(task)[0]
@@ -1536,6 +1532,20 @@ def test_authoritative_results_remain_immutable_through_terminal_settlement(
         assert "Initial warning" not in repr(snapshot)
         with pytest.raises(LifecycleStateError):
             registry._read_stage5_analyzer_results(copy(task))
+
+    finalizer = SuccessfulAcceptedResultFinalizer()
+    final = _stage4_processor(
+        config=config,
+        clock=AuthoritativeLifecycleClock(
+            _IncrementingClock(_CREATED_AT + timedelta(minutes=1))
+        ),
+        registry=registry,
+        result_finalizer=finalizer,
+    ).settle_terminal(task.context.analysis_id)
+    assert final.stage is ProcessingStage.FINISHED
+    assert finalizer.facts is not None
+    assert finalizer.facts.analyzer_results_json == (payload,)
+    assert not registry.contains(task.context.analysis_id)
 
     assert task.context.status is (
         AnalysisStatus.FAILED if fatal_outcome else AnalysisStatus.COMPLETED
@@ -2081,16 +2091,18 @@ def test_real_interrupted_child_preserves_settlement_ownership_and_recovery(
             assert task.terminal_settlement is None
             assert barrier.try_confirm_safe() is True
         else:
-            final = registry.snapshot(analysis_id)
+            final = task.snapshot()
         assert_reaped()
         assert final.status is AnalysisStatus.FAILED
         assert final.stage is ProcessingStage.FINISHED
         assert final.finished_at is not None and final.cleanup is not None
         assert task.accepted_source.is_released
         assert registry.recoverable_terminal_tasks() == ()
-        assert registry._read_stage5_analyzer_results(task) == ()
+        assert not registry.contains(analysis_id)
+        with pytest.raises(TaskNotFoundError):
+            registry._read_stage5_analyzer_results(task)
         assert cleanup_events == ["cleanup", "release"]
-        with pytest.raises(LifecycleStateError):
+        with pytest.raises(TaskNotFoundError):
             processor.settle_terminal(analysis_id)
         assert cleanup_events == ["cleanup", "release"]
     finally:
@@ -2126,9 +2138,11 @@ def test_response_decode_interruption_propagates_after_real_worker_reap(
     with pytest.raises(type(process_interruption)) as raised:
         processor.execute_claimed(task, service)
     assert raised.value is process_interruption
-    assert registry.snapshot(task.context.analysis_id).stage is ProcessingStage.FINISHED
+    assert task.snapshot().stage is ProcessingStage.FINISHED
+    assert not registry.contains(task.context.analysis_id)
     assert task.accepted_source.is_released
-    assert registry._read_stage5_analyzer_results(task) == ()
+    with pytest.raises(TaskNotFoundError):
+        registry._read_stage5_analyzer_results(task)
 
 
 def test_unreapable_worker_defers_cleanup_until_recovery_confirms_safe(
@@ -2170,10 +2184,11 @@ def test_unreapable_worker_defers_cleanup_until_recovery_confirms_safe(
         real_mark_facts_ready(*args, **kwargs)
         settlement_events.append("fact_ready")
 
-    def record_finished(*args: object, **kwargs: object) -> None:
+    def record_finished(*args: object, **kwargs: object):
         assert settlement_events == ["fact_ready"]
-        real_finalize(*args, **kwargs)
+        snapshot = real_finalize(*args, **kwargs)
         settlement_events.append("finished")
+        return snapshot
 
     monkeypatch.setattr(processor._cleanup, "cleanup_task", count_cleanup)
     monkeypatch.setattr(registry, "mark_terminal_facts_ready", record_facts_ready)

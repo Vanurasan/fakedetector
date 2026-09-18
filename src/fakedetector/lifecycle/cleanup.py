@@ -247,7 +247,6 @@ class WorkspaceJanitor:
                 continue
 
             def recover_workspace(
-                _task: AnalysisTask | None,
                 entry: Path = entry,
                 analysis_id: str = analysis_id,
             ) -> str:
@@ -301,15 +300,8 @@ class WorkspaceJanitor:
                 continue
 
             def remove_quarantine(
-                task: AnalysisTask | None,
                 entry: Path = entry,
             ) -> bool:
-                if task is not None:
-                    try:
-                        if task.accepted_source._cleanup_quarantine():
-                            return True
-                    except Exception:
-                        return False
                 return self._remove_quarantine(entry)
 
             outcome = self._registry.cleanup_if_inactive(

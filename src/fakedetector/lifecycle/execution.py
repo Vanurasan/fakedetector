@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import deque
 from collections.abc import Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from threading import RLock
 from typing import Protocol, TypeVar
@@ -30,6 +30,7 @@ from fakedetector.domain import (
 )
 from fakedetector.domain.models import validate_utc_datetime
 from fakedetector.lifecycle.models import (
+    AnalysisContext,
     AnalysisTask,
     CleanupFacts,
     Stage5TaskData,
@@ -172,7 +173,27 @@ class AnalysisStateMachine:
         finished_at: datetime | None = None,
     ) -> None:
         """Replace the complete immutable context only after all checks pass."""
-        current = (task.context.status, task.context.stage)
+        task.context = self._project_context(
+            task,
+            context=task.context,
+            status=status,
+            stage=stage,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+
+    def _project_context(
+        self,
+        task: AnalysisTask,
+        *,
+        context: AnalysisContext,
+        status: AnalysisStatus,
+        stage: ProcessingStage,
+        started_at: datetime | None = None,
+        finished_at: datetime | None = None,
+    ) -> AnalysisContext:
+        """Validate and build a transition without mutating its task."""
+        current = (context.status, context.stage)
         target = (status, stage)
         if target not in self._TRANSITIONS.get(current, set()):
             raise LifecycleStateError()
@@ -185,27 +206,41 @@ class AnalysisStateMachine:
         ):
             raise LifecycleStateError()
         if stage is ProcessingStage.PREPROCESSING:
-            if task.context.started_at is not None or started_at is None:
+            if context.started_at is not None or started_at is None:
                 raise LifecycleStateError()
         elif started_at is not None:
             raise LifecycleStateError()
         if stage is ProcessingStage.FINISHED:
-            if task.context.finished_at is not None or finished_at is None:
+            if context.finished_at is not None or finished_at is None:
                 raise LifecycleStateError()
         elif finished_at is not None:
             raise LifecycleStateError()
 
-        task.context = replace(
-            task.context,
+        return replace(
+            context,
             status=status,
             stage=stage,
-            started_at=started_at or task.context.started_at,
+            started_at=started_at or context.started_at,
             finished_at=finished_at,
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedTerminalSettlement:
+    """Pre-persistence terminal publication with exact live-state capabilities."""
+
+    analysis_id: str
+    task: AnalysisTask = field(repr=False, compare=False)
+    settlement: TerminalSettlement = field(repr=False, compare=False)
+    facts: CleanupFacts = field(repr=False, compare=False)
+    owner_token: object = field(repr=False, compare=False)
+    finished_context: AnalysisContext
+    cleanup_result: CleanupResult
+    snapshot: TaskSnapshot
+
+
 class TaskRegistry:
-    """Authoritative typed in-process store for live and terminal Stage 4 tasks."""
+    """Authoritative typed in-process store for unfinished Stage 4 tasks."""
 
     def __init__(self, state_machine: AnalysisStateMachine | None = None) -> None:
         self._tasks: dict[str, AnalysisTask] = {}
@@ -229,27 +264,23 @@ class TaskRegistry:
             return analysis_id in self._tasks
 
     def is_active(self, analysis_id: str) -> bool:
-        """Return whether a known task has not factually reached ``finished``."""
+        """Return whether a live task is registered under this identity."""
         with self._lock:
-            task = self._tasks.get(analysis_id)
-            return task is not None and task.context.stage is not ProcessingStage.FINISHED
+            return analysis_id in self._tasks
 
     def cleanup_if_inactive(
         self,
         analysis_id: str,
-        cleanup: Callable[[AnalysisTask | None], _CleanupOutcome],
+        cleanup: Callable[[], _CleanupOutcome],
     ) -> _CleanupOutcome | None:
         """Claim inactive cleanup, run it unlocked, then release the reservation."""
         with self._lock:
-            if analysis_id in self._cleanup_claims:
-                return None
-            task = self._tasks.get(analysis_id)
-            if task is not None and task.context.stage is not ProcessingStage.FINISHED:
+            if analysis_id in self._cleanup_claims or analysis_id in self._tasks:
                 return None
             self._cleanup_claims.add(analysis_id)
 
         try:
-            return cleanup(task)
+            return cleanup()
         finally:
             with self._lock:
                 self._cleanup_claims.remove(analysis_id)
@@ -401,7 +432,7 @@ class TaskRegistry:
             )
 
     def _read_stage5_analyzer_results(self, task: AnalysisTask) -> tuple[AnalyzerResult, ...]:
-        """Materialize detached canonical facts from one authoritative task, also terminal."""
+        """Materialize detached canonical facts from one authoritative live task."""
         with self._lock:
             authoritative = self._get(task.context.analysis_id)
             if authoritative is not task:
@@ -469,7 +500,7 @@ class TaskRegistry:
             authoritative.stage6_data = stage6_data
 
     def _read_stage6_findings(self, task: AnalysisTask) -> tuple[Finding, ...]:
-        """Materialize detached canonical Stage 6 facts, including after terminalization."""
+        """Materialize detached canonical Stage 6 facts from an authoritative live task."""
         with self._lock:
             authoritative = self._get(task.context.analysis_id)
             if authoritative is not task:
@@ -542,7 +573,7 @@ class TaskRegistry:
         self,
         task: AnalysisTask,
     ) -> tuple[AnalysisCompleteness, RiskAssessment, Recommendation] | None:
-        """Materialize detached canonical Stage 7 values, including after terminalization."""
+        """Materialize detached canonical Stage 7 values from an authoritative live task."""
         with self._lock:
             authoritative = self._get(task.context.analysis_id)
             if authoritative is not task:
@@ -843,6 +874,61 @@ class TaskRegistry:
                 stage=ProcessingStage.PERSISTENCE,
             )
 
+    def prepare_terminal_settlement(
+        self,
+        analysis_id: str,
+        owner_token: object,
+        finished_at: datetime,
+    ) -> _PreparedTerminalSettlement:
+        """Prepare every fallible terminal projection before persistence begins."""
+        with self._lock:
+            task = self._get(analysis_id)
+            settlement = self._owned_settlement(analysis_id, owner_token)
+            if (
+                task.context.stage is not ProcessingStage.CLEANUP
+                or settlement.phase is not TerminalSettlementPhase.FACT_READY
+            ):
+                raise LifecycleStateError()
+            facts = settlement.facts
+            if facts is None or task.cleanup_result is not None:
+                raise LifecycleStateError()
+            self._validate_finished_at(task, finished_at)
+            persistence_context = self._state_machine._project_context(
+                task,
+                context=task.context,
+                status=task.context.status,
+                stage=ProcessingStage.PERSISTENCE,
+            )
+            finished_context = self._state_machine._project_context(
+                task,
+                context=persistence_context,
+                status=task.context.status,
+                stage=ProcessingStage.FINISHED,
+                finished_at=finished_at,
+            )
+            recorded_cleanup = CleanupResult(
+                status=facts.status,
+                original_file_deleted=facts.original_file_deleted,
+                intermediate_files_deleted=facts.intermediate_files_deleted,
+                quarantine_used=facts.quarantine_used,
+                finished_at=finished_at,
+                errors=[error.model_copy(deep=True) for error in facts.errors],
+            )
+            snapshot = task._snapshot(
+                context=finished_context,
+                cleanup_result=recorded_cleanup,
+            )
+            return _PreparedTerminalSettlement(
+                analysis_id=analysis_id,
+                task=task,
+                settlement=settlement,
+                facts=facts,
+                owner_token=owner_token,
+                finished_context=finished_context,
+                cleanup_result=recorded_cleanup,
+                snapshot=snapshot,
+            )
+
     def record_result_persistence_failure(
         self,
         analysis_id: str,
@@ -866,37 +952,31 @@ class TaskRegistry:
         self,
         analysis_id: str,
         owner_token: object,
-        finished_at: datetime,
-    ) -> None:
-        """Atomically publish cleanup and ``FINISHED`` after all validation succeeds."""
+        prepared: _PreparedTerminalSettlement,
+    ) -> TaskSnapshot:
+        """Publish a prepared ``FINISHED`` state and evict the exact task."""
         with self._lock:
             task = self._get(analysis_id)
             settlement = self._owned_settlement(analysis_id, owner_token)
             if (
-                task.context.stage is not ProcessingStage.PERSISTENCE
+                prepared.analysis_id != analysis_id
+                or prepared.task is not task
+                or prepared.settlement is not settlement
+                or prepared.facts is not settlement.facts
+                or prepared.owner_token is not owner_token
+                or task.context.stage is not ProcessingStage.PERSISTENCE
                 or settlement.phase is not TerminalSettlementPhase.FACT_READY
+                or task.context.status is not prepared.finished_context.status
+                or self._tasks.get(analysis_id) is not task
             ):
                 raise LifecycleStateError()
-            facts = settlement.facts
-            if facts is None or task.cleanup_result is not None:
+            if task.cleanup_result is not None:
                 raise LifecycleStateError()
-            self._validate_finished_at(task, finished_at)
-            recorded_cleanup = CleanupResult(
-                status=facts.status,
-                original_file_deleted=facts.original_file_deleted,
-                intermediate_files_deleted=facts.intermediate_files_deleted,
-                quarantine_used=facts.quarantine_used,
-                finished_at=finished_at,
-                errors=[error.model_copy(deep=True) for error in facts.errors],
-            )
-            self._state_machine.transition(
-                task,
-                status=task.context.status,
-                stage=ProcessingStage.FINISHED,
-                finished_at=finished_at,
-            )
-            task.cleanup_result = recorded_cleanup
+            task.context = prepared.finished_context
+            task.cleanup_result = prepared.cleanup_result
             task.terminal_settlement = None
+            del self._tasks[analysis_id]
+            return prepared.snapshot
 
     def release_terminal_settlement(self, analysis_id: str, owner_token: object) -> None:
         """Allow processor-only re-entry while preserving all settlement facts."""

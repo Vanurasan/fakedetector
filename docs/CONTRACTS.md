@@ -362,22 +362,32 @@ Stage 8 Macro 1 уточняет единую последовательност
 → TerminalSettlement.FACT_READY
 → отделённый TerminalTaskFacts
 → кандидат на терминальную временную метку
-→ сборка AnalysisResult
+→ prospective contexts + CleanupResult + отделённый TaskSnapshot
+→ сборка, policy projection и отделённые repository/caller-копии AnalysisResult
 → PERSISTENCE
 → ResultRepository.save()
-→ фактический CleanupResult + FINISHED
+→ атомарные присвоение подготовленных CleanupResult + FINISHED,
+  очистка settlement и удаление точного агрегата из TaskRegistry
+→ возврат подготовленного TaskSnapshot
 ```
 
 `TerminalTaskFacts` извлекается `TaskRegistry` только для авторитетной задачи в
 `FACT_READY`. Это неизменяемая отделённая проекция канонических байтов и
 фактических временных меток без ссылок на живые модели, путей файловой системы,
 прав доступа к источнику или артефактам и иных дескрипторов владения.
-`Stage4TaskProcessor` делегирует сборку и единственный `save()` узкому
-`ResultFinalizationService`; сам обработчик не дублирует преобразование
-`AnalysisResult`. После успешной атомарной записи допускается малое окно, в
-котором JSON уже существует, а реестр ещё показывает
+`Stage4TaskProcessor` до перехода в persistence подготавливает prospective
+contexts, `CleanupResult` и отделённый terminal snapshot, а сборку, policy
+projection, обе отделённые копии `AnalysisResult` и единственный `save()`
+делегирует узкому `ResultFinalizationService`; сам обработчик не дублирует
+преобразование `AnalysisResult`. После успешной атомарной записи допускается
+малое окно, в котором JSON уже существует, а реестр ещё показывает
 `PERSISTENCE`. Обратное окно запрещено: `FINISHED` всегда означает сохранённый
-канонический результат.
+канонический результат. Присвоение заранее подготовленных
+`CleanupResult + FINISHED`, очистка settlement и identity-safe удаление того же
+агрегата выполняются под одной блокировкой `TaskRegistry`; текущему caller
+возвращается заранее подготовленный отделённый terminal snapshot. После её
+освобождения завершённая история принадлежит `ResultRepository`; постоянный
+terminal cache в памяти не создаётся.
 
 Ошибка `save()` не повторяет анализ или очистку, не меняет фактический основной
 статус и не публикует `FINISHED`. Задача остаётся в `PERSISTENCE`, расчёт — в
@@ -452,9 +462,9 @@ Internal application model `AnalysisTask` может агрегировать:
 задачи и фиксирует кортеж под блокировкой, затем вне блокировки создаёт свежие
 канонические `AnalyzerResult` из сохранённых байтов. Изменения исходной модели или
 результата чтения, включая вложенные словари и списки, не меняют сохранённые факты;
-повторное чтение воспроизводит их также в `CLEANUP`, `PERSISTENCE` и `FINISHED`.
-Запись в этих состояниях запрещена. Байты не публикуются через API чтения или
-`TaskSnapshot`.
+повторное чтение воспроизводит их в `CLEANUP` и `PERSISTENCE`, пока агрегат
+остаётся live. После успешного `FINISHED` агрегат удаляется. Запись в этих
+состояниях запрещена. Байты не публикуются через API чтения или `TaskSnapshot`.
 Эти данные хранятся только внутри процесса для последующих Stages 6–8: отдельный
 репозиторий, persistence, промежуточный `AnalysisResult` и
 `ResultRepository.save()` не создаются.
@@ -473,8 +483,9 @@ JSON-байты UTF-8, повторно провалидированные пе�
 отсутствующее прежнее состояние Stage 7. Внутреннее чтение через
 `TaskRegistry._read_stage7_assessment(task)` повторно выполняет
 `model_validate_json` и возвращает новые независимо восстановленные
-провалидированные значения Pydantic, в том числе в `PERSISTENCE` и после
-`FINISHED`.
+провалидированные значения Pydantic, в том числе в `PERSISTENCE` до успешного
+terminal settlement. После `FINISHED` полная завершённая проекция доступна из
+сохранённого `AnalysisResult`, а не из `TaskRegistry`.
 `Stage7TaskData` не входит в `TaskSnapshot`, публичную схему, постоянное хранение
 или `AnalysisResult`.
 
@@ -490,10 +501,13 @@ Claim создаётся только для task в `cleanup` и до перв�
 effect; duplicate owner запрещён. Factual progress cleanup attempts, artifacts,
 source и quarantine сохраняется в settlement. `FACT_READY` означает завершённый
 immediate physical cleanup workflow, который для этой task больше не повторяется.
-После `FACT_READY` формируются только отделённые факты терминального состояния и
-терминальная временная метка, собирается `AnalysisResult`, выполняются переход в
-`PERSISTENCE` и единственный `save()`, а `CleanupResult + FINISHED` публикуются
-только после успешной записи.
+После `FACT_READY` формируются отделённые факты терминального состояния и
+терминальная временная метка, prospective contexts, `CleanupResult` и отделённый
+`TaskSnapshot`; затем собираются и policy-проецируются `AnalysisResult` и его
+отделённые repository/caller-копии. Лишь после завершения этой fallible-подготовки
+выполняются переход в `PERSISTENCE` и единственный `save()`, а заранее
+подготовленные `CleanupResult + FINISHED` присваиваются авторитетной задаче только
+после успешной записи.
 
 Для результата со статусом `FAILED` и неподтверждённым корректным завершением
 процесса фаза `CLAIMED` может содержать внутренний барьер безопасности очистки
@@ -522,9 +536,11 @@ immediate physical cleanup workflow, который для этой task бол�
 Это внутренний aggregate, который не меняет внешнюю schema `1.0`.
 
 Локальный типизированный in-process `TaskRegistry` является authoritative source
-текущего живого состояния Stage 4. Он не является `ResultRepository`, JSON-
-persistence, базой данных или restart/durable recovery store. Stage 4 не вводит
-восстановление незавершённых задач после перезапуска процесса.
+текущего живого состояния Stage 4 и незавершённой recovery-работы. Успешно
+сохранённый агрегат удаляется после атомарной публикации `FINISHED`; завершённая
+история читается из `ResultRepository`. Реестр не является JSON-persistence,
+базой данных, terminal cache или restart/durable recovery store. Stage 4 не
+вводит восстановление незавершённых задач после перезапуска процесса.
 
 Stage 3 registration и Stage 4 lifecycle используют один shared
 `AuthoritativeLifecycleClock`. Structural raw `Clock` является только source of

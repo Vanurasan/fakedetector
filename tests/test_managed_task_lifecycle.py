@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, datetime, timedelta, timezone
 from io import BytesIO
@@ -12,9 +12,11 @@ from typing import NoReturn
 import pytest
 from result_backend_fakes import SuccessfulAcceptedResultFinalizer
 
+import fakedetector.result_finalization as result_finalization_module
 from fakedetector.config.models import AppConfig
 from fakedetector.core import AuthoritativeLifecycleClock, Clock
 from fakedetector.domain import (
+    AnalysisResult,
     AnalysisStatus,
     CleanupResult,
     CleanupStatus,
@@ -54,12 +56,19 @@ from fakedetector.lifecycle import (
     Stage4TaskReceiver,
     TaskExecutionOutcome,
     TaskExecutor,
+    TaskNotFoundError,
     TaskRegistry,
     TaskSnapshot,
     WorkspaceArtifactRegistry,
     config_snapshot_fingerprint,
 )
-from fakedetector.lifecycle.models import CleanupFacts
+from fakedetector.lifecycle.models import (
+    CleanupFacts,
+    TerminalSettlementPhase,
+    TerminalTaskFacts,
+)
+from fakedetector.repositories import JsonFileResultRepository
+from fakedetector.result_finalization import ResultFinalizationService
 
 _REGISTERED = datetime(2026, 8, 15, 9, 0, tzinfo=UTC)
 
@@ -151,6 +160,29 @@ class FailingQueue(DeterministicTaskQueue):
     def enqueue(self, task: AnalysisTask, executor: TaskExecutor) -> NoReturn:
         super().enqueue(task, executor)
         raise QueueStateError()
+
+
+class PreparationInterruption(BaseException):
+    """Test-only non-Exception failure at terminal snapshot preparation."""
+
+
+class RecordingPersistenceFinalizer:
+    def __init__(self) -> None:
+        self.save_calls = 0
+        self.persisted_analysis_ids: list[str] = []
+
+    def finalize_accepted(
+        self,
+        facts: TerminalTaskFacts,
+        *,
+        finished_at: datetime,
+        before_save: Callable[[], None],
+    ) -> object:
+        del finished_at
+        before_save()
+        self.save_calls += 1
+        self.persisted_analysis_ids.append(facts.analysis_id)
+        return object()
 
 
 def make_config(root: Path) -> AppConfig:
@@ -359,9 +391,16 @@ def start_persistence(
     registry: TaskRegistry,
     analysis_id: str,
     owner_token: object,
-) -> None:
+    finished_at: datetime,
+) -> object:
     registry.terminal_task_facts(analysis_id, owner_token)
+    prepared = registry.prepare_terminal_settlement(
+        analysis_id,
+        owner_token,
+        finished_at,
+    )
     registry.start_terminal_persistence(analysis_id, owner_token)
+    return prepared
 
 
 @pytest.fixture
@@ -479,21 +518,24 @@ def test_state_machine_rejects_reverse_skip_duplicate_finish_and_terminal_restar
             started_at=started_at,
         )
     owner_token = fact_ready_settlement(registry, analysis_id)
-    start_persistence(
+    prepared = start_persistence(
         registry,
-        analysis_id,
-        owner_token,
-    )
-    registry.finalize_terminal_settlement(
         analysis_id,
         owner_token,
         started_at + timedelta(seconds=1),
     )
-    with pytest.raises(LifecycleStateError):
+    finished = registry.finalize_terminal_settlement(
+        analysis_id,
+        owner_token,
+        prepared,
+    )
+    assert finished.stage is ProcessingStage.FINISHED
+    assert not registry.contains(analysis_id)
+    with pytest.raises(TaskNotFoundError):
         registry.finalize_terminal_settlement(
             analysis_id,
             owner_token,
-            started_at + timedelta(seconds=1),
+            prepared,
         )
     with pytest.raises(QueueStateError):
         DeterministicTaskQueue().enqueue(task, RecordingExecutor())
@@ -512,7 +554,7 @@ def test_registry_atomically_records_terminal_cleanup_and_rejects_duplicates(
     owner_token = fact_ready_settlement(registry, analysis_id)
 
     with pytest.raises(LifecycleStateError):
-        registry.finalize_terminal_settlement(
+        registry.prepare_terminal_settlement(
             analysis_id,
             object(),
             finished_at,
@@ -524,18 +566,49 @@ def test_registry_atomically_records_terminal_cleanup_and_rejects_duplicates(
     assert unchanged.finished_at is None
     assert registry.is_active(analysis_id)
 
-    start_persistence(registry, analysis_id, owner_token)
-    registry.finalize_terminal_settlement(analysis_id, owner_token, finished_at)
+    prepared = start_persistence(registry, analysis_id, owner_token, finished_at)
+    snapshot = registry.finalize_terminal_settlement(
+        analysis_id,
+        owner_token,
+        prepared,
+    )
 
-    snapshot = registry.snapshot(analysis_id)
     assert snapshot.stage is ProcessingStage.FINISHED
     assert snapshot.finished_at == finished_at
     assert snapshot.cleanup is not None
     assert snapshot.cleanup.finished_at == finished_at
     assert not registry.is_active(analysis_id)
+    assert not registry.contains(analysis_id)
+    assert registry.recoverable_terminal_tasks() == ()
+    with pytest.raises(TaskNotFoundError):
+        registry.finalize_terminal_settlement(analysis_id, owner_token, prepared)
+    with pytest.raises(TaskNotFoundError):
+        registry.snapshot(analysis_id)
+
+
+def test_stale_settlement_cannot_remove_replacement_task(tmp_path: Path) -> None:
+    analysis_id = "reused-analysis-id"
+    old_task, registry, _old_owner = make_registered_task(tmp_path / "old", analysis_id)
+    move_task_to_queue_boundary(registry, analysis_id)
+    registry.mark_enqueued(analysis_id, _REGISTERED)
+    registry.fail_pending(analysis_id, safe_execution_error())
+    owner_token = fact_ready_settlement(registry, analysis_id)
+    prepared = start_persistence(registry, analysis_id, owner_token, _REGISTERED)
+    registry.finalize_terminal_settlement(analysis_id, owner_token, prepared)
+
+    replacement, _unused_registry, _new_owner = make_registered_task(
+        tmp_path / "replacement",
+        analysis_id,
+    )
+    registry.reserve(replacement)
+
     with pytest.raises(LifecycleStateError):
-        registry.finalize_terminal_settlement(analysis_id, owner_token, finished_at)
-    assert registry.snapshot(analysis_id) == snapshot
+        registry.finalize_terminal_settlement(analysis_id, owner_token, prepared)
+
+    assert registry._tasks[analysis_id] is replacement
+    assert registry.snapshot(analysis_id).stage is ProcessingStage.REGISTERED
+    old_task.accepted_source.cleanup()
+    replacement.accepted_source.cleanup()
 
 
 def test_terminal_settlement_claim_is_cleanup_only_and_has_one_owner(tmp_path: Path) -> None:
@@ -659,6 +732,254 @@ def test_fact_ready_projection_preserves_facts_and_processor_recovery_skips_clea
     assert snapshot.cleanup is not None
     assert snapshot.finished_at == snapshot.cleanup.finished_at
     assert not registry.is_active(analysis_id)
+
+
+@pytest.mark.parametrize("failure_type", [RuntimeError, PreparationInterruption])
+def test_terminal_snapshot_preparation_failure_is_pre_persistence_and_recovers_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_type: type[BaseException],
+) -> None:
+    root = tmp_path / "preparation-failure"
+    task, registry, _owner = make_registered_task(root, "preparation-failure")
+    analysis_id = task.context.analysis_id
+    move_task_to_queue_boundary(registry, analysis_id)
+    registry.mark_enqueued(analysis_id, _REGISTERED)
+    registry.fail_pending(analysis_id, safe_execution_error())
+    config = make_config(root)
+    config.result.directory = str(root / "results")
+    task.context = replace(
+        task.context,
+        config_snapshot_id=config_snapshot_fingerprint(config),
+    )
+    clock = AuthoritativeLifecycleClock(IncrementingClock())
+    repository = JsonFileResultRepository(config.result.directory)
+    finalizer = ResultFinalizationService(
+        config=config,
+        clock=clock,
+        repository=repository,
+    )
+    processor = Stage4TaskProcessor(
+        config=config,
+        clock=clock,
+        registry=registry,
+        result_finalizer=finalizer,
+    )
+    cleanup_calls = 0
+    save_calls = 0
+    real_cleanup = processor._cleanup.cleanup_task
+    real_snapshot = AnalysisTask._snapshot
+    real_save = repository.save
+    failure = failure_type("terminal preparation failed")
+
+    def count_cleanup(*args: object, **kwargs: object):
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        return real_cleanup(*args, **kwargs)
+
+    def count_save(result: AnalysisResult) -> None:
+        nonlocal save_calls
+        save_calls += 1
+        real_save(result)
+
+    def fail_snapshot(
+        self: AnalysisTask,
+        *,
+        context: AnalysisContext,
+        cleanup_result: CleanupResult | None,
+    ) -> TaskSnapshot:
+        del self, context, cleanup_result
+        raise failure
+
+    monkeypatch.setattr(processor._cleanup, "cleanup_task", count_cleanup)
+    monkeypatch.setattr(repository, "save", count_save)
+    monkeypatch.setattr(AnalysisTask, "_snapshot", fail_snapshot)
+
+    with pytest.raises(failure_type) as captured:
+        processor.settle_terminal(analysis_id)
+
+    assert captured.value is failure
+    monkeypatch.setattr(AnalysisTask, "_snapshot", real_snapshot)
+    retained = registry.snapshot(analysis_id)
+    settlement = task.terminal_settlement
+    assert retained.stage is ProcessingStage.CLEANUP
+    assert retained.finished_at is None
+    assert retained.cleanup is None
+    assert settlement is not None
+    assert settlement.phase is TerminalSettlementPhase.FACT_READY
+    assert settlement.owner_token is None
+    assert registry.recoverable_terminal_tasks() == (analysis_id,)
+    assert save_calls == 0
+    assert repository.get(analysis_id) is None
+    assert cleanup_calls == 1
+
+    recovered = processor.settle_terminal(analysis_id)
+
+    assert recovered.stage is ProcessingStage.FINISHED
+    assert recovered.finished_at is not None
+    assert recovered.cleanup is not None
+    assert recovered.cleanup.finished_at == recovered.finished_at
+    assert save_calls == 1
+    persisted = repository.get(analysis_id)
+    assert persisted is not None
+    assert persisted.analysis_id == analysis_id
+    assert persisted.stage is ProcessingStage.FINISHED
+    assert cleanup_calls == 1
+    assert not registry.contains(analysis_id)
+
+
+@pytest.mark.parametrize(
+    "failure_position",
+    [1, 2],
+    ids=["repository-copy", "caller-copy"],
+)
+@pytest.mark.parametrize(
+    "failure_type",
+    [RuntimeError, BaseException, MemoryError],
+)
+def test_result_copy_preparation_failure_is_pre_persistence_and_recovers_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_position: int,
+    failure_type: type[BaseException],
+) -> None:
+    root = tmp_path / "result-copy-preparation-failure"
+    task, registry, _owner = make_registered_task(
+        root,
+        "result-copy-preparation-failure",
+    )
+    analysis_id = task.context.analysis_id
+    move_task_to_queue_boundary(registry, analysis_id)
+    registry.mark_enqueued(analysis_id, _REGISTERED)
+    registry.fail_pending(analysis_id, safe_execution_error())
+    config = make_config(root)
+    config.result.directory = str(root / "results")
+    task.context = replace(
+        task.context,
+        config_snapshot_id=config_snapshot_fingerprint(config),
+    )
+    clock = AuthoritativeLifecycleClock(IncrementingClock())
+    repository = JsonFileResultRepository(config.result.directory)
+    finalizer = ResultFinalizationService(
+        config=config,
+        clock=clock,
+        repository=repository,
+    )
+    processor = Stage4TaskProcessor(
+        config=config,
+        clock=clock,
+        registry=registry,
+        result_finalizer=finalizer,
+    )
+    cleanup_calls = 0
+    clone_calls = 0
+    save_calls = 0
+    real_cleanup = processor._cleanup.cleanup_task
+    real_clone = result_finalization_module._clone_result
+    real_save = repository.save
+    failure = failure_type("result copy preparation failed")
+
+    def count_cleanup(*args: object, **kwargs: object):
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        return real_cleanup(*args, **kwargs)
+
+    def fail_clone(result: AnalysisResult) -> AnalysisResult:
+        nonlocal clone_calls
+        clone_calls += 1
+        if clone_calls == failure_position:
+            raise failure
+        return real_clone(result)
+
+    def count_save(result: AnalysisResult) -> None:
+        nonlocal save_calls
+        save_calls += 1
+        real_save(result)
+
+    monkeypatch.setattr(processor._cleanup, "cleanup_task", count_cleanup)
+    monkeypatch.setattr(result_finalization_module, "_clone_result", fail_clone)
+    monkeypatch.setattr(repository, "save", count_save)
+
+    with pytest.raises(failure_type) as captured:
+        processor.settle_terminal(analysis_id)
+
+    assert captured.value is failure
+    monkeypatch.setattr(result_finalization_module, "_clone_result", real_clone)
+    retained = registry.snapshot(analysis_id)
+    settlement = task.terminal_settlement
+    assert registry.contains(analysis_id)
+    assert retained.stage is ProcessingStage.CLEANUP
+    assert retained.finished_at is None
+    assert retained.cleanup is None
+    assert all(error.code != "result_write_failed" for error in retained.errors)
+    assert settlement is not None
+    assert settlement.phase is TerminalSettlementPhase.FACT_READY
+    assert settlement.owner_token is None
+    assert registry.recoverable_terminal_tasks() == (analysis_id,)
+    assert save_calls == 0
+    assert repository.get(analysis_id) is None
+    assert cleanup_calls == 1
+
+    recovered = processor.settle_terminal(analysis_id)
+
+    assert recovered.stage is ProcessingStage.FINISHED
+    assert recovered.finished_at is not None
+    assert recovered.cleanup is not None
+    assert recovered.cleanup.finished_at == recovered.finished_at
+    assert save_calls == 1
+    persisted = repository.get(analysis_id)
+    assert persisted is not None
+    assert persisted.analysis_id == analysis_id
+    assert persisted.stage is ProcessingStage.FINISHED
+    assert cleanup_calls == 1
+    assert not registry.contains(analysis_id)
+
+
+def test_terminal_preparation_failure_is_not_masked_when_release_also_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "release-failure"
+    task, registry, _owner = make_registered_task(root, "release-failure")
+    analysis_id = task.context.analysis_id
+    move_task_to_queue_boundary(registry, analysis_id)
+    registry.mark_enqueued(analysis_id, _REGISTERED)
+    registry.fail_pending(analysis_id, safe_execution_error())
+    processor = Stage4TaskProcessor(
+        config=make_config(root),
+        clock=AuthoritativeLifecycleClock(IncrementingClock()),
+        registry=registry,
+        result_finalizer=RecordingPersistenceFinalizer(),
+    )
+    primary = RuntimeError("terminal preparation failed")
+    real_snapshot = AnalysisTask._snapshot
+
+    def fail_snapshot(
+        self: AnalysisTask,
+        *,
+        context: AnalysisContext,
+        cleanup_result: CleanupResult | None,
+    ) -> TaskSnapshot:
+        del self, context, cleanup_result
+        raise primary
+
+    def fail_release(_analysis_id: str, _owner_token: object) -> None:
+        raise PreparationInterruption("settlement release failed")
+
+    monkeypatch.setattr(AnalysisTask, "_snapshot", fail_snapshot)
+    monkeypatch.setattr(registry, "release_terminal_settlement", fail_release)
+
+    with pytest.raises(RuntimeError) as captured:
+        processor.settle_terminal(analysis_id)
+
+    monkeypatch.setattr(AnalysisTask, "_snapshot", real_snapshot)
+    assert captured.value is primary
+    assert captured.value.__notes__ == [
+        "Terminal settlement release also failed: PreparationInterruption."
+    ]
+    assert registry.snapshot(analysis_id).stage is ProcessingStage.CLEANUP
+    assert task.terminal_settlement is not None
+    assert task.terminal_settlement.phase is TerminalSettlementPhase.FACT_READY
 
 
 @pytest.mark.parametrize(
@@ -791,23 +1112,25 @@ def test_registry_rejects_invalid_executed_terminal_timestamp_without_mutation_a
     registry.claim(analysis_id, _REGISTERED)
     registry.record_outcome(analysis_id, TaskExecutionOutcome.completed())
     owner_token = fact_ready_settlement(registry, analysis_id)
-    start_persistence(registry, analysis_id, owner_token)
 
     with pytest.raises(LifecycleStateError):
-        registry.finalize_terminal_settlement(
+        registry.prepare_terminal_settlement(
             analysis_id,
             owner_token,
             _REGISTERED - timedelta(seconds=1),
         )
 
     unchanged = registry.snapshot(analysis_id)
-    assert unchanged.stage is ProcessingStage.PERSISTENCE
+    assert unchanged.stage is ProcessingStage.CLEANUP
     assert unchanged.cleanup is None
     assert unchanged.finished_at is None
 
-    registry.finalize_terminal_settlement(analysis_id, owner_token, _REGISTERED)
-
-    snapshot = registry.snapshot(analysis_id)
+    prepared = start_persistence(registry, analysis_id, owner_token, _REGISTERED)
+    snapshot = registry.finalize_terminal_settlement(
+        analysis_id,
+        owner_token,
+        prepared,
+    )
     assert snapshot.stage is ProcessingStage.FINISHED
     assert snapshot.finished_at == _REGISTERED
     assert snapshot.cleanup is not None
@@ -824,10 +1147,12 @@ def test_registry_accepts_equal_started_and_finished_timestamps(
     registry.claim(analysis_id, _REGISTERED)
     registry.record_outcome(analysis_id, TaskExecutionOutcome.completed())
     owner_token = fact_ready_settlement(registry, analysis_id)
-    start_persistence(registry, analysis_id, owner_token)
-    registry.finalize_terminal_settlement(analysis_id, owner_token, _REGISTERED)
-
-    snapshot = registry.snapshot(analysis_id)
+    prepared = start_persistence(registry, analysis_id, owner_token, _REGISTERED)
+    snapshot = registry.finalize_terminal_settlement(
+        analysis_id,
+        owner_token,
+        prepared,
+    )
     assert snapshot.finished_at == _REGISTERED
     assert snapshot.cleanup is not None
     assert snapshot.cleanup.finished_at == _REGISTERED
@@ -842,24 +1167,26 @@ def test_registry_rejects_invalid_never_started_terminal_timestamp_without_mutat
     registry.mark_enqueued(analysis_id, _REGISTERED)
     registry.fail_pending(analysis_id, safe_execution_error())
     owner_token = fact_ready_settlement(registry, analysis_id)
-    start_persistence(registry, analysis_id, owner_token)
 
     with pytest.raises(LifecycleStateError):
-        registry.finalize_terminal_settlement(
+        registry.prepare_terminal_settlement(
             analysis_id,
             owner_token,
             _REGISTERED - timedelta(seconds=1),
         )
 
     unchanged = registry.snapshot(analysis_id)
-    assert unchanged.stage is ProcessingStage.PERSISTENCE
+    assert unchanged.stage is ProcessingStage.CLEANUP
     assert unchanged.started_at is None
     assert unchanged.cleanup is None
     assert unchanged.finished_at is None
 
-    registry.finalize_terminal_settlement(analysis_id, owner_token, _REGISTERED)
-
-    snapshot = registry.snapshot(analysis_id)
+    prepared = start_persistence(registry, analysis_id, owner_token, _REGISTERED)
+    snapshot = registry.finalize_terminal_settlement(
+        analysis_id,
+        owner_token,
+        prepared,
+    )
     assert snapshot.status is AnalysisStatus.FAILED
     assert snapshot.stage is ProcessingStage.FINISHED
     assert snapshot.started_at is None
@@ -897,6 +1224,53 @@ def test_registry_rejects_duplicate_and_returns_detached_safe_snapshot(
     snapshot = registry.snapshot(task.context.analysis_id)
     task.errors.append(safe_execution_error())
     assert snapshot.errors == ()
+
+
+def test_task_snapshot_keeps_full_error_details_deeply_immutable_and_detached(
+    accepted_task: tuple[AnalysisTask, TaskRegistry, RecordingExecutor],
+) -> None:
+    task, registry, _executor = accepted_task
+    expected_safe_details = {
+        "phase": "analysis",
+        "diagnostics": {"attempts": [1, 2]},
+    }
+    task.errors.append(
+        ErrorDetail(
+            code="analyzer_failed",
+            category="analyzer",
+            message="Анализатор не завершил обработку.",
+            retryable=True,
+            field="input_file",
+            analyzer_id="metadata_consistency",
+            safe_details={
+                "phase": "analysis",
+                "diagnostics": {"attempts": [1, 2]},
+            },
+        )
+    )
+
+    snapshot = registry.snapshot(task.context.analysis_id)
+
+    assert snapshot.errors[0].field == "input_file"
+    assert snapshot.errors[0].analyzer_id == "metadata_consistency"
+    assert snapshot.errors[0].safe_details == expected_safe_details
+    returned_safe_details = snapshot.errors[0].safe_details
+    assert returned_safe_details is not snapshot.errors[0].safe_details
+    snapshot_diagnostics = returned_safe_details["diagnostics"]
+    assert isinstance(snapshot_diagnostics, dict)
+    snapshot_diagnostics["attempts"] = [99]
+
+    assert snapshot.errors[0].safe_details == expected_safe_details
+    assert task.errors[0].safe_details == expected_safe_details
+    assert (
+        registry.snapshot(task.context.analysis_id).errors[0].safe_details
+        == expected_safe_details
+    )
+
+    task_diagnostics = task.errors[0].safe_details["diagnostics"]
+    assert isinstance(task_diagnostics, dict)
+    task_diagnostics["attempts"] = [100]
+    assert snapshot.errors[0].safe_details == expected_safe_details
 
 
 def test_router_has_all_canonical_bindings_and_uses_only_validated_media_type(
@@ -1550,7 +1924,7 @@ def test_executor_exception_becomes_safe_failed_and_cleanup_runs_exactly_once(
     assert finished.errors[0].code == "internal_error"
     assert "PRIVATE" not in repr(finished)
     assert str(tmp_path) not in repr(finished)
-    assert registry.snapshot(accepted.analysis_id) == finished
+    assert not registry.contains(accepted.analysis_id)
 
 
 def test_cleanup_failure_preserves_completed_primary_status_and_uses_configured_retries(

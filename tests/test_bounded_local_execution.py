@@ -12,7 +12,10 @@ from io import BytesIO
 from pathlib import Path
 from threading import Barrier, Event, Lock, Thread, get_ident
 from threading import enumerate as enumerate_threads
+from time import monotonic, sleep
 from types import FrameType
+from typing import cast
+from weakref import ref
 
 import pytest
 from result_backend_fakes import SuccessfulAcceptedResultFinalizer
@@ -24,7 +27,9 @@ from fakedetector.core import AuthoritativeLifecycleClock, Clock, UtcClock
 from fakedetector.domain import (
     AnalysisStatus,
     AudioTechnicalParameters,
+    CleanupResult,
     CleanupStatus,
+    ErrorDetail,
     ImageTechnicalParameters,
     MediaType,
     ProcessingStage,
@@ -55,6 +60,7 @@ from fakedetector.lifecycle import (
     TaskExecutionOutcome,
     TaskRegistry,
 )
+from fakedetector.lifecycle.models import TerminalTaskFacts
 
 _REGISTERED = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 
@@ -522,6 +528,28 @@ def make_runtime(
     return config, registry, scheduler, receiver, actual_owner
 
 
+def terminal_record(
+    scheduler: BoundedLocalScheduler,
+    analysis_id: str,
+) -> tuple[TerminalTaskFacts, datetime]:
+    finalizer = cast(
+        SuccessfulAcceptedResultFinalizer,
+        scheduler._processor._result_finalizer,
+    )
+    return (
+        finalizer.facts_by_analysis_id[analysis_id],
+        finalizer.finished_at_by_analysis_id[analysis_id],
+    )
+
+
+def terminal_cleanup(facts: TerminalTaskFacts) -> CleanupResult:
+    return CleanupResult.model_validate_json(facts.cleanup_json)
+
+
+def terminal_errors(facts: TerminalTaskFacts) -> tuple[ErrorDetail, ...]:
+    return tuple(ErrorDetail.model_validate_json(value) for value in facts.errors_json)
+
+
 def submit(
     receiver: Stage4TaskReceiver,
     owner: LocalTemporaryInputOwner,
@@ -589,9 +617,33 @@ def test_configured_concurrency_limit_is_reached_and_not_exceeded_per_media(
     executor.release.set()
     scheduler.shutdown(drain=True)
     for item in accepted:
-        snapshot = registry.snapshot(item.analysis_id)
-        assert snapshot.status is AnalysisStatus.COMPLETED
+        facts, _finished_at = terminal_record(scheduler, item.analysis_id)
+        assert facts.status is AnalysisStatus.COMPLETED
+        assert not registry.contains(item.analysis_id)
         assert owner.cleanup_calls(item.analysis_id) == 1
+
+
+def test_idle_worker_releases_previous_completed_task_reference(tmp_path: Path) -> None:
+    executor = BlockingExecutor()
+    _config, registry, scheduler, receiver, owner = make_runtime(
+        tmp_path / "temp",
+        executor,
+    )
+    scheduler.start()
+    accepted = submit(receiver, owner, "idle-reference")
+    assert executor.expected_reached.wait(5)
+    artifacts_ref = ref(registry._tasks[accepted.analysis_id].artifacts)
+
+    executor.release.set()
+    deadline = monotonic() + 5
+    while registry.contains(accepted.analysis_id) and monotonic() < deadline:
+        sleep(0.01)
+    assert not registry.contains(accepted.analysis_id)
+    while artifacts_ref() is not None and monotonic() < deadline:
+        sleep(0.01)
+
+    assert artifacts_ref() is None
+    scheduler.shutdown(drain=True)
 
 
 def test_media_limits_are_independent_and_execute_concurrently(tmp_path: Path) -> None:
@@ -760,13 +812,14 @@ def test_ordinary_executor_exception_does_not_destroy_worker(tmp_path: Path) -> 
     executor.release_first.set()
     scheduler.shutdown(drain=True)
 
-    failed = registry.snapshot("ordinary-a")
-    completed = registry.snapshot("ordinary-b")
+    failed, _failed_at = terminal_record(scheduler, "ordinary-a")
+    completed, _completed_at = terminal_record(scheduler, "ordinary-b")
     assert failed.status is AnalysisStatus.FAILED
-    assert failed.stage is ProcessingStage.FINISHED
-    assert failed.errors[0].code == "internal_error"
-    assert "PRIVATE" not in repr(failed)
+    assert terminal_errors(failed)[0].code == "internal_error"
+    assert b"PRIVATE" not in failed.errors_json[0]
     assert completed.status is AnalysisStatus.COMPLETED
+    assert not registry.contains("ordinary-a")
+    assert not registry.contains("ordinary-b")
     assert executor.calls == ["ordinary-a", "ordinary-b"]
     assert owner.cleanup_calls("ordinary-a") == owner.cleanup_calls("ordinary-b") == 1
 
@@ -789,16 +842,13 @@ def test_terminal_clock_failure_does_not_strand_task_or_destroy_worker(tmp_path:
     scheduler.shutdown(drain=True)
 
     for accepted in (first, second):
-        snapshot = registry.snapshot(accepted.analysis_id)
-        assert snapshot.status is AnalysisStatus.COMPLETED
-        assert snapshot.stage is ProcessingStage.FINISHED
-        assert snapshot.finished_at is not None
-        assert snapshot.cleanup is not None
-        assert snapshot.cleanup.status is CleanupStatus.COMPLETED
-        assert snapshot.cleanup.finished_at == snapshot.finished_at
+        facts, finished_at = terminal_record(scheduler, accepted.analysis_id)
+        assert facts.status is AnalysisStatus.COMPLETED
+        assert finished_at is not None
+        assert terminal_cleanup(facts).status is CleanupStatus.COMPLETED
         assert accepted.controlled_source.is_released
         assert owner.cleanup_calls(accepted.analysis_id) == 1
-        assert not registry.is_active(accepted.analysis_id)
+        assert not registry.contains(accepted.analysis_id)
     assert executor.calls == ["worker-clock-first", "worker-clock-second"]
     assert scheduler.is_stopped
 
@@ -859,24 +909,21 @@ def test_regressing_raw_started_sample_degrades_and_worker_remains_usable(
     executor.release.set()
     scheduler.shutdown(drain=True)
 
-    first_finished = registry.snapshot(first.analysis_id)
+    first_finished, first_finished_at = terminal_record(scheduler, first.analysis_id)
     assert first_finished.status is AnalysisStatus.COMPLETED
-    assert first_finished.stage is ProcessingStage.FINISHED
     assert first_finished.started_at is not None
     assert first_finished.queued_at is not None
     assert first_finished.started_at >= first_finished.queued_at
-    assert first_finished.finished_at is not None
-    assert first_finished.cleanup is not None
-    assert first_finished.cleanup.finished_at == first_finished.finished_at
+    assert first_finished_at >= first_finished.started_at
     assert owner.cleanup_calls(first.analysis_id) == 1
     assert first.controlled_source.is_released
-    assert not registry.is_active(first.analysis_id)
+    assert not registry.contains(first.analysis_id)
 
-    completed = registry.snapshot(second.analysis_id)
+    completed, _completed_at = terminal_record(scheduler, second.analysis_id)
     assert completed.status is AnalysisStatus.COMPLETED
-    assert completed.stage is ProcessingStage.FINISHED
     assert completed.started_at is not None
     assert completed.started_at >= completed.queued_at  # type: ignore[operator]
+    assert not registry.contains(second.analysis_id)
     assert owner.cleanup_calls(second.analysis_id) == 1
     assert second.controlled_source.is_released
     assert executor.calls == [first.analysis_id, second.analysis_id]
@@ -904,14 +951,15 @@ def test_non_draining_shutdown_fails_pending_without_start_and_waits_for_running
     executor.release.set()
     shutdown_thread.join(5)
 
-    running = registry.snapshot("nondrain-running")
-    pending = registry.snapshot("nondrain-pending")
+    running, _running_at = terminal_record(scheduler, "nondrain-running")
+    pending, pending_at = terminal_record(scheduler, "nondrain-pending")
     assert running.status is AnalysisStatus.COMPLETED and running.started_at is not None
     assert pending.status is AnalysisStatus.FAILED
-    assert pending.stage is ProcessingStage.FINISHED
     assert pending.started_at is None
-    assert pending.finished_at is not None
-    assert pending.errors[0].code == "internal_error"
+    assert pending_at is not None
+    assert terminal_errors(pending)[0].code == "internal_error"
+    assert not registry.contains("nondrain-running")
+    assert not registry.contains("nondrain-pending")
     assert executor.calls == ["nondrain-running"]
     assert owner.cleanup_calls("nondrain-running") == 1
     assert owner.cleanup_calls("nondrain-pending") == 1
@@ -940,17 +988,14 @@ def test_non_draining_pending_terminal_clock_failure_cannot_strand_task(
     executor.release.set()
     shutdown_thread.join(5)
 
-    pending = registry.snapshot("nondrain-clock-pending")
+    pending, pending_at = terminal_record(scheduler, "nondrain-clock-pending")
     assert pending.status is AnalysisStatus.FAILED
-    assert pending.stage is ProcessingStage.FINISHED
     assert pending.started_at is None
-    assert pending.finished_at is not None
-    assert pending.cleanup is not None
-    assert pending.cleanup.status is CleanupStatus.COMPLETED
-    assert pending.cleanup.finished_at == pending.finished_at
+    assert pending_at is not None
+    assert terminal_cleanup(pending).status is CleanupStatus.COMPLETED
     assert pending_accepted.controlled_source.is_released
     assert owner.cleanup_calls("nondrain-clock-pending") == 1
-    assert not registry.is_active("nondrain-clock-pending")
+    assert not registry.contains("nondrain-clock-pending")
     assert executor.calls == ["nondrain-clock-running"]
     assert scheduler.is_stopped
 
@@ -975,7 +1020,9 @@ def test_draining_shutdown_executes_all_confirmed_pending_tasks(tmp_path: Path) 
     assert set(executor.calls) == set(analysis_ids)
     assert scheduler.is_stopped
     for analysis_id in analysis_ids:
-        assert registry.snapshot(analysis_id).status is AnalysisStatus.COMPLETED
+        facts, _finished_at = terminal_record(scheduler, analysis_id)
+        assert facts.status is AnalysisStatus.COMPLETED
+        assert not registry.contains(analysis_id)
         assert owner.cleanup_calls(analysis_id) == 1
 
 
@@ -1008,7 +1055,9 @@ def test_shutdown_stops_new_stage3_handoffs_but_keeps_confirmed_stage4_ownership
 
     executor.release.set()
     shutdown_thread.join(5)
-    assert registry.snapshot("confirmed-running").status is AnalysisStatus.COMPLETED
+    facts, _finished_at = terminal_record(scheduler, "confirmed-running")
+    assert facts.status is AnalysisStatus.COMPLETED
+    assert not registry.contains("confirmed-running")
     assert owner.cleanup_calls("confirmed-running") == 1
 
 
@@ -1435,9 +1484,13 @@ def test_production_lifespan_preserves_exception_precedence_after_worker_termina
         assert scheduler.is_stopped
         assert scheduler._threads == []
         assert not any(thread.name.startswith("stage4-") for thread in enumerate_threads())
-        snapshot = app.state.runtime.registry.snapshot("lifespan-worker-termination")
-        assert snapshot.status is AnalysisStatus.FAILED
-        assert snapshot.stage is ProcessingStage.FINISHED
+        result = app.state.runtime.result_repository.get(
+            "lifespan-worker-termination"
+        )
+        assert result is not None
+        assert result.status is AnalysisStatus.FAILED
+        assert result.stage is ProcessingStage.FINISHED
+        assert not app.state.runtime.registry.contains("lifespan-worker-termination")
         assert accepted is not None
         assert accepted.controlled_source.is_released
     finally:
@@ -1548,15 +1601,16 @@ def test_worker_base_exception_is_cleaned_and_reraised_at_controlled_shutdown(
     with pytest.raises(KeyboardInterrupt):
         scheduler.shutdown()
 
-    snapshot = registry.snapshot("worker-termination")
-    assert snapshot.status is AnalysisStatus.FAILED
-    assert snapshot.stage is ProcessingStage.FINISHED
-    assert snapshot.cleanup is not None
+    terminated, _terminated_at = terminal_record(scheduler, "worker-termination")
+    assert terminated.status is AnalysisStatus.FAILED
+    assert terminal_cleanup(terminated).status is CleanupStatus.COMPLETED
     assert owner.cleanup_calls("worker-termination") == 1
-    pending = registry.snapshot("worker-pending")
+    pending, _pending_at = terminal_record(scheduler, "worker-pending")
     assert pending.status is AnalysisStatus.FAILED
     assert pending.started_at is None
-    assert pending.cleanup is not None
+    assert terminal_cleanup(pending).status is CleanupStatus.COMPLETED
+    assert not registry.contains("worker-termination")
+    assert not registry.contains("worker-pending")
     assert executor.calls == ["worker-termination"]
     assert owner.cleanup_calls("worker-pending") == 1
     assert scheduler.is_stopped

@@ -234,11 +234,16 @@ def register_finished_task(
             errors=tuple(cleanup_result.errors),
         ),
     )
+    prepared = registry.prepare_terminal_settlement(
+        analysis_id,
+        owner_token,
+        cleanup_result.finished_at,
+    )
     registry.start_terminal_persistence(analysis_id, owner_token)
     registry.finalize_terminal_settlement(
         analysis_id,
         owner_token,
-        cleanup_result.finished_at,
+        prepared,
     )
 
 
@@ -419,13 +424,18 @@ def test_failed_primary_outcome_is_preserved_when_cleanup_exhausts(
     )
     registry.mark_terminal_facts_ready(analysis_id, owner_token, cleanup)
     registry.terminal_task_facts(analysis_id, owner_token)
+    prepared = registry.prepare_terminal_settlement(analysis_id, owner_token, _NOW)
     registry.start_terminal_persistence(analysis_id, owner_token)
-    registry.finalize_terminal_settlement(analysis_id, owner_token, _NOW)
+    snapshot = registry.finalize_terminal_settlement(
+        analysis_id,
+        owner_token,
+        prepared,
+    )
 
-    snapshot = registry.snapshot(analysis_id)
     assert snapshot.status is AnalysisStatus.FAILED
     assert snapshot.cleanup is not None
     assert snapshot.cleanup.status is CleanupStatus.FAILED
+    assert not registry.contains(analysis_id)
 
 
 def test_quarantine_success_moves_remaining_workspace_without_claiming_cleanup(
@@ -837,7 +847,7 @@ def test_handoff_and_janitor_have_no_protection_free_race(
         permission_granted.set()
         return registry.cleanup_if_inactive(
             analysis_id,
-            lambda _task: "incorrectly-deleted",
+            lambda: "incorrectly-deleted",
         )
 
     assert real_permission(analysis_id, consult_registry) is None
@@ -1030,7 +1040,7 @@ def test_registry_allows_only_one_cleanup_owner_and_releases_successful_claim() 
     callback_calls = 0
     outcomes: list[str | None] = []
 
-    def blocking_cleanup(_task: AnalysisTask | None) -> str:
+    def blocking_cleanup() -> str:
         nonlocal callback_calls
         callback_calls += 1
         entered_cleanup.set()
@@ -1045,7 +1055,7 @@ def test_registry_allows_only_one_cleanup_owner_and_releases_successful_claim() 
     cleanup_thread.start()
     assert entered_cleanup.wait(5)
 
-    assert registry.cleanup_if_inactive(analysis_id, lambda _task: "duplicate") is None
+    assert registry.cleanup_if_inactive(analysis_id, lambda: "duplicate") is None
     assert callback_calls == 1
     assert not cleanup_finished.is_set()
 
@@ -1054,15 +1064,15 @@ def test_registry_allows_only_one_cleanup_owner_and_releases_successful_claim() 
 
     assert not cleanup_thread.is_alive()
     assert outcomes == ["first"]
-    assert registry.cleanup_if_inactive(analysis_id, lambda _task: "retry") == "retry"
+    assert registry.cleanup_if_inactive(analysis_id, lambda: "retry") == "retry"
 
 
 def test_registry_releases_cleanup_claim_after_factual_failure() -> None:
     registry = TaskRegistry()
     analysis_id = "4" * 32
 
-    assert registry.cleanup_if_inactive(analysis_id, lambda _task: False) is False
-    assert registry.cleanup_if_inactive(analysis_id, lambda _task: True) is True
+    assert registry.cleanup_if_inactive(analysis_id, lambda: False) is False
+    assert registry.cleanup_if_inactive(analysis_id, lambda: True) is True
 
 
 @pytest.mark.parametrize("failure_type", [RuntimeError, KeyboardInterrupt])
@@ -1072,16 +1082,16 @@ def test_registry_releases_cleanup_claim_after_raised_failure(
     registry = TaskRegistry()
     analysis_id = "5" * 32
 
-    def fail(_task: AnalysisTask | None) -> NoReturn:
+    def fail() -> NoReturn:
         raise failure_type("PRIVATE CALLBACK FAILURE")
 
     with pytest.raises(failure_type):
         registry.cleanup_if_inactive(analysis_id, fail)
 
-    assert registry.cleanup_if_inactive(analysis_id, lambda _task: "retry") == "retry"
+    assert registry.cleanup_if_inactive(analysis_id, lambda: "retry") == "retry"
 
 
-def test_quarantine_ttl_releases_known_controlled_source_through_owner(
+def test_quarantine_ttl_recovers_evicted_task_as_safe_orphan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1125,18 +1135,15 @@ def test_quarantine_ttl_releases_known_controlled_source_through_owner(
     assert result.quarantine_deleted == (analysis_id,)
     assert result.issues == ()
     assert not quarantine_item.exists()
-    assert task.accepted_source.is_released
+    assert not registry.contains(analysis_id)
+    assert not task.accepted_source.is_released
     task.accepted_source.cleanup()
     assert task.accepted_source.is_released
     with pytest.raises(IntakeSystemError), task.accepted_source.open_for_read():
         pass
-    snapshot = registry.snapshot(analysis_id)
-    assert snapshot.cleanup is not None
-    assert snapshot.cleanup.status is CleanupStatus.FAILED
-    assert snapshot.cleanup.quarantine_used
 
 
-def test_failed_known_quarantine_ttl_cleanup_remains_controlled_and_retryable(
+def test_failed_evicted_quarantine_ttl_cleanup_remains_safe_and_retryable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1200,7 +1207,9 @@ def test_failed_known_quarantine_ttl_cleanup_remains_controlled_and_retryable(
     assert second.quarantine_deleted == (analysis_id,)
     assert second.issues == ()
     assert not quarantine_item.exists()
-    assert task.accepted_source.is_released
+    assert not registry.contains(analysis_id)
+    assert not task.accepted_source.is_released
+    task.accepted_source.cleanup()
 
 
 def test_orphan_quarantine_ttl_retries_once_per_sweep_and_retains_failure(
@@ -1359,11 +1368,12 @@ def test_scheduler_invokes_startup_post_terminal_and_shutdown_sweeps(
     monkeypatch.setattr(WorkspaceJanitor, "sweep", count_sweep)
     executor = CompletedExecutor()
     clock = authoritative_clock()
+    finalizer = SuccessfulAcceptedResultFinalizer()
     scheduler = BoundedLocalScheduler(
         config=config,
         clock=clock,
         registry=registry,
-        result_finalizer=SuccessfulAcceptedResultFinalizer(),
+        result_finalizer=finalizer,
         temporary_input_owner=LocalTemporaryInputOwner(root),
     )
     receiver = Stage4TaskReceiver(
@@ -1387,7 +1397,8 @@ def test_scheduler_invokes_startup_post_terminal_and_shutdown_sweeps(
     receiver.accept(accepted)
     scheduler.shutdown(drain=True)
 
-    assert registry.snapshot(analysis_id).status is AnalysisStatus.COMPLETED
+    assert finalizer.facts_by_analysis_id[analysis_id].status is AnalysisStatus.COMPLETED
+    assert not registry.contains(analysis_id)
     assert not (root / analysis_id).exists()
     assert sweep_calls == 3
     assert owner is not None

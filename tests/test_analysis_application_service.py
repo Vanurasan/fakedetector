@@ -225,6 +225,29 @@ def test_accepted_submit_samples_actual_live_status(tmp_path: Path) -> None:
     assert submission.terminal_result is None
 
 
+def test_accepted_submit_uses_persisted_status_if_fast_worker_already_evicted_task(
+    tmp_path: Path,
+) -> None:
+    result = make_completed_result()
+    service = _service(
+        intake=FakeIntake(_accepted(tmp_path)),
+        registry=FakeRegistry(TaskNotFoundError()),
+        repository=FakeRepository(result),
+    )
+
+    submission = service.submit(
+        BytesIO(b"png"),
+        original_name="sample.png",
+        declared_content_type="image/png",
+        source=SourceContext(channel=SourceChannel.API),
+    )
+
+    assert submission.analysis_id == "analysis-001"
+    assert submission.status is AnalysisStatus.COMPLETED
+    assert submission.stage is ProcessingStage.FINISHED
+    assert submission.terminal_result is None
+
+
 @pytest.mark.parametrize("status", [AnalysisStatus.REJECTED, AnalysisStatus.FAILED])
 def test_stage3_terminal_submit_returns_only_persisted_result(status: AnalysisStatus) -> None:
     result = make_rejected_result(
@@ -336,6 +359,71 @@ def test_get_status_falls_back_to_persisted_result_after_restart() -> None:
     assert status.result_available
 
 
+def test_live_and_persisted_status_use_the_same_public_error_projection() -> None:
+    persisted = make_rejected_result(status=AnalysisStatus.FAILED)
+    expected_safe_details = {
+        "phase": "persistence",
+        "diagnostics": {"attempts": [1, 2]},
+    }
+    persisted.errors[0].field = "input_file"
+    persisted.errors[0].analyzer_id = "metadata_consistency"
+    persisted.errors[0].safe_details = {
+        "phase": "persistence",
+        "diagnostics": {"attempts": [1, 2]},
+    }
+    live_error = ErrorSnapshot(
+        code=persisted.errors[0].code,
+        category=persisted.errors[0].category,
+        message=persisted.errors[0].message,
+        retryable=persisted.errors[0].retryable,
+        field=persisted.errors[0].field,
+        analyzer_id=persisted.errors[0].analyzer_id,
+        safe_details=persisted.errors[0].safe_details,
+    )
+    live_service = _service(
+        intake=FakeIntake(_terminal()),
+        registry=FakeRegistry(
+            _snapshot(
+                status=AnalysisStatus.FAILED,
+                stage=ProcessingStage.PERSISTENCE,
+                errors=(live_error,),
+            )
+        ),
+        repository=FakeRepository(),
+    )
+    persisted_service = _service(
+        intake=FakeIntake(_terminal()),
+        registry=FakeRegistry(TaskNotFoundError()),
+        repository=FakeRepository(persisted),
+    )
+
+    live_status = live_service.get_status("analysis-001")
+    persisted_status = persisted_service.get_status("analysis-rejected")
+
+    assert live_status.errors[0] == persisted_status.errors[0]
+    assert live_status.errors[0].field == "input_file"
+    assert live_status.errors[0].analyzer_id == "metadata_consistency"
+    assert live_status.errors[0].safe_details == expected_safe_details
+
+    live_diagnostics = live_status.errors[0].safe_details["diagnostics"]
+    persisted_diagnostics = persisted_status.errors[0].safe_details["diagnostics"]
+    assert isinstance(live_diagnostics, dict)
+    assert isinstance(persisted_diagnostics, dict)
+    live_diagnostics["attempts"] = [99]
+    persisted_diagnostics["attempts"] = [100]
+
+    assert live_error.safe_details == expected_safe_details
+    assert persisted.errors[0].safe_details == expected_safe_details
+    assert (
+        live_service.get_status("analysis-001").errors[0].safe_details
+        == expected_safe_details
+    )
+    assert (
+        persisted_service.get_status("analysis-rejected").errors[0].safe_details
+        == expected_safe_details
+    )
+
+
 def test_get_result_reports_pending_for_live_analysis() -> None:
     service = _service(
         intake=FakeIntake(_terminal()),
@@ -349,14 +437,12 @@ def test_get_result_reports_pending_for_live_analysis() -> None:
     assert error_info.value.status.stage is ProcessingStage.ANALYSIS
 
 
-def test_get_result_reads_repository_only_after_live_finished() -> None:
+def test_get_result_reads_repository_after_finished_task_eviction() -> None:
     result = make_completed_result()
     repository = FakeRepository(result)
     service = _service(
         intake=FakeIntake(_terminal()),
-        registry=FakeRegistry(
-            _snapshot(status=AnalysisStatus.COMPLETED, stage=ProcessingStage.FINISHED)
-        ),
+        registry=FakeRegistry(TaskNotFoundError()),
         repository=repository,
     )
 
@@ -432,14 +518,12 @@ def test_repository_corruption_is_safe_typed_storage_failure() -> None:
     assert "PRIVATE PATH" not in str(error_info.value)
 
 
-def test_finished_without_persisted_result_is_internal_contract_failure() -> None:
+def test_evicted_analysis_without_persisted_result_is_not_found() -> None:
     service = _service(
         intake=FakeIntake(_terminal()),
-        registry=FakeRegistry(
-            _snapshot(status=AnalysisStatus.COMPLETED, stage=ProcessingStage.FINISHED)
-        ),
+        registry=FakeRegistry(TaskNotFoundError()),
         repository=FakeRepository(),
     )
 
-    with pytest.raises(AnalysisInternalError):
+    with pytest.raises(AnalysisNotFoundError):
         service.get_result("analysis-001")
