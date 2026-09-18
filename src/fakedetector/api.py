@@ -221,7 +221,7 @@ def install_api(
                 return _error_response(request, 400, _file_empty_error())
             try:
                 source = _parse_api_source_context(source_context_value)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, RecursionError):
                 return _error_response(request, 400, _malformed_source_error())
             except (ValidationError, ValueError):
                 return _error_response(request, 422, _invalid_source_error())

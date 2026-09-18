@@ -7,10 +7,11 @@ FakeDetector 0.1.0 — локальный CPU-only MVP для предварит
 
 FakeDetector MVP 0.1.0 существует; Stages 1–10 — `DONE / CLOSED`. Текущий этап
 разработки — Stage 11, «Post-MVP Normalization & Hardening» (`IN_PROGRESS`).
-Macro 0, «Roadmap Restructuring», — `DONE / owner accepted`; следующая задача —
-Macro 1, «Confirmed Defect Remediation» (`NOT_STARTED`). Stage 11 не расширяет
-продукт широкими новыми возможностями: он нормализует и укрепляет доказанное
-MVP-поведение. Подробный план и статусы — в [ROADMAP](docs/ROADMAP.md).
+Macro 0, «Roadmap Restructuring», и Macro 1, «Confirmed Defect Remediation», —
+`DONE / owner accepted`; следующая задача — Macro 2, «Runtime State Retention».
+Stage 11 не расширяет продукт широкими новыми возможностями: он нормализует и
+укрепляет доказанное MVP-поведение. Подробный план и статусы — в
+[ROADMAP](docs/ROADMAP.md).
 
 ## Поддерживаемая среда
 

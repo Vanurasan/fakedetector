@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from base64 import b64encode
+
 import pytest
 
 from fakedetector.auth import (
@@ -12,6 +14,7 @@ from fakedetector.auth import (
     load_webui_authenticator,
 )
 from fakedetector.config.models import APIConfig, WebUIConfig
+from fakedetector.webui import _strict_basic_credentials
 
 
 @pytest.mark.parametrize("value", [None, ""])
@@ -61,3 +64,28 @@ def test_authenticators_compare_exact_values() -> None:
     assert basic.verify("analyst", "password:with-colon")
     assert not basic.verify("analyst", "wrong")
     assert not basic.verify(None, None)
+
+
+@pytest.mark.parametrize(
+    "credentials",
+    ["аналитик:password", "analyst:пароль"],
+)
+def test_non_ascii_webui_credentials_fail_startup(credentials: str) -> None:
+    with pytest.raises(AccessConfigurationError):
+        load_webui_authenticator(
+            WebUIConfig(credentials_env_var="WEBUI_CREDENTIALS"),
+            environ={"WEBUI_CREDENTIALS": credentials},
+        )
+
+
+def test_accepted_webui_credentials_round_trip_through_basic_parser() -> None:
+    authenticator = load_webui_authenticator(
+        WebUIConfig(credentials_env_var="WEBUI_CREDENTIALS"),
+        environ={"WEBUI_CREDENTIALS": "analyst:password:with-colon"},
+    )
+    assert authenticator is not None
+    payload = b64encode(b"analyst:password:with-colon").decode("ascii")
+
+    username, password = _strict_basic_credentials(f"Basic {payload}")
+
+    assert authenticator.verify(username, password)
