@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 import uvicorn
 
+from fakedetector.analyzers._errors import AnalyzerConfigurationError
 from fakedetector.app import create_app
 from fakedetector.auth import AccessConfigurationError
 from fakedetector.config.loader import ConfigurationError, load_config
@@ -54,6 +55,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except AccessConfigurationError:
         print("Access configuration failed.", file=sys.stderr)
         return 5
+    except AnalyzerConfigurationError:
+        print("Analyzer configuration failed.", file=sys.stderr)
+        return 6
     emit_diagnostic(
         logger,
         logging.INFO,

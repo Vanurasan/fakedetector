@@ -238,6 +238,22 @@ def test_invalid_source_context_fails_before_submission(
     assert service.sources == []
 
 
+def test_deeply_nested_source_context_uses_controlled_json_error() -> None:
+    service = StubApplicationService()
+    source_context = "[" * 20_000 + "0" + "]" * 20_000
+
+    response = _upload(_client(service), source_context=source_context)
+
+    assert response.status_code == 400
+    assert response.headers["content-type"] == "application/json"
+    payload = response.json()
+    assert set(payload) == {"error", "request_id"}
+    assert payload["error"]["code"] == "invalid_source_context_json"
+    assert payload["error"]["category"] == "validation"
+    assert payload["error"]["field"] == "source_context"
+    assert service.sources == []
+
+
 def test_malformed_multipart_is_rejected_only_after_bearer_guard() -> None:
     service = StubApplicationService()
     client = _client(service)

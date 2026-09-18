@@ -95,6 +95,9 @@ def test_probe_uses_bounded_safe_arguments_and_parses_only_required_json(
     assert arguments[-1] == str(source_path)
     assert arguments[-3:-1] == ["-protocol_whitelist", "file"]
     assert "-show_entries" in arguments
+    show_entries = arguments[arguments.index("-show_entries") + 1]
+    assert ":stream_disposition=attached_pic" in show_entries
+    assert ",disposition" not in show_entries
     assert "tags" not in " ".join(arguments)
     assert kwargs == {
         "cwd": workspace_path,

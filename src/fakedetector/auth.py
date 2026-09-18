@@ -35,8 +35,11 @@ class WebUIBasicAuthenticator:
     __slots__ = ("_expected_password", "_expected_username")
 
     def __init__(self, username: str, password: str) -> None:
-        self._expected_username = username.encode("utf-8")
-        self._expected_password = password.encode("utf-8")
+        try:
+            self._expected_username = username.encode("ascii")
+            self._expected_password = password.encode("ascii")
+        except UnicodeEncodeError:
+            raise AccessConfigurationError() from None
 
     def verify(self, username: str | None, password: str | None) -> bool:
         supplied_username = b"" if username is None else username.encode("utf-8")

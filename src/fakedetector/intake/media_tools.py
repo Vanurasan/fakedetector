@@ -114,7 +114,8 @@ class FFmpegMediaInspector:
             (
                 "format=format_name,duration,bit_rate:"
                 "stream=codec_type,codec_name,sample_rate,channels,duration,bit_rate,"
-                "width,height,avg_frame_rate,r_frame_rate,disposition"
+                "width,height,avg_frame_rate,r_frame_rate:"
+                "stream_disposition=attached_pic"
             ),
             "-of",
             "json",

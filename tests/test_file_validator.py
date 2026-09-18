@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -196,6 +198,70 @@ def test_required_technical_parameters_are_meaningful(
     assert video.fps == pytest.approx(10.0)
     assert video.has_audio is False
     assert video.audio_codec is None
+
+
+def test_m4a_with_attached_cover_is_accepted_as_audio(tmp_path: Path) -> None:
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    if ffmpeg is None or ffprobe is None:
+        pytest.skip("FFmpeg and ffprobe are required for the attached-cover regression")
+
+    cover_path = tmp_path / "cover.jpg"
+    Image.new("RGB", (16, 16), color=(12, 34, 56)).save(cover_path, format="JPEG")
+    source_path = tmp_path / "covered.m4a"
+    subprocess.run(
+        [
+            ffmpeg,
+            "-v",
+            "error",
+            "-y",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=8000",
+            "-i",
+            str(cover_path),
+            "-map",
+            "0:a:0",
+            "-map",
+            "1:v:0",
+            "-t",
+            "0.25",
+            "-c:a",
+            "aac",
+            "-c:v",
+            "mjpeg",
+            "-disposition:v:0",
+            "attached_pic",
+            str(source_path),
+        ],
+        shell=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=15.0,
+        check=True,
+    )
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    controlled = controlled_source(
+        owner,
+        source_path.read_bytes(),
+        original_name="covered.m4a",
+        declared_content_type="audio/mp4",
+    )
+
+    result = FileValidator(
+        config=make_config(tmp_path / "temp"),
+        temporary_input_owner=owner,
+    ).validate(controlled)
+
+    assert result.accepted
+    assert result.errors == []
+    assert result.validated_file is not None
+    assert result.validated_file.media_type is MediaType.AUDIO
+    assert isinstance(result.validated_file.technical_parameters, AudioTechnicalParameters)
+    owner.cleanup(controlled.owned_source)
 
 
 @pytest.mark.parametrize("extension", ["png", "webp"])

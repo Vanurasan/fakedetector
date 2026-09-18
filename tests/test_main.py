@@ -7,6 +7,7 @@ import tempfile
 from io import StringIO
 from pathlib import Path
 
+import pytest
 import yaml
 from fastapi import FastAPI
 
@@ -329,6 +330,48 @@ def test_access_configuration_error_is_safe_and_stops_uvicorn(monkeypatch, capsy
 
     assert result == 5
     assert captured.err == "Access configuration failed.\n"
+    assert sentinel not in captured.err
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["unknown_enabled", "invalid_settings", "continue_policy"],
+)
+def test_analyzer_configuration_error_is_safe_and_stops_uvicorn(
+    scenario: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    raw = make_config().model_dump(mode="python")
+    raw["access_channels"]["webui"]["enabled"] = False
+    raw["access_channels"]["api"]["enabled"] = False
+    if scenario == "unknown_enabled":
+        raw["analyzers"]["image"]["enabled"] = ["unknown_analyzer"]
+    elif scenario == "invalid_settings":
+        raw["analyzers"]["settings"] = {
+            "image_metadata_consistency": {"unexpected": True}
+        }
+    else:
+        raw["analyzers"]["defaults"]["continue_on_error"] = False
+        raw["error_handling"]["continue_if_analyzer_fails"] = True
+    config = AppConfig.model_validate(raw)
+    sentinel = "PRIVATE ANALYZER CONFIGURATION DETAIL"
+
+    monkeypatch.setattr(main_module, "load_config", lambda path: config)
+    monkeypatch.setattr(main_module, "ensure_runtime_directories", lambda value: None)
+    monkeypatch.setattr(main_module, "configure_logging", lambda value: logging.getLogger())
+    monkeypatch.setattr(
+        main_module.uvicorn,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError(sentinel)),
+    )
+
+    result = main_module.main([])
+    captured = capsys.readouterr()
+
+    assert result == 6
+    assert captured.out == ""
+    assert captured.err == "Analyzer configuration failed.\n"
     assert sentinel not in captured.err
 
 
