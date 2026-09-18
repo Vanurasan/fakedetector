@@ -12,22 +12,20 @@ from typing import cast
 from pydantic import JsonValue, ValidationError
 from pydantic_core import PydanticSerializationError
 
-from fakedetector.analyzers._audio_pcm import AudioPcmQualityAnalyzer
 from fakedetector.analyzers._candidates import (
     _canonical_candidate,
     _TypedCandidate,
     _validate_candidate_transport,
 )
-from fakedetector.analyzers._image_copy_move import ImageCopyMoveCorrespondenceAnalyzer
-from fakedetector.analyzers._image_metadata import ImageMetadataConsistencyAnalyzer
-from fakedetector.analyzers._real_common import _MAX_REAL_ANALYZER_CANDIDATES
-from fakedetector.analyzers._video_frames import VideoSampledFrameQualityAnalyzer
+from fakedetector.analyzers._catalog import (
+    _resolve_built_in_analyzer_definition,
+    _WorkerAnalyzerDefinition,
+)
 from fakedetector.domain import (
     AnalyzerResult,
     AnalyzerStatus,
     Finding,
     FindingSeverity,
-    MediaType,
 )
 
 _DESCRIPTION_BY_TYPE = {
@@ -46,46 +44,6 @@ _DESCRIPTION_BY_TYPE = {
     "repeated_image_region_correspondence": (
         "This image region participates in a geometrically consistent repeated-region "
         "correspondence."
-    ),
-}
-
-
-@dataclass(frozen=True, slots=True)
-class _RealResultSpec:
-    version: str
-    media_type: MediaType
-    group: str
-    candidate_types: frozenset[str]
-    max_candidates: int = _MAX_REAL_ANALYZER_CANDIDATES
-
-
-_REAL_RESULT_SPECS = {
-    ImageCopyMoveCorrespondenceAnalyzer.analyzer_id: _RealResultSpec(
-        version=ImageCopyMoveCorrespondenceAnalyzer.analyzer_version,
-        media_type=next(iter(ImageCopyMoveCorrespondenceAnalyzer.supported_media_types)),
-        group=ImageCopyMoveCorrespondenceAnalyzer.group,
-        candidate_types=frozenset({"repeated_image_region_correspondence"}),
-        max_candidates=8,
-    ),
-    ImageMetadataConsistencyAnalyzer.analyzer_id: _RealResultSpec(
-        version=ImageMetadataConsistencyAnalyzer.analyzer_version,
-        media_type=next(iter(ImageMetadataConsistencyAnalyzer.supported_media_types)),
-        group=ImageMetadataConsistencyAnalyzer.group,
-        candidate_types=frozenset({"image_metadata_dimension_mismatch"}),
-    ),
-    AudioPcmQualityAnalyzer.analyzer_id: _RealResultSpec(
-        version=AudioPcmQualityAnalyzer.analyzer_version,
-        media_type=next(iter(AudioPcmQualityAnalyzer.supported_media_types)),
-        group=AudioPcmQualityAnalyzer.group,
-        candidate_types=frozenset({"audio_full_scale_saturation"}),
-    ),
-    VideoSampledFrameQualityAnalyzer.analyzer_id: _RealResultSpec(
-        version=VideoSampledFrameQualityAnalyzer.analyzer_version,
-        media_type=next(iter(VideoSampledFrameQualityAnalyzer.supported_media_types)),
-        group=VideoSampledFrameQualityAnalyzer.group,
-        candidate_types=frozenset(
-            {"video_sample_resolution_change", "repeated_sampled_video_frames"}
-        ),
     ),
 }
 
@@ -114,21 +72,21 @@ class Stage6FindingService:
         try:
             for result_value in results:
                 result = _validated_result(result_value)
-                spec = _REAL_RESULT_SPECS.get(result.analyzer_id)
+                spec = _resolve_built_in_analyzer_definition(result.analyzer_id)
                 if spec is None:
                     continue
                 if result.status is not AnalyzerStatus.COMPLETED or not result.applicable:
                     continue
                 _validate_real_result_identity(result, spec)
-                if len(result.candidate_findings) > spec.max_candidates:
+                if len(result.candidate_findings) > spec.max_candidate_findings:
                     raise ValueError("candidate limit")
                 validated_candidates: list[_TypedCandidate] = []
                 for transport_candidate in result.candidate_findings:
                     candidate = _validate_candidate_transport(transport_candidate)
-                    if candidate.type not in spec.candidate_types:
+                    if candidate.type not in spec.candidate_finding_types:
                         raise ValueError("candidate analyzer mismatch")
                     validated_candidates.append(candidate)
-                if result.analyzer_id == ImageCopyMoveCorrespondenceAnalyzer.analyzer_id:
+                if "repeated_image_region_correspondence" in spec.candidate_finding_types:
                     _validate_copy_move_candidate_pairs(validated_candidates)
                 for candidate in validated_candidates:
                     normalized.append(
@@ -162,10 +120,13 @@ def _validated_result(result: AnalyzerResult) -> AnalyzerResult:
     return AnalyzerResult.model_validate(result.model_dump(mode="python", warnings="error"))
 
 
-def _validate_real_result_identity(result: AnalyzerResult, spec: _RealResultSpec) -> None:
+def _validate_real_result_identity(
+    result: AnalyzerResult,
+    spec: _WorkerAnalyzerDefinition,
+) -> None:
     if (
-        result.analyzer_version != spec.version
-        or result.media_type is not spec.media_type
+        result.analyzer_version != spec.analyzer_version
+        or result.media_type not in spec.supported_media_types
         or result.group != spec.group
         or result.score is not None
         or result.score_name is not None

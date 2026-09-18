@@ -14,7 +14,7 @@ from PIL import Image
 from pydantic import ValidationError
 
 from fakedetector.analyzers._catalog import (
-    _real_analyzer_registrations,
+    _built_in_analyzer_registrations,
     _resolve_worker_definition,
 )
 from fakedetector.analyzers._image_copy_move import (
@@ -243,7 +243,7 @@ def test_copy_move_settings_are_frozen_bounded_and_reject_unknown_fields() -> No
 
 
 def test_copy_move_registration_is_trusted_and_requires_normalized_image() -> None:
-    registrations = _real_analyzer_registrations()
+    registrations = _built_in_analyzer_registrations()
     registration = next(
         item for item in registrations if item.analyzer_id == "image_copy_move_correspondence"
     )

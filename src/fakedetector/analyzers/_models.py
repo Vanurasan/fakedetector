@@ -318,6 +318,8 @@ class AnalyzerRegistration:
     preprocessing_requirements: PreprocessingRequirements = field(
         default_factory=PreprocessingRequirements
     )
+    candidate_finding_types: frozenset[str] = frozenset()
+    max_candidate_findings: int = 0
 
 
 def _freeze_value(value: object) -> object:

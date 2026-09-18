@@ -21,8 +21,14 @@ from fakedetector.analyzers._audio_pcm import (
     AudioPcmQualitySettings,
 )
 from fakedetector.analyzers._catalog import (
-    _real_analyzer_registrations,
+    _built_in_analyzer_ids,
+    _built_in_analyzer_registrations,
+    _resolve_built_in_analyzer_definition,
     _resolve_worker_definition,
+)
+from fakedetector.analyzers._errors import AnalyzerConfigurationError
+from fakedetector.analyzers._image_copy_move import (
+    ImageCopyMoveCorrespondenceAnalyzer,
 )
 from fakedetector.analyzers._image_metadata import (
     ImageMetadataConsistencyAnalyzer,
@@ -697,20 +703,52 @@ def test_real_results_are_json_safe_finite_unscored_and_candidate_bounded(
 
 
 def test_real_catalog_registration_and_settings_contracts() -> None:
-    registrations = _real_analyzer_registrations()
-    assert [registration.analyzer_id for registration in registrations] == [
-        "image_metadata_consistency",
-        "audio_pcm_quality",
-        "video_sampled_frame_quality",
-        "image_copy_move_correspondence",
-    ]
+    registrations = _built_in_analyzer_registrations()
+    expected = (
+        (
+            "image_metadata_consistency",
+            MediaType.IMAGE,
+            "metadata",
+            ImageMetadataConsistencyAnalyzer,
+        ),
+        ("audio_pcm_quality", MediaType.AUDIO, "signal_quality", AudioPcmQualityAnalyzer),
+        (
+            "video_sampled_frame_quality",
+            MediaType.VIDEO,
+            "sampled_frame_quality",
+            VideoSampledFrameQualityAnalyzer,
+        ),
+        (
+            "image_copy_move_correspondence",
+            MediaType.IMAGE,
+            "content",
+            ImageCopyMoveCorrespondenceAnalyzer,
+        ),
+    )
+    expected_finding_types = {
+        "image_metadata_consistency": frozenset({"image_metadata_dimension_mismatch"}),
+        "audio_pcm_quality": frozenset({"audio_full_scale_saturation"}),
+        "video_sampled_frame_quality": frozenset(
+            {"video_sample_resolution_change", "repeated_sampled_video_frames"}
+        ),
+        "image_copy_move_correspondence": frozenset(
+            {"repeated_image_region_correspondence"}
+        ),
+    }
+
+    assert tuple(
+        (
+            registration.analyzer_id,
+            registration.supported_media_types,
+            registration.group,
+        )
+        for registration in registrations
+    ) == tuple(
+        (analyzer_id, frozenset({media_type}), group)
+        for analyzer_id, media_type, group, _ in expected
+    )
+    assert len({registration.analyzer_id for registration in registrations}) == len(registrations)
     assert all(registration.analyzer_version == "1.0.0" for registration in registrations)
-    assert [registration.group for registration in registrations] == [
-        "metadata",
-        "signal_quality",
-        "sampled_frame_quality",
-        "content",
-    ]
     assert all(
         not registration.preprocessing_requirements.audio_spectrogram
         and not registration.preprocessing_requirements.video_audio_track
@@ -720,38 +758,63 @@ def test_real_catalog_registration_and_settings_contracts() -> None:
         definition = _resolve_worker_definition(registration.worker_key)
         assert definition is not None
         assert definition.registration() == registration
+        built_in_definition = _resolve_built_in_analyzer_definition(
+            registration.analyzer_id
+        )
+        assert built_in_definition is definition
+        expected_type = next(
+            analyzer_type
+            for analyzer_id, _, _, analyzer_type in expected
+            if analyzer_id == registration.analyzer_id
+        )
+        assert definition.factory is expected_type
+        assert type(definition.factory()) is expected_type
+        assert (
+            registration.candidate_finding_types
+            == expected_finding_types[registration.analyzer_id]
+        )
+        assert registration.max_candidate_findings == (
+            8 if registration.analyzer_id == "image_copy_move_correspondence" else 16
+        )
         with pytest.raises(ValidationError):
             registration.settings_model.model_validate({"unknown": True})
 
 
 def test_real_catalog_builds_active_plans_through_existing_settings_mechanism() -> None:
     raw = yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
-    raw["analyzers"]["image"]["enabled"] = [
-        "image_metadata_consistency",
-        "image_copy_move_correspondence",
-    ]
-    raw["analyzers"]["audio"]["enabled"] = ["audio_pcm_quality"]
-    raw["analyzers"]["video"]["enabled"] = ["video_sampled_frame_quality"]
     raw["analyzers"]["settings"] = {
         "audio_pcm_quality": {"full_scale_sample_ratio_threshold": 0.001}
     }
     registry = AnalyzerRegistry(
         AppConfig.model_validate(raw),
-        _real_analyzer_registrations(),
+        _built_in_analyzer_registrations(),
     )
 
-    assert [item.registration.analyzer_id for item in registry.active_plan(MediaType.IMAGE)] == [
-        "image_metadata_consistency",
-        "image_copy_move_correspondence",
-    ]
-    assert registry.active_plan(MediaType.AUDIO)[0].registration.analyzer_id == (
-        "audio_pcm_quality"
-    )
-    assert registry.active_plan(MediaType.VIDEO)[0].registration.analyzer_id == (
-        "video_sampled_frame_quality"
-    )
+    configured = {
+        MediaType.IMAGE: tuple(raw["analyzers"]["image"]["enabled"]),
+        MediaType.AUDIO: tuple(raw["analyzers"]["audio"]["enabled"]),
+        MediaType.VIDEO: tuple(raw["analyzers"]["video"]["enabled"]),
+    }
+    for media_type in MediaType:
+        expected_ids = _built_in_analyzer_ids(media_type)
+        assert configured[media_type] == expected_ids
+        assert registry.active_analyzer_ids(media_type) == expected_ids
     assert not registry.preprocessing_requirements(MediaType.AUDIO).audio_spectrogram
     assert not registry.preprocessing_requirements(MediaType.VIDEO).video_audio_track
+
+
+def test_canonical_profile_rejects_incomplete_built_in_registration() -> None:
+    raw = yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+    registrations = tuple(
+        registration
+        for registration in _built_in_analyzer_registrations()
+        if registration.analyzer_id != "image_copy_move_correspondence"
+    )
+
+    with pytest.raises(AnalyzerConfigurationError) as error:
+        AnalyzerRegistry(AppConfig.model_validate(raw), registrations)
+
+    assert error.value.phase == "unknown_enabled"
 
 
 def test_real_image_analyzer_resolves_inside_spawned_worker(tmp_path: Path) -> None:

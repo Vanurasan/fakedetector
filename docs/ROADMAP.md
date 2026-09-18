@@ -115,9 +115,9 @@ AFTER_MVP
 Статус Stage 10: DONE / CLOSED
 Текущий этап: Stage 11 — Post-MVP Normalization & Hardening
 Статус Stage 11: IN_PROGRESS
-Последний завершённый Macro: Macro 2 — Runtime State Retention (DONE / owner accepted)
-Текущая задача: Macro 3 — Analyzer Registration Normalization (NOT_STARTED / next action)
-Ближайшее действие: начать Stage 11 / Macro 3 — Analyzer Registration Normalization
+Последний завершённый Macro: Macro 3 — Analyzer Registration Normalization (DONE / owner accepted)
+Текущая задача: Macro 4 — Product Naming & Architecture Normalization (NOT_STARTED / next action)
+Ближайшее действие: начать Stage 11 / Macro 4 — Product Naming & Architecture Normalization
 Критические блокеры: отсутствуют
 Реализация программы: Этапы 1–10 завершены; MVP 0.1.0 DONE / CLOSED; post-MVP whole-codebase audit — READY_FOR_NORMALIZATION_PLANNING
 Документационная база: сформирована
@@ -137,8 +137,7 @@ AFTER_MVP
 
 ### 2.2. Ближайшая задача
 
-Начать Stage 11 / Macro 3 — Analyzer Registration Normalization в рамках уже
-принятого ограничения на first-party built-in analyzers.
+Начать Stage 11 / Macro 4 — Product Naming & Architecture Normalization.
 
 ---
 
@@ -1815,8 +1814,8 @@ Post-MVP whole-codebase audit завершён с вердиктом
 - Macro 0 — Roadmap Restructuring: **DONE / owner accepted**;
 - Macro 1 — Confirmed Defect Remediation: **DONE / owner accepted**;
 - Macro 2 — Runtime State Retention: **DONE / owner accepted**;
-- Macro 3 — Analyzer Registration Normalization: **NOT_STARTED / next action**;
-- Macro 4 — Product Naming & Architecture Normalization: **NOT_STARTED**;
+- Macro 3 — Analyzer Registration Normalization: **DONE / owner accepted**;
+- Macro 4 — Product Naming & Architecture Normalization: **NOT_STARTED / next action**;
 - Macro 5 — Technical Debt / Config / Test-Support Cleanup: **NOT_STARTED**;
 - Macro 6 — Tests / Comments / Documentation Normalization: **NOT_STARTED**;
 - Macro 7 — Release Tooling Normalization: **NOT_STARTED**;
@@ -1928,7 +1927,7 @@ Terminal preparation завершается до persistence; после усп�
 проекция status errors сохранена. Owner review, независимый аудит и focused
 remediation re-audits завершены; финальный независимый вердикт — **PASS**.
 
-## Macro 3 — Analyzer Registration Normalization — NOT_STARTED
+## Macro 3 — Analyzer Registration Normalization — DONE / owner accepted
 
 Цель — сделать добавление собственных built-in анализаторов контролируемым и
 локализованным.
@@ -1939,17 +1938,26 @@ marketplace/API или внешнюю расширяемость анализа�
 first-party компонентами FakeDetector, которые разрабатываются, проверяются,
 тестируются и поставляются вместе с продуктом.
 
-Знание об одном анализаторе сейчас распределено между registry/catalog,
-конкретной реализацией и finding specifications, из-за чего возможна частичная
-регистрация. Требуемое направление:
+Macro 3 завершён и принят владельцем. Один authoritative static internal catalog
+теперь определяет production built-in анализаторы и остаётся закрытым доверенным
+first-party каталогом. Plugin API, dynamic discovery и third-party loading не
+введены.
 
-- свести регистрацию к одной согласованной декларации или минимальному
-  практически необходимому числу authoritative locations;
-- валидировать полноту регистрации;
-- сохранить закрытую и доверенную регистрацию;
-- сохранить identity/version/media/settings/preprocessing/finding rules;
-- упростить добавление следующего built-in анализатора;
-- не проектировать plugin framework.
+В каталоге централизованы identity, version, media, factory, typed settings,
+preprocessing requirements и trusted result-contract metadata. Runtime registry,
+worker resolution, Stage 5 completeness и Stage 6 validation получают
+соответствующие представления из нормализованного каталога. Порядок выполнения
+по-прежнему определяется порядком конфигурации, а Stage 7 completeness использует
+точный validated active analyzer plan.
+
+Import-time construction production analyzer instances удалён. Согласованность
+конкретной реализации с каталогом и worker-side validation созданного экземпляра
+остаются обязательными. Алгоритмы анализаторов, публичные схемы,
+API/config/CLI-контракты и семантика риска не изменены.
+
+Implementation self-review, owner review, independent audit, remediation
+`M3-AUD-001` и focused independent re-audit завершены; финальный независимый
+вердикт — **PASS**.
 
 ## Macro 4 — Product Naming & Architecture Normalization — NOT_STARTED
 

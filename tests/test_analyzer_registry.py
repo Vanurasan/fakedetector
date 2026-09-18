@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from fakedetector.analyzers._catalog import _framework_test_registrations
+from fakedetector.analyzers._catalog import (
+    _framework_test_registrations,
+    _resolve_worker_definition,
+)
 from fakedetector.analyzers._errors import AnalyzerConfigurationError
 from fakedetector.analyzers._registry import AnalyzerRegistry
 from fakedetector.config.models import AppConfig
@@ -84,6 +87,8 @@ def test_registry_rejects_invalid_analyzer_id(analyzer_id: str) -> None:
         ("group", "x" * 129, "group"),
         ("supported_media_types", frozenset(), "supported_media_types"),
         ("settings_model", str, "settings_contract"),
+        ("candidate_finding_types", frozenset({"Bad-Type"}), "candidate_findings"),
+        ("max_candidate_findings", 1, "candidate_findings"),
     ],
 )
 def test_registry_rejects_invalid_registration_contract(
@@ -121,6 +126,20 @@ def test_registry_rejects_registration_media_declaration_mismatch() -> None:
     assert error.value.phase == "registration_mismatch"
 
 
+def test_registry_rejects_catalog_implementation_identity_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registration = _framework_test_registrations()[0]
+    definition = _resolve_worker_definition(registration.worker_key)
+    assert definition is not None
+    monkeypatch.setattr(definition.factory, "analyzer_version", "9.9.9")
+
+    with pytest.raises(AnalyzerConfigurationError) as error:
+        AnalyzerRegistry(_config(), (registration,))
+
+    assert error.value.phase == "registration_mismatch"
+
+
 def test_registry_rejects_untrusted_worker_key() -> None:
     registration = replace(
         _framework_test_registrations()[0],
@@ -143,6 +162,7 @@ def test_registry_preserves_exact_config_order() -> None:
     assert [
         active.registration.analyzer_id for active in registry.active_plan(MediaType.IMAGE)
     ] == configured_order
+    assert registry.active_analyzer_ids(MediaType.IMAGE) == tuple(configured_order)
 
 
 @pytest.mark.parametrize(

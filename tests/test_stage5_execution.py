@@ -399,6 +399,10 @@ class _LockProbeOrchestrator(_SnapshotBoundTestComponent):
         del media_type
         return PreprocessingRequirements()
 
+    def active_analyzer_ids(self, media_type: MediaType) -> tuple[str, ...]:
+        del media_type
+        return ()
+
     def execute(
         self,
         prepared_media: PreparedMedia,
@@ -423,6 +427,12 @@ class _InjectedResultOrchestrator(_SnapshotBoundTestComponent):
     def preprocessing_requirements(self, media_type: MediaType) -> PreprocessingRequirements:
         del media_type
         return PreprocessingRequirements()
+
+    def active_analyzer_ids(self, media_type: MediaType) -> tuple[str, ...]:
+        snapshot = self._test_config_snapshot
+        assert snapshot is not None
+        media_config = getattr(snapshot.materialize().analyzers, media_type.value)
+        return tuple(media_config.enabled)
 
     def execute(
         self,
@@ -1041,6 +1051,62 @@ def test_stage5_execution_forms_and_publishes_findings_from_authoritative_result
     assert assessment[0].status is CompletenessStatus.PARTIAL
     assert assessment[1].score == 5
     assert assessment[2].additional_actions == ["retry_analysis"]
+    _cleanup_task(task)
+
+
+@pytest.mark.parametrize(
+    ("enabled", "result_factories"),
+    [
+        pytest.param(
+            ["image_metadata_consistency", "image_copy_move_correspondence"],
+            (_stage6_source_result,),
+            id="missing-configured-result",
+        ),
+        pytest.param(
+            ["image_metadata_consistency"],
+            (_stage6_error_result,),
+            id="unexpected-result-id",
+        ),
+    ],
+)
+def test_injected_results_cannot_change_the_bound_active_plan(
+    tmp_path: Path,
+    enabled: list[str],
+    result_factories: tuple[Callable[[], AnalyzerResult], ...],
+) -> None:
+    root = tmp_path / "temp"
+    config = _config(root, enabled=enabled)
+    registry = _RecordingRegistry()
+    task, _ = _claimed_task(root, config, registry=registry)
+    results = tuple(factory() for factory in result_factories)
+    orchestrator = _InjectedResultOrchestrator(results)
+    orchestrator._bind_config(config)
+    preprocessing = _RecordingPreprocessing(create_artifact=True)
+    preprocessing._bind_config(config)
+    service = Stage5ExecutionService(
+        config=config,
+        registry=registry,
+        preprocessing=cast(PreprocessingDispatcher, preprocessing),
+        orchestrator=cast(AnalyzerOrchestrator, orchestrator),
+        finding_service=Stage6FindingService(),
+        assessment_service=Stage7AssessmentService(config.risk_assessment),
+        monotonic=_ManualMonotonic(),
+    )
+
+    planned_ids = orchestrator.active_analyzer_ids(MediaType.IMAGE)
+    result_ids = tuple(result.analyzer_id for result in results)
+    outcome = service.execute(task)
+
+    assert planned_ids == tuple(enabled)
+    assert planned_ids != result_ids
+    assert outcome.status is AnalysisStatus.FAILED
+    assert len(outcome.errors) == 1
+    assert outcome.errors[0].code == "internal_error"
+    assert outcome.errors[0].safe_details == {
+        "phase": "risk_assessment",
+        "reason_code": "invalid_completeness_input",
+    }
+    assert task.stage7_data is None
     _cleanup_task(task)
 
 

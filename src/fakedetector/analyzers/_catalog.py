@@ -1,11 +1,11 @@
-"""Closed trusted worker catalog plus spawn-importable Stage 5 test analyzers."""
+"""Closed trusted built-in catalog plus spawn-importable framework test analyzers."""
 
 from __future__ import annotations
 
 import os
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -28,6 +28,7 @@ from fakedetector.analyzers._models import (
     AnalyzerRequest,
     ApplicabilityResult,
 )
+from fakedetector.analyzers._real_common import _MAX_REAL_ANALYZER_CANDIDATES
 from fakedetector.analyzers._video_frames import (
     VideoSampledFrameQualityAnalyzer,
     VideoSampledFrameQualitySettings,
@@ -143,8 +144,10 @@ class _WorkerAnalyzerDefinition:
     group: str
     supported_media_types: frozenset[MediaType]
     settings_model: type[BaseModel]
-    factory: Callable[[], Analyzer]
+    factory: type[Analyzer]
     preprocessing_requirements: PreprocessingRequirements
+    candidate_finding_types: frozenset[str]
+    max_candidate_findings: int
 
     def registration(self) -> AnalyzerRegistration:
         return AnalyzerRegistration(
@@ -156,28 +159,32 @@ class _WorkerAnalyzerDefinition:
             worker_key=self.worker_key,
             settings_model=self.settings_model,
             preprocessing_requirements=self.preprocessing_requirements,
+            candidate_finding_types=self.candidate_finding_types,
+            max_candidate_findings=self.max_candidate_findings,
         )
 
 
 def _definition(
     worker_key: str,
-    analyzer_factory: Callable[[], Analyzer],
+    analyzer_type: type[Analyzer],
     *,
     settings_model: type[BaseModel] = _FakeAnalyzerSettings,
     preprocessing_requirements: PreprocessingRequirements | None = None,
+    candidate_finding_types: frozenset[str] = frozenset(),
+    max_candidate_findings: int = 0,
 ) -> _WorkerAnalyzerDefinition:
-    analyzer = analyzer_factory()
-
     return _WorkerAnalyzerDefinition(
         worker_key=worker_key,
-        analyzer_id=analyzer.analyzer_id,
-        analyzer_name=analyzer.analyzer_name,
-        analyzer_version=analyzer.analyzer_version,
-        group=analyzer.group,
-        supported_media_types=analyzer.supported_media_types,
+        analyzer_id=analyzer_type.analyzer_id,
+        analyzer_name=analyzer_type.analyzer_name,
+        analyzer_version=analyzer_type.analyzer_version,
+        group=analyzer_type.group,
+        supported_media_types=analyzer_type.supported_media_types,
         settings_model=settings_model,
-        factory=analyzer_factory,
+        factory=analyzer_type,
         preprocessing_requirements=(preprocessing_requirements or PreprocessingRequirements()),
+        candidate_finding_types=candidate_finding_types,
+        max_candidate_findings=max_candidate_findings,
     )
 
 
@@ -200,37 +207,62 @@ _FRAMEWORK_TEST_DEFINITIONS = (
     _definition("framework_test.serialization", _FakeSerializationAnalyzer),
 )
 
-_REAL_ANALYZER_DEFINITIONS = (
+_BUILT_IN_ANALYZER_DEFINITIONS = (
     _definition(
         "stage6.image_metadata_consistency.v1",
         ImageMetadataConsistencyAnalyzer,
         settings_model=ImageMetadataConsistencySettings,
+        candidate_finding_types=frozenset({"image_metadata_dimension_mismatch"}),
+        max_candidate_findings=_MAX_REAL_ANALYZER_CANDIDATES,
     ),
     _definition(
         "stage6.audio_pcm_quality.v1",
         AudioPcmQualityAnalyzer,
         settings_model=AudioPcmQualitySettings,
+        candidate_finding_types=frozenset({"audio_full_scale_saturation"}),
+        max_candidate_findings=_MAX_REAL_ANALYZER_CANDIDATES,
     ),
     _definition(
         "stage6.video_sampled_frame_quality.v1",
         VideoSampledFrameQualityAnalyzer,
         settings_model=VideoSampledFrameQualitySettings,
+        candidate_finding_types=frozenset(
+            {"video_sample_resolution_change", "repeated_sampled_video_frames"}
+        ),
+        max_candidate_findings=_MAX_REAL_ANALYZER_CANDIDATES,
     ),
     _definition(
         "stage6.image_copy_move_correspondence.v1",
         ImageCopyMoveCorrespondenceAnalyzer,
         settings_model=ImageCopyMoveCorrespondenceSettings,
+        candidate_finding_types=frozenset({"repeated_image_region_correspondence"}),
+        max_candidate_findings=8,
     ),
 )
 
-_WORKER_DEFINITIONS = {
-    definition.worker_key: definition
-    for definition in (*_FRAMEWORK_TEST_DEFINITIONS, *_REAL_ANALYZER_DEFINITIONS)
-}
+_WORKER_DEFINITIONS = MappingProxyType(
+    {
+        definition.worker_key: definition
+        for definition in (*_FRAMEWORK_TEST_DEFINITIONS, *_BUILT_IN_ANALYZER_DEFINITIONS)
+    }
+)
+_BUILT_IN_DEFINITIONS_BY_ID = MappingProxyType(
+    {
+        definition.analyzer_id: definition
+        for definition in _BUILT_IN_ANALYZER_DEFINITIONS
+    }
+)
 
 
 def _resolve_worker_definition(worker_key: str) -> _WorkerAnalyzerDefinition | None:
     return _WORKER_DEFINITIONS.get(worker_key)
+
+
+def _resolve_built_in_analyzer_definition(
+    analyzer_id: str,
+) -> _WorkerAnalyzerDefinition | None:
+    """Resolve only first-party production analyzers by canonical ID."""
+    return _BUILT_IN_DEFINITIONS_BY_ID.get(analyzer_id)
 
 
 def _framework_test_registrations() -> tuple[AnalyzerRegistration, ...]:
@@ -238,9 +270,20 @@ def _framework_test_registrations() -> tuple[AnalyzerRegistration, ...]:
     return tuple(definition.registration() for definition in _FRAMEWORK_TEST_DEFINITIONS)
 
 
-def _real_analyzer_registrations() -> tuple[AnalyzerRegistration, ...]:
-    """Return the production Stage 6 technical analyzer registrations."""
-    return tuple(definition.registration() for definition in _REAL_ANALYZER_DEFINITIONS)
+def _built_in_analyzer_registrations() -> tuple[AnalyzerRegistration, ...]:
+    """Return the complete first-party production catalog in canonical order."""
+    return tuple(definition.registration() for definition in _BUILT_IN_ANALYZER_DEFINITIONS)
+
+
+def _built_in_analyzer_ids(media_type: MediaType) -> tuple[str, ...]:
+    """Return the catalog order for one supported production media path."""
+    if not isinstance(media_type, MediaType):
+        raise TypeError("media_type must be MediaType")
+    return tuple(
+        definition.analyzer_id
+        for definition in _BUILT_IN_ANALYZER_DEFINITIONS
+        if media_type in definition.supported_media_types
+    )
 
 
 def _completed_result(
