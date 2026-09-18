@@ -63,7 +63,7 @@ class AcceptedResultFinalizer(Protocol):
         finished_at: datetime,
         before_save: Callable[[], None],
     ) -> object:
-        """Assemble first, invoke the persistence transition, then save."""
+        """Prepare result copies, invoke the persistence transition, then save."""
         ...
 
 
@@ -261,8 +261,10 @@ class ResultFinalizationService:
         prepared = self._prepare(
             self._assembler.assemble_accepted(facts, finished_at=finished_at)
         )
+        repository_result, returned = self._prepare_save_objects(prepared)
         before_save()
-        return self._save(prepared)
+        self._save(repository_result)
+        return returned
 
     def finalize_stage3(self, terminal: Stage3Terminal) -> AnalysisResult:
         """Synchronously persist one registered Stage 3 terminal result."""
@@ -275,7 +277,16 @@ class ResultFinalizationService:
         prepared = self._prepare(
             self._assembler.assemble_stage3(terminal, finished_at=finished_at)
         )
-        result = self._save(prepared)
+        repository_result, result = self._prepare_save_objects(prepared)
+        self._save(repository_result)
+        emit_diagnostic(
+            _LOGGER,
+            logging.INFO,
+            "result_saved",
+            analysis_id=result.analysis_id,
+            status=result.status.value,
+            stage=ProcessingStage.PERSISTENCE.value,
+        )
         emit_diagnostic(
             _LOGGER,
             logging.ERROR if result.status is AnalysisStatus.FAILED else logging.INFO,
@@ -313,39 +324,35 @@ class ResultFinalizationService:
             }
         )
 
-    def _save(self, result: AnalysisResult) -> AnalysisResult:
+    def _prepare_save_objects(
+        self, result: AnalysisResult
+    ) -> tuple[AnalysisResult, AnalysisResult]:
+        repository_result = _clone_result(result)
+        returned = _clone_result(repository_result)
+        return repository_result, returned
+
+    def _save(self, result: AnalysisResult) -> None:
         analysis_id = result.analysis_id
-        saved = False
         try:
-            validated = AnalysisResult.model_validate(
-                result.model_dump(mode="python", round_trip=True, warnings="error")
-            )
-            self._repository.save(validated)
-            saved = True
+            self._repository.save(result)
+        except Exception:
             emit_diagnostic(
                 _LOGGER,
-                logging.INFO,
-                "result_saved",
+                logging.ERROR,
+                "result_persistence_failed",
                 analysis_id=analysis_id,
-                status=validated.status.value,
+                phase="save",
+                code="result_write_failed",
+                status=result.status.value,
                 stage=ProcessingStage.PERSISTENCE.value,
             )
-            return AnalysisResult.model_validate(
-                validated.model_dump(mode="python", round_trip=True, warnings="error")
-            )
-        except Exception:
-            if not saved:
-                emit_diagnostic(
-                    _LOGGER,
-                    logging.ERROR,
-                    "result_persistence_failed",
-                    analysis_id=analysis_id,
-                    phase="save",
-                    code="result_write_failed",
-                    status=result.status.value,
-                    stage=ProcessingStage.PERSISTENCE.value,
-                )
             raise ResultFinalizationError(analysis_id) from None
+
+
+def _clone_result(result: AnalysisResult) -> AnalysisResult:
+    return AnalysisResult.model_validate(
+        result.model_dump(mode="python", round_trip=True, warnings="error")
+    )
 
 
 def _not_assessed() -> AnalysisCompleteness:

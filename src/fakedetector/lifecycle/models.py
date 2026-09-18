@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
+from json import dumps
 from pathlib import Path
+
+from pydantic import JsonValue, TypeAdapter
 
 from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
@@ -25,6 +28,10 @@ from fakedetector.domain.models import validate_utc_datetime
 from fakedetector.intake import AcceptedSource
 from fakedetector.lifecycle.artifacts import WorkspaceArtifactRegistry
 from fakedetector.preprocessing._models import PreparedMedia
+
+_SAFE_DETAILS_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(
+    dict[str, JsonValue]
+)
 
 
 def config_snapshot_fingerprint(config: AppConfig) -> str:
@@ -69,7 +76,7 @@ class SourceSnapshot:
     external_reference: str | None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ErrorSnapshot:
     """Immutable safe lifecycle error without exception text or traceback."""
 
@@ -77,6 +84,53 @@ class ErrorSnapshot:
     category: str
     message: str
     retryable: bool
+    _safe_details_json: bytes = field(repr=False)
+    field: str | None = None
+    analyzer_id: str | None = None
+
+    def __init__(
+        self,
+        code: str,
+        category: str,
+        message: str,
+        retryable: bool,
+        field: str | None = None,
+        analyzer_id: str | None = None,
+        safe_details: dict[str, JsonValue] | None = None,
+    ) -> None:
+        validated = ErrorDetail.model_validate(
+            {
+                "code": code,
+                "category": category,
+                "message": message,
+                "retryable": retryable,
+                "field": field,
+                "analyzer_id": analyzer_id,
+                "safe_details": {} if safe_details is None else safe_details,
+            }
+        )
+        object.__setattr__(self, "code", validated.code)
+        object.__setattr__(self, "category", validated.category)
+        object.__setattr__(self, "message", validated.message)
+        object.__setattr__(self, "retryable", validated.retryable)
+        object.__setattr__(self, "field", validated.field)
+        object.__setattr__(self, "analyzer_id", validated.analyzer_id)
+        object.__setattr__(
+            self,
+            "_safe_details_json",
+            dumps(
+                validated.safe_details,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8"),
+        )
+
+    @property
+    def safe_details(self) -> dict[str, JsonValue]:
+        """Return a fresh mutable public projection of immutable stored details."""
+        return _SAFE_DETAILS_ADAPTER.validate_json(self._safe_details_json)
 
 
 @dataclass(frozen=True, slots=True)
@@ -407,25 +461,37 @@ class AnalysisTask:
 
     def snapshot(self) -> TaskSnapshot:
         """Copy the current aggregate into an immutable capability-free projection."""
-        source = self.context.source
+        return self._snapshot(
+            context=self.context,
+            cleanup_result=self.cleanup_result,
+        )
+
+    def _snapshot(
+        self,
+        *,
+        context: AnalysisContext,
+        cleanup_result: CleanupResult | None,
+    ) -> TaskSnapshot:
+        """Build a detached projection from an already selected lifecycle state."""
+        source = context.source
         return TaskSnapshot(
-            analysis_id=self.context.analysis_id,
-            created_at=self.context.created_at,
-            status=self.context.status,
-            stage=self.context.stage,
+            analysis_id=context.analysis_id,
+            created_at=context.created_at,
+            status=context.status,
+            stage=context.stage,
             source=SourceSnapshot(
                 channel=source.channel.value,
                 connector=source.connector,
                 external_system=source.external_system,
                 external_reference=source.external_reference,
             ),
-            media_type=self.context.media_type,
-            config_snapshot_id=self.context.config_snapshot_id,
+            media_type=context.media_type,
+            config_snapshot_id=context.config_snapshot_id,
             queued_at=self.queued_at,
-            started_at=self.context.started_at,
-            finished_at=self.context.finished_at,
+            started_at=context.started_at,
+            finished_at=context.finished_at,
             route=self.route,
-            cleanup=_cleanup_snapshot(self.cleanup_result),
+            cleanup=_cleanup_snapshot(cleanup_result),
             errors=tuple(_error_snapshot(error) for error in self.errors),
         )
 
@@ -436,6 +502,9 @@ def _error_snapshot(error: ErrorDetail) -> ErrorSnapshot:
         category=error.category,
         message=error.message,
         retryable=error.retryable,
+        field=error.field,
+        analyzer_id=error.analyzer_id,
+        safe_details=error.safe_details,
     )
 
 

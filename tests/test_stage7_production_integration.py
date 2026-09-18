@@ -26,6 +26,7 @@ from fakedetector.app import create_app
 from fakedetector.config.models import AppConfig
 from fakedetector.domain import (
     AnalysisCompleteness,
+    AnalysisResult,
     AnalysisStatus,
     AnalyzerResult,
     AnalyzerStatus,
@@ -100,7 +101,7 @@ def _production_runtime(config: AppConfig) -> _ProductionRuntime:
     return cast(_ProductionRuntime, app.state.runtime)
 
 
-def _run(runtime: _ProductionRuntime, payload: bytes) -> tuple[Stage3Accepted, AnalysisTask]:
+def _run(runtime: _ProductionRuntime, payload: bytes) -> tuple[Stage3Accepted, AnalysisResult]:
     runtime.scheduler.start()
     try:
         accepted = runtime.intake.process(
@@ -112,7 +113,10 @@ def _run(runtime: _ProductionRuntime, payload: bytes) -> tuple[Stage3Accepted, A
         assert isinstance(accepted, Stage3Accepted)
     finally:
         runtime.scheduler.shutdown(drain=True)
-    return accepted, runtime.registry._tasks[accepted.analysis_id]
+    assert not runtime.registry.contains(accepted.analysis_id)
+    result = runtime.result_repository.get(accepted.analysis_id)
+    assert result is not None
+    return accepted, result
 
 
 def _plain_png(size: int) -> bytes:
@@ -123,12 +127,11 @@ def _plain_png(size: int) -> bytes:
 
 
 def _assessment(
-    runtime: _ProductionRuntime,
-    task: AnalysisTask,
+    result: AnalysisResult,
 ) -> tuple[AnalysisCompleteness, RiskAssessment, Recommendation]:
-    assessment = runtime.registry._read_stage7_assessment(task)
-    assert assessment is not None
-    return assessment
+    assert result.risk_assessment is not None
+    assert result.recommendation is not None
+    return result.completeness, result.risk_assessment, result.recommendation
 
 
 def _use_controlled_runner(
@@ -142,7 +145,7 @@ def _use_controlled_runner(
     )
 
 
-def test_production_complete_image_publishes_stage7_before_cleanup_and_retains_state(
+def test_production_complete_image_publishes_stage7_before_cleanup_and_persists_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     real_worker_processes: list[BaseProcess],
@@ -176,15 +179,14 @@ def test_production_complete_image_publishes_stage7_before_cleanup_and_retains_s
     monkeypatch.setattr(runtime.registry, "publish_stage7_assessment", record_publication)
     monkeypatch.setattr(runtime.registry, "record_outcome", record_terminal_outcome)
 
-    accepted, task = _run(runtime, _plain_png(256))
-    completeness, risk, recommendation = _assessment(runtime, task)
-    results = runtime.registry._read_stage5_analyzer_results(task)
+    accepted, result = _run(runtime, _plain_png(256))
+    completeness, risk, recommendation = _assessment(result)
 
-    assert [result.status for result in results] == [
+    assert [analyzer.status for analyzer in result.analyzers] == [
         AnalyzerStatus.COMPLETED,
         AnalyzerStatus.COMPLETED,
     ]
-    assert runtime.registry._read_stage6_findings(task) == ()
+    assert result.findings == []
     assert completeness.status is CompletenessStatus.COMPLETE
     assert completeness.coverage_ratio == 1.0
     assert risk.score == 0
@@ -193,18 +195,12 @@ def test_production_complete_image_publishes_stage7_before_cleanup_and_retains_s
     assert recommendation.primary_action == "no_additional_action"
     assert recommendation.additional_actions == []
     assert not recommendation.requires_manual_review
-    snapshot = runtime.registry.snapshot(accepted.analysis_id)
-    assert snapshot.status is AnalysisStatus.COMPLETED
-    assert snapshot.stage is ProcessingStage.FINISHED
-    assert snapshot.cleanup is not None
-    assert snapshot.cleanup.status is CleanupStatus.COMPLETED
-    assert task.accepted_source.is_released
+    assert result.status is AnalysisStatus.COMPLETED
+    assert result.stage is ProcessingStage.FINISHED
+    assert result.cleanup is not None
+    assert result.cleanup.status is CleanupStatus.COMPLETED
+    assert not runtime.registry.contains(accepted.analysis_id)
     assert events == ["stage7", "outcome:completed"]
-    assert runtime.registry._read_stage7_assessment(task) == (
-        completeness,
-        risk,
-        recommendation,
-    )
     assert len(real_worker_processes) == 2
 
 
@@ -215,11 +211,11 @@ def test_production_copy_move_uses_one_weak_bucket_and_is_deterministic(
 ) -> None:
     config = _config(tmp_path)
     runtime = _production_runtime(config)
-    _, task = _run(runtime, copy_move_png_bytes)
+    _, result = _run(runtime, copy_move_png_bytes)
 
-    results = runtime.registry._read_stage5_analyzer_results(task)
-    findings = runtime.registry._read_stage6_findings(task)
-    stored = _assessment(runtime, task)
+    results = tuple(result.analyzers)
+    findings = tuple(result.findings)
+    stored = _assessment(result)
     completeness, risk, _recommendation = stored
     correlation_groups = {finding.correlation_group for finding in findings}
 
@@ -238,17 +234,17 @@ def test_production_copy_move_uses_one_weak_bucket_and_is_deterministic(
     assert risk.probability is None and risk.probability_method is None
     assert config.risk_assessment.critical_override.enabled is False
     assert config.risk_assessment.critical_override.allowed_finding_types == []
+    assert result.file is not None
     plan = tuple(
         active.registration.analyzer_id
-        for active in runtime.analyzer_registry.active_plan(task.context.media_type)
+        for active in runtime.analyzer_registry.active_plan(result.file.media_type)
     )
     service = Stage7AssessmentService(config.risk_assessment)
     assert service.assess(plan, results, findings) == stored
     assert service.assess(plan, results, findings) == stored
-    snapshot = runtime.registry.snapshot(task.context.analysis_id)
-    assert snapshot.status is AnalysisStatus.COMPLETED
-    assert snapshot.stage is ProcessingStage.FINISHED
-    assert snapshot.cleanup is not None and snapshot.cleanup.status is CleanupStatus.COMPLETED
+    assert result.status is AnalysisStatus.COMPLETED
+    assert result.stage is ProcessingStage.FINISHED
+    assert result.cleanup is not None and result.cleanup.status is CleanupStatus.COMPLETED
     assert len(real_worker_processes) == 2
 
 
@@ -257,10 +253,10 @@ def test_production_not_applicable_is_a_missing_capability_without_failure(
     real_worker_processes: list[BaseProcess],
 ) -> None:
     runtime = _production_runtime(_config(tmp_path))
-    accepted, task = _run(runtime, _plain_png(64))
+    accepted, result = _run(runtime, _plain_png(64))
 
-    results = runtime.registry._read_stage5_analyzer_results(task)
-    completeness, risk, _recommendation = _assessment(runtime, task)
+    results = result.analyzers
+    completeness, risk, _recommendation = _assessment(result)
 
     assert [result.status for result in results] == [
         AnalyzerStatus.COMPLETED,
@@ -274,9 +270,9 @@ def test_production_not_applicable_is_a_missing_capability_without_failure(
     assert completeness.coverage_ratio == 1.0
     assert completeness.missing_capabilities == ["image_copy_move_correspondence"]
     assert risk.score == 0 and risk.final_level is RiskLevel.LOW
-    snapshot = runtime.registry.snapshot(accepted.analysis_id)
-    assert snapshot.status is AnalysisStatus.COMPLETED
-    assert snapshot.errors == ()
+    assert result.status is AnalysisStatus.COMPLETED
+    assert result.errors == []
+    assert not runtime.registry.contains(accepted.analysis_id)
     assert len(real_worker_processes) == 2
 
 
@@ -287,10 +283,10 @@ def test_production_one_completed_and_one_error_is_partial_at_threshold(
     runner = _ControlledRunner("completed", "error")
     _use_controlled_runner(monkeypatch, runner)
     runtime = _production_runtime(_config(tmp_path))
-    accepted, task = _run(runtime, _plain_png(256))
+    accepted, result = _run(runtime, _plain_png(256))
 
-    results = runtime.registry._read_stage5_analyzer_results(task)
-    completeness, risk, recommendation = _assessment(runtime, task)
+    results = result.analyzers
+    completeness, risk, recommendation = _assessment(result)
 
     assert [result.status for result in results] == [
         AnalyzerStatus.COMPLETED,
@@ -302,10 +298,10 @@ def test_production_one_completed_and_one_error_is_partial_at_threshold(
     assert completeness.missing_capabilities == ["image_copy_move_correspondence"]
     assert risk.score == 0 and risk.final_level is RiskLevel.LOW
     assert recommendation.additional_actions == ["retry_analysis"]
-    snapshot = runtime.registry.snapshot(accepted.analysis_id)
-    assert snapshot.status is AnalysisStatus.PARTIAL
-    assert snapshot.stage is ProcessingStage.FINISHED
-    assert snapshot.cleanup is not None and snapshot.cleanup.status is CleanupStatus.COMPLETED
+    assert result.status is AnalysisStatus.PARTIAL
+    assert result.stage is ProcessingStage.FINISHED
+    assert result.cleanup is not None and result.cleanup.status is CleanupStatus.COMPLETED
+    assert not runtime.registry.contains(accepted.analysis_id)
 
 
 def test_production_zero_completed_is_insufficient_and_finishes_partial(
@@ -315,9 +311,9 @@ def test_production_zero_completed_is_insufficient_and_finishes_partial(
     runner = _ControlledRunner("error", "error")
     _use_controlled_runner(monkeypatch, runner)
     runtime = _production_runtime(_config(tmp_path))
-    accepted, task = _run(runtime, _plain_png(256))
+    accepted, result = _run(runtime, _plain_png(256))
 
-    completeness, risk, recommendation = _assessment(runtime, task)
+    completeness, risk, recommendation = _assessment(result)
 
     assert completeness.status is CompletenessStatus.INSUFFICIENT
     assert completeness.completed_analyzers == 0
@@ -328,9 +324,9 @@ def test_production_zero_completed_is_insufficient_and_finishes_partial(
     assert risk.probability is None and risk.probability_method is None
     assert recommendation.primary_action == "manual_review"
     assert recommendation.additional_actions == ["retry_analysis"]
-    snapshot = runtime.registry.snapshot(accepted.analysis_id)
-    assert snapshot.status is AnalysisStatus.PARTIAL
-    assert snapshot.stage is ProcessingStage.FINISHED
+    assert result.status is AnalysisStatus.PARTIAL
+    assert result.stage is ProcessingStage.FINISHED
+    assert not runtime.registry.contains(accepted.analysis_id)
 
 
 def test_production_timeout_then_policy_skip_are_counted_as_insufficient(
@@ -340,10 +336,10 @@ def test_production_timeout_then_policy_skip_are_counted_as_insufficient(
     runner = _ControlledRunner("timeout")
     _use_controlled_runner(monkeypatch, runner)
     runtime = _production_runtime(_config(tmp_path, continue_on_failure=False))
-    accepted, task = _run(runtime, _plain_png(256))
+    accepted, result = _run(runtime, _plain_png(256))
 
-    results = runtime.registry._read_stage5_analyzer_results(task)
-    completeness, risk, _recommendation = _assessment(runtime, task)
+    results = result.analyzers
+    completeness, risk, _recommendation = _assessment(result)
 
     assert [result.status for result in results] == [
         AnalyzerStatus.TIMEOUT,
@@ -358,7 +354,8 @@ def test_production_timeout_then_policy_skip_are_counted_as_insufficient(
         "image_copy_move_correspondence",
     ]
     assert risk.score is None and risk.final_level is None
-    assert runtime.registry.snapshot(accepted.analysis_id).status is AnalysisStatus.PARTIAL
+    assert result.status is AnalysisStatus.PARTIAL
+    assert not runtime.registry.contains(accepted.analysis_id)
 
 
 def test_production_stage7_internal_failure_is_safe_and_uses_existing_cleanup(
@@ -378,32 +375,27 @@ def test_production_stage7_internal_failure_is_safe_and_uses_existing_cleanup(
 
     monkeypatch.setattr(Stage7AssessmentService, "assess", fail_assessment)
     runtime = _production_runtime(_config(tmp_path))
-    accepted, task = _run(runtime, _plain_png(256))
+    accepted, result = _run(runtime, _plain_png(256))
 
-    snapshot = runtime.registry.snapshot(accepted.analysis_id)
-    assert snapshot.status is AnalysisStatus.FAILED
-    assert snapshot.stage is ProcessingStage.FINISHED
-    assert snapshot.cleanup is not None and snapshot.cleanup.status is CleanupStatus.COMPLETED
-    assert task.stage6_data is not None
-    assert task.stage7_data is None
-    assert task.accepted_source.is_released
-    assert len(task.errors) == 1
-    assert task.errors[0].code == "internal_error"
-    assert task.errors[0].category == "internal"
-    assert task.errors[0].safe_details == {
+    assert result.status is AnalysisStatus.FAILED
+    assert result.stage is ProcessingStage.FINISHED
+    assert result.cleanup is not None and result.cleanup.status is CleanupStatus.COMPLETED
+    assert result.analyzers
+    assert len(result.errors) == 1
+    assert result.errors[0].code == "internal_error"
+    assert result.errors[0].category == "internal"
+    assert result.errors[0].safe_details == {
         "phase": "risk_assessment",
         "reason_code": "assessment_failure",
     }
-    result = runtime.result_repository.get(accepted.analysis_id)
-    assert result is not None
     assert result.status is AnalysisStatus.FAILED
     assert result.completeness.status is CompletenessStatus.NOT_ASSESSED
     assert result.completeness.planned_analyzers is None
     assert result.risk_assessment is None
     assert result.recommendation is None
-    assert result.analyzers
     assert result.cleanup is not None
-    assert private_detail not in task.errors[0].model_dump_json()
+    assert private_detail not in result.errors[0].model_dump_json()
+    assert not runtime.registry.contains(accepted.analysis_id)
     assert len(real_worker_processes) == 2
 
 
@@ -457,13 +449,12 @@ def test_production_not_assessed_from_stage7_is_an_internal_failure(
 
     monkeypatch.setattr(Stage7AssessmentService, "assess", return_not_assessed)
     runtime = _production_runtime(_config(tmp_path))
-    accepted, task = _run(runtime, _plain_png(256))
+    accepted, result = _run(runtime, _plain_png(256))
 
-    snapshot = runtime.registry.snapshot(accepted.analysis_id)
-    assert snapshot.status is AnalysisStatus.FAILED
-    assert snapshot.stage is ProcessingStage.FINISHED
-    assert task.stage7_data is None
-    assert task.errors[0].safe_details == {
+    assert result.status is AnalysisStatus.FAILED
+    assert result.stage is ProcessingStage.FINISHED
+    assert result.errors[0].safe_details == {
         "phase": "risk_assessment",
         "reason_code": "unexpected_completeness_status",
     }
+    assert not runtime.registry.contains(accepted.analysis_id)

@@ -19,6 +19,7 @@ from fakedetector.app import create_app
 from fakedetector.config.loader import load_config
 from fakedetector.config.models import AppConfig
 from fakedetector.domain import (
+    AnalysisResult,
     AnalysisStatus,
     AnalyzerStatus,
     FindingSeverity,
@@ -28,7 +29,6 @@ from fakedetector.domain import (
     SourceContext,
 )
 from fakedetector.intake import Stage3Accepted
-from fakedetector.lifecycle.models import AnalysisTask
 
 _EXAMPLE_CONFIG = Path("config/config.example.yaml")
 
@@ -56,7 +56,7 @@ def _run(
     *,
     original_name: str,
     declared_content_type: str,
-) -> tuple[Stage3Accepted, AnalysisTask]:
+) -> tuple[Stage3Accepted, AnalysisResult]:
     runtime.scheduler.start()
     try:
         accepted = runtime.intake.process(
@@ -68,8 +68,10 @@ def _run(
         assert isinstance(accepted, Stage3Accepted)
     finally:
         runtime.scheduler.shutdown(drain=True)
-    task = runtime.registry._tasks[accepted.analysis_id]
-    return accepted, task
+    assert not runtime.registry.contains(accepted.analysis_id)
+    result = runtime.result_repository.get(accepted.analysis_id)
+    assert result is not None
+    return accepted, result
 
 
 def _png_bytes(pixels: np.ndarray) -> bytes:
@@ -153,45 +155,46 @@ def test_production_image_vertical_publishes_authoritative_results_and_findings(
     copy_move_png_bytes: bytes,
 ) -> None:
     runtime = _production_runtime(_config(tmp_path))
-    accepted, task = _run(
+    accepted, result = _run(
         runtime,
         copy_move_png_bytes,
         original_name="copy-move.png",
         declared_content_type="image/png",
     )
 
-    results = runtime.registry._read_stage5_analyzer_results(task)
-    assert [result.analyzer_id for result in results] == [
+    assert [analyzer.analyzer_id for analyzer in result.analyzers] == [
         "image_metadata_consistency",
         "image_copy_move_correspondence",
     ]
-    assert all(result.status is AnalyzerStatus.COMPLETED for result in results)
-    assert all(result.score is None and result.score_name is None for result in results)
-    assert task.stage6_data is not None
-    findings = runtime.registry._read_stage6_findings(task)
-    assert findings
-    assert {finding.source_analyzer_id for finding in findings} <= {
-        result.analyzer_id for result in results
+    assert all(analyzer.status is AnalyzerStatus.COMPLETED for analyzer in result.analyzers)
+    assert all(
+        analyzer.score is None and analyzer.score_name is None
+        for analyzer in result.analyzers
+    )
+    assert result.findings
+    assert {finding.source_analyzer_id for finding in result.findings} <= {
+        analyzer.analyzer_id for analyzer in result.analyzers
     }
-    assert all(finding.severity is FindingSeverity.WEAK for finding in findings)
+    assert all(finding.severity is FindingSeverity.WEAK for finding in result.findings)
     assert all(
         finding.source_score is None
         and finding.score_impact is None
         and not finding.critical_override_eligible
-        for finding in findings
+        for finding in result.findings
     )
-    expected = tuple(finding.model_dump(mode="json") for finding in findings)
-    findings[0].description = "mutated detached value"
+    expected_findings = tuple(
+        finding.model_dump(mode="json") for finding in result.findings
+    )
+    result.findings[0].description = "mutated detached value"
+    stored = runtime.result_repository.get(accepted.analysis_id)
+    assert stored is not None
     assert (
-        tuple(
-            finding.model_dump(mode="json")
-            for finding in runtime.registry._read_stage6_findings(task)
-        )
-        == expected
+        tuple(finding.model_dump(mode="json") for finding in stored.findings)
+        == expected_findings
     )
-    snapshot = runtime.registry.snapshot(accepted.analysis_id)
-    assert snapshot.status is AnalysisStatus.COMPLETED
-    assert snapshot.stage is ProcessingStage.FINISHED
+    assert result.status is AnalysisStatus.COMPLETED
+    assert result.stage is ProcessingStage.FINISHED
+    assert not runtime.registry.contains(accepted.analysis_id)
     assert len(real_worker_processes) == 2
 
 
@@ -200,17 +203,15 @@ def test_production_image_no_candidates_publishes_empty_stage6_state(
     real_worker_processes: list[BaseProcess],
 ) -> None:
     runtime = _production_runtime(_config(tmp_path))
-    _, task = _run(
+    _, result = _run(
         runtime,
         _png_bytes(np.full((256, 256, 3), 127, dtype=np.uint8)),
         original_name="plain.png",
         declared_content_type="image/png",
     )
 
-    results = runtime.registry._read_stage5_analyzer_results(task)
-    assert all(result.status is AnalyzerStatus.COMPLETED for result in results)
-    assert task.stage6_data is not None
-    assert runtime.registry._read_stage6_findings(task) == ()
+    assert all(analyzer.status is AnalyzerStatus.COMPLETED for analyzer in result.analyzers)
+    assert result.findings == []
     assert len(real_worker_processes) == 2
 
 
@@ -219,20 +220,18 @@ def test_production_not_applicable_analyzer_creates_no_finding(
     real_worker_processes: list[BaseProcess],
 ) -> None:
     runtime = _production_runtime(_config(tmp_path))
-    _, task = _run(
+    _, result = _run(
         runtime,
         _png_bytes(np.full((64, 64, 3), 127, dtype=np.uint8)),
         original_name="small.png",
         declared_content_type="image/png",
     )
 
-    results = runtime.registry._read_stage5_analyzer_results(task)
-    assert [result.status for result in results] == [
+    assert [analyzer.status for analyzer in result.analyzers] == [
         AnalyzerStatus.COMPLETED,
         AnalyzerStatus.NOT_APPLICABLE,
     ]
-    assert task.stage6_data is not None
-    assert runtime.registry._read_stage6_findings(task) == ()
+    assert result.findings == []
     assert len(real_worker_processes) == 2
 
 
@@ -241,21 +240,20 @@ def test_production_audio_vertical_preserves_time_localization(
     real_worker_processes: list[BaseProcess],
 ) -> None:
     runtime = _production_runtime(_config(tmp_path))
-    _, task = _run(
+    _, result = _run(
         runtime,
         _saturated_wav(),
         original_name="saturated.wav",
         declared_content_type="audio/wav",
     )
 
-    results = runtime.registry._read_stage5_analyzer_results(task)
-    assert [result.analyzer_id for result in results] == ["audio_pcm_quality"]
-    assert results[0].status is AnalyzerStatus.COMPLETED
-    findings = runtime.registry._read_stage6_findings(task)
-    assert task.stage6_data is not None
-    assert findings
-    assert all(finding.source_analyzer_id == "audio_pcm_quality" for finding in findings)
-    assert all(finding.localization.type == "time_interval" for finding in findings)
+    assert [analyzer.analyzer_id for analyzer in result.analyzers] == ["audio_pcm_quality"]
+    assert result.analyzers[0].status is AnalyzerStatus.COMPLETED
+    assert result.findings
+    assert all(
+        finding.source_analyzer_id == "audio_pcm_quality" for finding in result.findings
+    )
+    assert all(finding.localization.type == "time_interval" for finding in result.findings)
     assert len(real_worker_processes) == 1
 
 
@@ -264,25 +262,20 @@ def test_production_video_vertical_uses_sampled_frames_and_publishes_findings(
     real_worker_processes: list[BaseProcess],
 ) -> None:
     runtime = _production_runtime(_config(tmp_path))
-    _, task = _run(
+    _, result = _run(
         runtime,
         _video_bytes(tmp_path),
         original_name="repeated-frames.mp4",
         declared_content_type="video/mp4",
     )
 
-    results = runtime.registry._read_stage5_analyzer_results(task)
-    assert [result.analyzer_id for result in results] == ["video_sampled_frame_quality"]
-    assert results[0].status is AnalyzerStatus.COMPLETED
-    assert task.stage5_data is not None
-    sampled_frames = [
-        artifact
-        for artifact in task.stage5_data.prepared_media.artifacts
-        if artifact.artifact_type == "sampled_frame"
+    assert [analyzer.analyzer_id for analyzer in result.analyzers] == [
+        "video_sampled_frame_quality"
     ]
-    assert len(sampled_frames) >= 3
-    findings = runtime.registry._read_stage6_findings(task)
-    assert task.stage6_data is not None
-    assert findings
-    assert all(finding.source_analyzer_id == "video_sampled_frame_quality" for finding in findings)
+    assert result.analyzers[0].status is AnalyzerStatus.COMPLETED
+    assert result.findings
+    assert all(
+        finding.source_analyzer_id == "video_sampled_frame_quality"
+        for finding in result.findings
+    )
     assert len(real_worker_processes) == 1

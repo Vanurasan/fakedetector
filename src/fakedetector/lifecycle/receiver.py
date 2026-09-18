@@ -239,6 +239,7 @@ class Stage4TaskProcessor:
     def settle_terminal(self, analysis_id: str) -> TaskSnapshot:
         """Own or recover terminal publication without repeating FACT_READY cleanup."""
         task, owner_token = self._registry.claim_terminal_settlement(analysis_id)
+        committed = False
         try:
             if not self._registry._try_confirm_terminal_cleanup_safe(
                 analysis_id,
@@ -303,6 +304,11 @@ class Stage4TaskProcessor:
                 or terminal_facts.created_at
             )
             finished_at = self._clock.terminal_now(not_before=lower_bound)
+            prepared_settlement = self._registry.prepare_terminal_settlement(
+                analysis_id,
+                owner_token,
+                finished_at,
+            )
             try:
                 self._result_finalizer.finalize_accepted(
                     terminal_facts,
@@ -322,29 +328,45 @@ class Stage4TaskProcessor:
                 )
                 self._registry.release_terminal_settlement(analysis_id, owner_token)
                 return self._registry.snapshot(analysis_id)
-            self._registry.finalize_terminal_settlement(
+            snapshot = self._registry.finalize_terminal_settlement(
                 analysis_id,
                 owner_token,
-                finished_at,
+                prepared_settlement,
             )
-            event = {
-                AnalysisStatus.COMPLETED: "analysis_completed",
-                AnalysisStatus.PARTIAL: "analysis_partial",
-                AnalysisStatus.FAILED: "analysis_failed",
-            }.get(task.context.status, "analysis_failed")
-            emit_diagnostic(
-                _LOGGER,
-                logging.INFO if task.context.status is not AnalysisStatus.FAILED else logging.ERROR,
-                event,
-                analysis_id=analysis_id,
-                code=task.errors[0].code if task.errors else None,
-                status=task.context.status.value,
-                stage=ProcessingStage.FINISHED.value,
-            )
-        except BaseException:
-            self._registry.release_terminal_settlement(analysis_id, owner_token)
+            committed = True
+        except BaseException as primary_error:
+            if not committed:
+                try:
+                    self._registry.release_terminal_settlement(analysis_id, owner_token)
+                except BaseException as release_error:
+                    primary_error.add_note(
+                        "Terminal settlement release also failed: "
+                        f"{type(release_error).__name__}."
+                    )
             raise
-        return self._registry.snapshot(analysis_id)
+        emit_diagnostic(
+            _LOGGER,
+            logging.INFO,
+            "result_saved",
+            analysis_id=analysis_id,
+            status=snapshot.status.value,
+            stage=ProcessingStage.PERSISTENCE.value,
+        )
+        event = {
+            AnalysisStatus.COMPLETED: "analysis_completed",
+            AnalysisStatus.PARTIAL: "analysis_partial",
+            AnalysisStatus.FAILED: "analysis_failed",
+        }.get(snapshot.status, "analysis_failed")
+        emit_diagnostic(
+            _LOGGER,
+            logging.INFO if snapshot.status is not AnalysisStatus.FAILED else logging.ERROR,
+            event,
+            analysis_id=analysis_id,
+            code=snapshot.errors[0].code if snapshot.errors else None,
+            status=snapshot.status.value,
+            stage=ProcessingStage.FINISHED.value,
+        )
+        return snapshot
 
 
 def _workspace_path(root_path: str, analysis_id: str) -> Path:

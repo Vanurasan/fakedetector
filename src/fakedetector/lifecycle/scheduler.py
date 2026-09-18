@@ -278,7 +278,10 @@ class BoundedLocalScheduler:
             except BaseException as error:
                 self._stop_after_worker_termination(error)
             finally:
-                self._sweep_best_effort()
+                try:
+                    self._sweep_best_effort()
+                finally:
+                    del claimed
 
     def _take_next(self, media_type: MediaType) -> _ClaimedItem | None:
         with self._condition:

@@ -110,6 +110,10 @@ def test_real_production_image_is_persisted_before_finished_and_facts_are_detach
         assert snapshot_at_save.cleanup is None
         assert snapshot_at_save.finished_at is None
         real_save(result)
+        assert runtime.result_repository.get(result.analysis_id) == result
+        assert runtime.registry.snapshot(result.analysis_id).stage is ProcessingStage.PERSISTENCE
+        task_at_save.context.source.external_reference = "mutated-reference"
+        task_at_save.validated_file.original_name = "mutated-name.png"
 
     monkeypatch.setattr(runtime.result_repository, "save", observe_save)
 
@@ -129,20 +133,17 @@ def test_real_production_image_is_persisted_before_finished_and_facts_are_detach
     finally:
         runtime.scheduler.shutdown(drain=True)
 
-    snapshot = runtime.registry.snapshot(outcome.analysis_id)
     result = runtime.result_repository.get(outcome.analysis_id)
     assert result is not None
+    assert not runtime.registry.contains(outcome.analysis_id)
     assert save_observations == [
         (ProcessingStage.PERSISTENCE, TerminalSettlementPhase.FACT_READY)
     ]
-    assert snapshot.stage is ProcessingStage.FINISHED
-    assert snapshot.status is AnalysisStatus.COMPLETED
-    assert snapshot.finished_at is not None
-    assert snapshot.cleanup is not None
-    assert result.status is snapshot.status
-    assert result.processing.finished_at == snapshot.finished_at
+    assert result.stage is ProcessingStage.FINISHED
+    assert result.status is AnalysisStatus.COMPLETED
+    assert result.processing.finished_at is not None
     assert result.cleanup is not None
-    assert result.cleanup.finished_at == snapshot.finished_at
+    assert result.cleanup.finished_at == result.processing.finished_at
     assert result.processing.config_snapshot_id == expected_snapshot_id
     assert result.processing.application_version == expected_application_version
     assert not (tmp_path / "mutated-results").exists()
@@ -166,9 +167,6 @@ def test_real_production_image_is_persisted_before_finished_and_facts_are_detach
         facts.analysis_id = "mutated"  # type: ignore[misc]
     detached_source = SourceContext.model_validate_json(facts.source_json)
     detached_file = ValidatedFileDescriptor.model_validate_json(facts.file_json)
-    task = runtime.registry._tasks[outcome.analysis_id]
-    task.context.source.external_reference = "mutated-reference"
-    task.validated_file.original_name = "mutated-name.png"
     assert detached_source.external_reference == "production-reference"
     assert detached_file.original_name == "production.png"
     assert SourceContext.model_validate_json(facts.source_json) == detached_source

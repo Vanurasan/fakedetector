@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -20,7 +21,7 @@ from fakedetector.intake import (
     Stage3Outcome,
     Stage3Terminal,
 )
-from fakedetector.lifecycle import TaskNotFoundError, TaskSnapshot
+from fakedetector.lifecycle import ErrorSnapshot, TaskNotFoundError, TaskSnapshot
 from fakedetector.repositories import (
     InvalidAnalysisIdError,
     ResultRepository,
@@ -165,11 +166,14 @@ class AnalysisApplicationService:
             raise AnalysisSubmissionError() from None
 
         if isinstance(outcome, Stage3Accepted):
-            snapshot = self._live_snapshot(outcome.analysis_id)
+            try:
+                status = self.get_status(outcome.analysis_id)
+            except AnalysisNotFoundError:
+                raise AnalysisInternalError() from None
             return AnalysisSubmission(
-                analysis_id=snapshot.analysis_id,
-                status=snapshot.status,
-                stage=snapshot.stage,
+                analysis_id=status.analysis_id,
+                status=status.status,
+                stage=status.stage,
                 terminal_result=None,
             )
 
@@ -214,19 +218,7 @@ class AnalysisApplicationService:
         status = _status_from_snapshot(snapshot)
         if status.persistence_failed:
             raise AnalysisPersistenceUnavailableError() from None
-        if snapshot.stage is not ProcessingStage.FINISHED:
-            raise AnalysisPendingError(status)
-
-        result = self._stored_result(analysis_id)
-        if result is None:
-            raise AnalysisInternalError() from None
-        return result
-
-    def _live_snapshot(self, analysis_id: str) -> TaskSnapshot:
-        try:
-            return self._registry.snapshot(analysis_id)
-        except Exception:
-            raise AnalysisInternalError() from None
+        raise AnalysisPendingError(status)
 
     def _stored_result(self, analysis_id: str) -> AnalysisResult | None:
         try:
@@ -248,18 +240,8 @@ def _status_from_snapshot(snapshot: TaskSnapshot) -> AnalysisStatusView:
         queued_at=snapshot.queued_at,
         started_at=snapshot.started_at,
         finished_at=snapshot.finished_at,
-        result_available=snapshot.stage is ProcessingStage.FINISHED,
-        errors=tuple(
-            ErrorDetail.model_validate(
-                {
-                    "code": error.code,
-                    "category": error.category,
-                    "message": error.message,
-                    "retryable": error.retryable,
-                }
-            )
-            for error in snapshot.errors
-        ),
+        result_available=False,
+        errors=tuple(_status_error(error) for error in snapshot.errors),
     )
 
 
@@ -273,5 +255,19 @@ def _status_from_result(result: AnalysisResult) -> AnalysisStatusView:
         started_at=result.processing.started_at,
         finished_at=result.processing.finished_at,
         result_available=True,
-        errors=tuple(error.model_copy(deep=True) for error in result.errors),
+        errors=tuple(_status_error(error) for error in result.errors),
+    )
+
+
+def _status_error(error: ErrorDetail | ErrorSnapshot) -> ErrorDetail:
+    return ErrorDetail.model_validate(
+        {
+            "code": error.code,
+            "category": error.category,
+            "message": error.message,
+            "retryable": error.retryable,
+            "field": error.field,
+            "analyzer_id": error.analyzer_id,
+            "safe_details": deepcopy(error.safe_details),
+        }
     )
