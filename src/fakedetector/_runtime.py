@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from fakedetector.analyzers._catalog import _real_analyzer_registrations
+from fakedetector.analyzers._catalog import _built_in_analyzer_registrations
 from fakedetector.analyzers._orchestrator import AnalyzerOrchestrator
 from fakedetector.analyzers._registry import AnalyzerRegistry
 from fakedetector.application import AnalysisApplicationService
@@ -54,7 +54,7 @@ def _build_production_runtime(config: AppConfig) -> _ProductionRuntime:
         clock=clock,
         repository=result_repository,
     )
-    analyzer_registry = AnalyzerRegistry(captured_config, _real_analyzer_registrations())
+    analyzer_registry = AnalyzerRegistry(captured_config, _built_in_analyzer_registrations())
     executor = Stage5ExecutionService(
         config=captured_config,
         registry=task_registry,

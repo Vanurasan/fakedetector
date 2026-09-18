@@ -20,6 +20,7 @@ from fakedetector.domain import MediaType
 from fakedetector.preprocessing._requirements import PreprocessingRequirements
 
 _SAFE_ANALYZER_ID = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_SAFE_CANDIDATE_TYPE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
 _MAX_METADATA_TEXT_CHARS = 128
 
 
@@ -104,6 +105,12 @@ class AnalyzerRegistry:
         except KeyError:
             raise AnalyzerConfigurationError("media_type") from None
 
+    def active_analyzer_ids(self, media_type: MediaType) -> tuple[str, ...]:
+        """Return the validated completeness plan in deterministic config order."""
+        return tuple(
+            active.registration.analyzer_id for active in self.active_plan(media_type)
+        )
+
     def preprocessing_requirements(
         self,
         media_type: MediaType,
@@ -148,10 +155,26 @@ class AnalyzerRegistry:
             and MediaType.VIDEO not in registration.supported_media_types
         ):
             raise AnalyzerConfigurationError("preprocessing_requirements")
+        candidate_types = registration.candidate_finding_types
+        max_candidates = registration.max_candidate_findings
+        if (
+            not isinstance(candidate_types, frozenset)
+            or any(
+                not isinstance(candidate_type, str)
+                or _SAFE_CANDIDATE_TYPE.fullmatch(candidate_type) is None
+                for candidate_type in candidate_types
+            )
+            or not isinstance(max_candidates, int)
+            or isinstance(max_candidates, bool)
+            or max_candidates < 0
+            or (bool(candidate_types) != (max_candidates > 0))
+        ):
+            raise AnalyzerConfigurationError("candidate_findings")
 
         definition = _resolve_worker_definition(registration.worker_key)
         if definition is None:
             raise AnalyzerConfigurationError("worker_key")
+        implementation = definition.factory
         if (
             registration.analyzer_id != definition.analyzer_id
             or registration.analyzer_name != definition.analyzer_name
@@ -160,6 +183,13 @@ class AnalyzerRegistry:
             or registration.supported_media_types != definition.supported_media_types
             or registration.settings_model is not definition.settings_model
             or registration.preprocessing_requirements != definition.preprocessing_requirements
+            or registration.candidate_finding_types != definition.candidate_finding_types
+            or registration.max_candidate_findings != definition.max_candidate_findings
+            or implementation.analyzer_id != definition.analyzer_id
+            or implementation.analyzer_name != definition.analyzer_name
+            or implementation.analyzer_version != definition.analyzer_version
+            or implementation.group != definition.group
+            or implementation.supported_media_types != definition.supported_media_types
         ):
             raise AnalyzerConfigurationError("registration_mismatch")
 

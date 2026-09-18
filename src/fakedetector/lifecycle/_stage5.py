@@ -15,7 +15,6 @@ from fakedetector.domain import (
     AnalyzerResult,
     CompletenessStatus,
     ErrorDetail,
-    MediaType,
 )
 from fakedetector.intake.temporary_input import PreparedSourceRef
 from fakedetector.lifecycle._stage6 import (
@@ -77,11 +76,6 @@ class Stage5ExecutionService:
         if not assessment_service._uses_config(captured_config.risk_assessment):
             raise ValueError("Stage 7 service uses different risk configuration")
         self._processing_timeout_seconds = float(captured_config.limits.processing_timeout_seconds)
-        self._planned_analyzer_ids = {
-            MediaType.IMAGE: tuple(captured_config.analyzers.image.enabled),
-            MediaType.AUDIO: tuple(captured_config.analyzers.audio.enabled),
-            MediaType.VIDEO: tuple(captured_config.analyzers.video.enabled),
-        }
         self._registry = registry
         self._preprocessing = preprocessing
         self._orchestrator = orchestrator
@@ -154,7 +148,7 @@ class Stage5ExecutionService:
             phase = "risk_assessment"
             remaining_timeout_seconds()
             completeness, risk_assessment, recommendation = self._assessment_service.assess(
-                self._planned_analyzer_ids[task.validated_file.media_type],
+                self._orchestrator.active_analyzer_ids(task.validated_file.media_type),
                 authoritative_results,
                 authoritative_findings,
             )

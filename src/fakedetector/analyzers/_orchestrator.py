@@ -114,6 +114,10 @@ class AnalyzerOrchestrator:
         """Return demand-driven representations for the active analyzer plan."""
         return self._registry.preprocessing_requirements(media_type)
 
+    def active_analyzer_ids(self, media_type: MediaType) -> tuple[str, ...]:
+        """Return the same validated active plan used for analyzer execution."""
+        return self._registry.active_analyzer_ids(media_type)
+
     def _effective_timeout(
         self,
         remaining_timeout_seconds: Callable[[], float] | None,
