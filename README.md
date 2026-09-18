@@ -6,9 +6,9 @@ FakeDetector 0.1.0 — локальный CPU-only MVP для предварит
 не доказывает подделку или подлинность и не заменяет экспертную проверку.
 
 Stage 10 имеет статус `IN_PROGRESS`: Macro 1 (wheel и воспроизводимая установка)
-принят владельцем; Macro 2 (handoff, документация и demo generator) реализован и
-ожидает review; финальный release kit и installed-artifact gate принадлежат
-Macro 3.
+и Macro 2 (handoff, документация и demo generator) приняты владельцем; Macro 3
+(release kit, manifest, ZIP и installed-artifact gate) реализован и ожидает
+review владельца.
 
 ## Поддерживаемая среда
 
@@ -28,6 +28,25 @@ MVP. Проверенный Stage 10 media-tool baseline — Gyan Windows x64 fu
 Release producer передаёт exact wheel и механически созданный из `uv.lock`
 `runtime-constraints.txt`. Получателю не нужны checkout, IDE, editable install
 или dev-зависимости.
+
+Release producer собирает и проверяет весь handoff одной командой. До commit она
+даёт честное non-certifying evidence:
+
+```powershell
+uv run python scripts/verify_stage10_release.py --development
+```
+
+После review и commit строгий запуск без флага требует чистое source tree и
+создаёт сертифицирующий отчёт:
+
+```powershell
+uv run python scripts/verify_stage10_release.py
+```
+
+В versioned ZIP находятся wheel, runtime constraints, canonical config,
+`.env.example`, demo generator, `MVP_HANDOFF.md`, canonical `CHANGELOG.md` и
+`release-manifest.json`. SHA-256 самого manifest и ZIP записываются во внешнем
+verification report, поэтому circular self-hash не используется.
 
 ```powershell
 uv venv --python 3.12 --no-project .venv

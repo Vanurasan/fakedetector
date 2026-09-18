@@ -115,7 +115,7 @@ AFTER_MVP
 Статус Stage 9: DONE / CLOSED
 Следующий этап: Этап 10 — Сборка и демонстрация MVP
 Статус Stage 10: IN_PROGRESS
-Ближайшее действие: реализация Stage 10 Macro 3
+Ближайшее действие: review владельцем Stage 10 Macro 3 и strict gate после commit
 Критические блокеры: отсутствуют
 Реализация программы: Этапы 1–9 завершены; Stage 9 закрыт после independent post-remediation audit с PASS
 Документационная база: сформирована
@@ -155,7 +155,7 @@ AFTER_MVP
 | 7 | Полнота, риск и рекомендации | DONE | Объяснимый итог без псевдовероятности |
 | 8 | JSON, API и WebUI | DONE | Реализация и независимые аудиты завершены; этап закрыт |
 | 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
-| 10 | Сборка и демонстрация MVP | IN_PROGRESS | Macro 1 DONE / owner accepted; Macro 2 DONE / owner accepted; Macro 3 not started |
+| 10 | Сборка и демонстрация MVP | IN_PROGRESS | Macro 1–2 DONE / owner accepted; Macro 3 IMPLEMENTED / pending owner review |
 | 11+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
 
 ---
@@ -1704,11 +1704,11 @@ Stage 9 имеет статус `DONE / CLOSED`. Финальный quality barr
 - [x] подготовить рабочую конфигурацию Profile B для handoff/demo;
 - [x] подготовить deterministic generator небольшого набора легальных тестовых файлов;
 - [x] описать ограничения анализаторов;
-- [ ] проверить запуск без IDE;
-- [ ] проверить очистку после демонстрации;
+- [x] проверить запуск без IDE;
+- [x] проверить очистку после демонстрации;
 - [x] зафиксировать номер версии MVP `0.1.0`;
 - [x] обновить `CHANGELOG.md` для Macro 1;
-- [ ] отметить все выполненные критерии MVP.
+- [x] отметить все выполненные критерии MVP.
 
 ## Статус макрозадач
 
@@ -1719,22 +1719,36 @@ Stage 9 имеет статус `DONE / CLOSED`. Финальный quality barr
 - Macro 2 — **DONE / owner accepted**: user-facing README и единый
   handoff guide, Windows FFmpeg prerequisite, config/secrets workflow,
   deterministic demo-media generator и его Profile B regression coverage.
-- Macro 3 — **NOT_STARTED**.
+- Macro 3 — **IMPLEMENTED / pending owner review**: внешний release assembler и
+  verifier создаёт manifest + SHA-256 + versioned ZIP, устанавливает exact wheel
+  из проверенной распаковки в fresh venv, запускает kit-копию demo generator и
+  два реальных процесса установленного CLI. Development gate подтвердил real
+  loopback HTTP, Basic/Bearer, WebUI upload, API image/audio/video, каноническую
+  JSON persistence, cleanup, restart retrieval и signal-aware graceful shutdown;
+  strict clean-source certification выполняется только после owner commit.
 
 ## Критерии готовности MVP
 
-- [ ] запускается на целевом компьютере;
-- [ ] принимает image/audio/video через предусмотренные каналы;
-- [ ] отклоняет неподдерживаемые файлы;
-- [ ] запускает утверждённые анализаторы;
-- [ ] формирует признаки;
-- [ ] формирует полноту, риск и рекомендацию;
-- [ ] сохраняет JSON;
-- [ ] показывает WebUI-результат;
-- [ ] удаляет временные данные;
-- [ ] проходит тесты, Ruff и mypy;
-- [ ] не требует необязательной инфраструктуры;
-- [ ] не выдаёт результат за окончательную экспертизу.
+- [x] запускается на целевом компьютере;
+- [x] принимает image/audio/video через предусмотренные каналы;
+- [x] отклоняет неподдерживаемые файлы;
+- [x] запускает утверждённые анализаторы;
+- [x] формирует признаки;
+- [x] формирует полноту, риск и рекомендацию;
+- [x] сохраняет JSON;
+- [x] показывает WebUI-результат;
+- [x] удаляет временные данные;
+- [x] проходит тесты, Ruff и mypy;
+- [x] не требует необязательной инфраструктуры;
+- [x] не выдаёт результат за окончательную экспертизу.
+
+Macro 3 development evidence подтверждает запуск exact wheel без IDE,
+image/audio/video через real HTTP, Profile B analyzers, полный result contract,
+каноническую persistence, WebUI, cleanup и restart. Отклонение неподдерживаемых
+входов и формирование findings/risk/recommendation уже покрыты закрытыми Stage
+8–9 и общим regression barrier. Внешними prerequisites остаются только
+утверждённые Python 3.12, uv и FFmpeg/ffprobe; предупреждение об отсутствии
+окончательной экспертизы сохранено в WebUI и handoff.
 
 ## Критерий завершения
 

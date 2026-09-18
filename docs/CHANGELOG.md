@@ -344,6 +344,16 @@ YYYY-MM-DD
 
 ### Добавлено
 
+- **[Stage 10/Macro 3] Добавлен финальный release assembler и installed-artifact
+  gate.** Единый инструмент собирает sdist и wheel из него, механически
+  экспортирует runtime constraints, формирует recipient-facing release kit,
+  manifest с SHA-256 и versioned ZIP, проверяет безопасный inventory и чистую
+  распаковку, после чего устанавливает exact ZIP wheel во внешний fresh venv.
+  Реальный установленный CLI запускается двумя OS processes и через loopback
+  HTTP подтверждает health, Basic/Bearer, WebUI upload, API image/audio/video,
+  каноническую JSON persistence, cleanup, restart retrieval и signal-aware
+  graceful shutdown. Strict режим требует clean source tree; `--development`
+  выполняет тот же функциональный gate, но явно сохраняет `certified=false`.
 - **[Stage 10/Macro 2] Добавлен пользовательский handoff и воспроизводимая
   демонстрация установленного MVP.** README и единое подробное руководство
   разделяют действия производителя и получателя exact wheel + constraints,

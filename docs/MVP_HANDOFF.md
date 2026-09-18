@@ -11,8 +11,8 @@ FakeDetector формирует технические признаки и об�
 
 ## Состав release kit и роли
 
-Macro 3 соберёт и проверит versioned release kit. Macro 2 определяет его
-companion content:
+Macro 3 собирает и проверяет versioned release kit со следующим точным
+recipient-facing inventory:
 
 ```text
 fakedetector-0.1.0-py3-none-any.whl
@@ -21,11 +21,17 @@ config.example.yaml
 .env.example
 generate_stage10_demo_media.py
 MVP_HANDOFF.md
-release-notes reference
+CHANGELOG.md
+release-manifest.json
 ```
 
-Каноническая история release changes ведётся в repository
-`docs/CHANGELOG.md`; Macro 3 зафиксирует ссылку на неё для точного source SHA.
+`CHANGELOG.md` является копией канонического repository
+`docs/CHANGELOG.md`. Manifest связывает её и остальные recipient-facing файлы с
+HEAD SHA и состоянием working tree на момент начала сборки, а также с SHA-256
+каждого файла. Только успешный strict report при clean source подтверждает точную
+привязку к commit SHA. Сам manifest не хэширует себя:
+его SHA-256 и SHA-256 versioned ZIP находятся во внешнем
+`verification-report.json`.
 
 Release producer собирает wheel и механически создаёт constraints из
 `uv.lock`; получатель использует готовые файлы и не регенерирует constraints:
@@ -39,7 +45,23 @@ uv export --locked --no-dev --no-emit-project --format requirements.txt `
 ```
 
 `runtime-constraints.txt` — производный release-файл, а не второй вручную
-поддерживаемый lock. Итоговую сборку, manifest и hashes проверяет Macro 3.
+поддерживаемый lock. Producer запускает полный gate до commit в честном
+non-certifying режиме:
+
+```powershell
+uv run python scripts/verify_stage10_release.py --development
+```
+
+После review и commit строгий запуск требует чистое source tree и связывает
+release с новым commit SHA:
+
+```powershell
+uv run python scripts/verify_stage10_release.py
+```
+
+По умолчанию output создаётся во внешнем OS temp directory. Для явного внешнего
+пустого каталога используется `--output-dir <path>`; непустой каталог gate не
+перезаписывает.
 
 ## 1. Предварительные требования
 
