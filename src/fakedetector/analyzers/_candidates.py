@@ -105,7 +105,7 @@ def _candidate_transport(candidate: _TypedCandidate) -> dict[str, JsonValue]:
 
 
 def _validate_candidate_transport(candidate: object) -> _TypedCandidate:
-    """Revalidate one untrusted transport value at the Stage 6 boundary."""
+    """Revalidate one untrusted transport value at the finding formation boundary."""
     return _CANDIDATE_ADAPTER.validate_python(candidate)
 
 

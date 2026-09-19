@@ -1,4 +1,4 @@
-"""Safe internal failures raised by the Stage 5 analyzer framework."""
+"""Safe internal failures raised by the analyzer framework."""
 
 from __future__ import annotations
 

@@ -23,7 +23,7 @@ from fakedetector.domain import (
 
 
 class AnalysisAssessmentError(RuntimeError):
-    """Safe failure raised when authoritative Stage 7 inputs are inconsistent."""
+    """Safe failure raised when authoritative assessment inputs are inconsistent."""
 
     def __init__(self, reason_code: str) -> None:
         self.reason_code = reason_code
@@ -369,7 +369,7 @@ class RecommendationService:
 
 
 class AnalysisAssessmentService:
-    """Compose the pure Stage 7 policy over one validated immutable config."""
+    """Compose the pure assessment policy over one validated immutable config."""
 
     def __init__(self, config: RiskAssessmentConfig) -> None:
         try:

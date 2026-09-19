@@ -1,4 +1,4 @@
-"""Bounded quality observations over existing Stage 5 sampled video frames."""
+"""Bounded quality observations over existing preprocessed sampled video frames."""
 
 from __future__ import annotations
 

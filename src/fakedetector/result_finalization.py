@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
@@ -28,9 +28,11 @@ from fakedetector.domain import (
 )
 from fakedetector.domain.models import AnalysisProcessing
 from fakedetector.intake.lifecycle import Stage3Terminal
-from fakedetector.lifecycle.models import TerminalTaskFacts
 from fakedetector.logging_setup import emit_diagnostic
 from fakedetector.repositories import ResultRepository
+
+if TYPE_CHECKING:
+    from fakedetector.lifecycle.models import TerminalTaskFacts
 
 _LOGGER = logging.getLogger(__name__)
 

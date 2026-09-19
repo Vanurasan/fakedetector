@@ -1,4 +1,4 @@
-"""Safe internal failures for Stage 5 preprocessing."""
+"""Safe internal failures for media preprocessing."""
 
 from __future__ import annotations
 

@@ -477,7 +477,7 @@ class AnalysisCompleteness(_DomainModel):
 
     @model_validator(mode="after")
     def validate_assessment_facts(self) -> Self:
-        """Separate an unperformed assessment from factual Stage 7 counters."""
+        """Separate an unperformed assessment from factual assessment counters."""
         counters = (
             self.planned_analyzers,
             self.applicable_analyzers,

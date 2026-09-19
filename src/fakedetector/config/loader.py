@@ -33,11 +33,8 @@ def _parse_env_value(raw: str) -> object:
     try:
         value = yaml.safe_load(raw)
     except yaml.YAMLError:
-        # If it doesn't look like YAML, keep it as a string.
         return raw
-    # yaml.safe_load on a plain scalar returns the Python type; but for
-    # a dict/list it also works.  We intentionally allow nested structures
-    # so that list settings (e.g. allowed extensions) can be replaced.
+    # Nested structures allow list settings such as allowed extensions to be replaced.
     return value
 
 
@@ -90,7 +87,6 @@ def _apply_env_overrides(
                 f"Environment variable {key} has an unparseable value"
             )
 
-        # Walk / create the nested dict structure.
         cursor: dict[str, object] = result
         for part in parts[:-1]:
             if part not in cursor or not isinstance(cursor[part], dict):
@@ -157,7 +153,6 @@ def load_config(
     if not isinstance(raw_data, dict):
         raise ConfigurationError("Configuration must be a YAML mapping")
 
-    # ---- env-var override ----
     if env is None:
         env = os.environ
 

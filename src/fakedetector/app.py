@@ -1,4 +1,4 @@
-"""Модуль создания приложения FastAPI."""
+"""FastAPI application factory."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -15,7 +15,7 @@ from fakedetector.webui import install_webui
 
 
 def create_app(config: AppConfig) -> FastAPI:
-    """Создать и настроить экземпляр FastAPI-приложения."""
+    """Create and configure the FastAPI application."""
     api_authenticator = load_api_authenticator(config.access_channels.api)
     webui_authenticator = load_webui_authenticator(config.access_channels.webui)
     runtime = _build_production_runtime(config)

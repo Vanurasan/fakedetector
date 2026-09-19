@@ -115,9 +115,9 @@ AFTER_MVP
 Статус Stage 10: DONE / CLOSED
 Текущий этап: Stage 11 — Post-MVP Normalization & Hardening
 Статус Stage 11: IN_PROGRESS
-Последний завершённый Macro: Macro 5 — Technical Debt / Config / Test-Support Cleanup (DONE / owner accepted)
-Текущая задача: Macro 6 — Tests / Comments / Documentation Normalization (NOT_STARTED / next action)
-Ближайшее действие: начать Stage 11 / Macro 6 — Tests / Comments / Documentation Normalization
+Последний завершённый Macro: Macro 6 — Tests / Comments / Documentation Normalization (DONE / owner accepted)
+Текущая задача: Macro 7 — Release Tooling Normalization (NOT_STARTED / next action)
+Ближайшее действие: начать Stage 11 / Macro 7 — Release Tooling Normalization
 Критические блокеры: отсутствуют
 Реализация программы: Этапы 1–10 завершены; MVP 0.1.0 DONE / CLOSED; post-MVP whole-codebase audit — READY_FOR_NORMALIZATION_PLANNING
 Документационная база: сформирована
@@ -137,7 +137,7 @@ AFTER_MVP
 
 ### 2.2. Ближайшая задача
 
-Начать Stage 11 / Macro 6 — Tests / Comments / Documentation Normalization.
+Начать Stage 11 / Macro 7 — Release Tooling Normalization.
 
 ---
 
@@ -1817,8 +1817,8 @@ Post-MVP whole-codebase audit завершён с вердиктом
 - Macro 3 — Analyzer Registration Normalization: **DONE / owner accepted**;
 - Macro 4 — Product Naming & Architecture Normalization: **DONE / owner accepted**;
 - Macro 5 — Technical Debt / Config / Test-Support Cleanup: **DONE / owner accepted**;
-- Macro 6 — Tests / Comments / Documentation Normalization: **NOT_STARTED / next action**;
-- Macro 7 — Release Tooling Normalization: **NOT_STARTED**;
+- Macro 6 — Tests / Comments / Documentation Normalization: **DONE / owner accepted**;
+- Macro 7 — Release Tooling Normalization: **NOT_STARTED / next action**;
 - Macro 8 — Final Whole-Project Audit / Certification / Graphify Review:
   **NOT_STARTED**.
 
@@ -2038,44 +2038,53 @@ AST, canonical snapshot, pickle/spawn и installed-wheel checks — `PASS`.
 Stage 11 остаётся `IN_PROGRESS`; следующая задача — Macro 6, Tests / Comments /
 Documentation Normalization. Macro 6 ещё не начат.
 
-## Macro 6 — Tests / Comments / Documentation Normalization — NOT_STARTED / next action
+## Macro 6 — Tests / Comments / Documentation Normalization — DONE / owner accepted
 
-Цель — нормализовать архитектуру тестов и текущую техническую документацию после
-стабилизации production-имён и контрактов.
+Macro 6 реализован, закоммичен, принят владельцем и прошёл независимый аудит.
+Нормализация выполнена без изменения публичного поведения:
 
-Тесты:
+- Воспроизведён изолированный цикл `result_finalization → lifecycle →
+  result_finalization`. Ненужный импорт `TerminalTaskFacts` во время выполнения
+  перенесён под `TYPE_CHECKING`; оба порядка импорта проходят в свежих процессах
+  Python. Документированный публичный Python-интерфейс не изменён; потребителей
+  удалённого связывания во время выполнения или через рефлексию нет.
+- Тестовые модули текущей реализации переименованы:
+  `test_stage5_execution.py → test_analysis_execution.py`,
+  `test_stage5_resources.py → test_generated_artifact_budget.py`,
+  `test_stage7_assessment.py → test_analysis_assessment.py`.
+  Восемь тестов владения артефактами, путей и очистки перенесены в
+  `tests/test_workspace_artifacts.py` с сохранением 26 параметризованных случаев.
+  Два AST-эквивалентных конфигурационных builder для intake объединены в
+  `tests/support/intake.py`. Значимая логика, fixtures, assertions и параметризация
+  сохранены; значимые тесты не удалены. Число собранных тестов выросло с 1881
+  до 1883 только за счёт двух проверок порядка импортов в свежих процессах.
+- Усилен реальный тест границы сохранения и живого реестра: в `PERSISTENCE`
+  приоритет остаётся у `TaskRegistry`, получение результата ожидает завершения;
+  после терминальной фиксации и удаления задачи авторитетным становится
+  сохранённый результат `ResultRepository`.
+- Текущие технические комментарии и docstrings production-кода нормализованы
+  на английском по ответственности. Намеренные lifecycle Stage-контракты,
+  совместимые имена, коды ошибок и исторические Stage/Increment-записи сохранены.
+- Устаревшие текущие утверждения `PROJECT.md` и `CONTRACTS.md` сверены с
+  production-архитектурой после Macros 1–5: закрытым каталогом четырёх анализаторов,
+  исключительно тестовыми fake-анализаторами, обязанностями выполнения анализа,
+  формирования признаков, оценки и финализации. Описания артефактов,
+  предобработки и внешних систем синхронизированы; исторические записи сохранены.
+- Финальный раздел `6. Команда агенту для продолжения разработки` удалён целиком,
+  включая пояснение и блок инструкции. Definition of Done сохранён;
+  связанного SVG не существовало.
 
-- разделять только действительно чрезмерно большие файлы, где это полезно;
-- объединять только фактически дублирующиеся builders/fixtures;
-- сохранять explicit и fault-injection tests;
-- сохранять проверки cleanup, `BaseException`, процессов, persistence,
-  filesystem и auth;
-- добавлять отсутствующие реальные integration-boundary tests там, где mocks
-  скрывали проблемы;
-- не сокращать число тестов ради уменьшения suite.
+Проверки реализации и аудита: изолированный `test_result_finalization.py` —
+`15 passed`; целевой набор аудита — `286 passed, 1 skipped`; собрано `1883`
+теста; полный набор — `1866 passed, 17 skipped`, покрытие `90%`.
+`uv lock --check`, Ruff, mypy, pre-commit, `git diff --check`, CLI help и оба
+порядка импортов в свежих процессах — `PASS`. Независимый аудит GPT-6 Astra Low:
+финальный вердикт — **PASS**, замечаний, требующих исправления, нет.
 
-Зарезервировано для Macro 6; при закрытии Macro 5 не выполняется:
+Stage 11 остаётся `IN_PROGRESS`; следующая задача — Macro 7, Release Tooling
+Normalization (`NOT_STARTED / next action`). Работы Macro 7 и Macro 8 не начаты.
 
-- нормализация терминологии Macro / Increment;
-- полное удаление финального раздела ROADMAP
-  `6. Команда агенту для продолжения разработки`, включая инструкцию, блок кода
-  и отдельный либо связанный `svg`;
-- устранение известной чувствительности изолированных тестов к порядку
-  импортов и циклическим импортам.
-
-Целевая политика comments/docstrings:
-
-- identifiers, technical comments и docstrings — English;
-- русскоязычная пользовательская документация может оставаться русской;
-- комментарии объясняют WHY и инварианты, а не очевидное WHAT;
-- устаревшая staged-development терминология заменяется текущей ответственностью;
-- obsolete comments удаляются, а не переводятся механически.
-
-Текущие архитектурные разделы `CONTRACTS.md` и `PROJECT.md` синхронизируются
-только после фактического изменения соответствующей реализации или контракта.
-Исторические записи о закрытии этапов остаются историческими.
-
-## Macro 7 — Release Tooling Normalization — NOT_STARTED
+## Macro 7 — Release Tooling Normalization — NOT_STARTED / next action
 
 Цель — преобразовать Stage 10 release tooling в долгоживущий product release
 tooling без ослабления сертификационных гарантий.
@@ -2200,7 +2209,8 @@ log handler приводили к необработанным исключен�
 
 Активные BLOCKER Этапа 1 отсутствуют.
 
-Решения, которые потребуются позднее:
+Исторические точки принятия решений для завершённых этапов 6–10
+(актуальные решения — в `PROJECT.md` и `CONTRACTS.md`):
 
 | Когда | Вопрос | До решения можно продолжать? |
 |---|---|---|
@@ -2230,13 +2240,3 @@ log handler приводили к необработанным исключен�
 - [ ] секреты и runtime не попали в Git;
 - [ ] чек-лист обновлён;
 - [ ] изменение проекта отражено в `CHANGELOG.md`, если требуется.
-
----
-
-## 6. Команда агенту для продолжения разработки
-
-При передаче проекта новому ИИ-агенту используйте инструкцию:
-
-```text
-Прочитай PROJECT.md полностью. Затем прочитай раздел «Текущее состояние» и только текущий этап ROADMAP.md. После этого прочитай относящиеся к этапу разделы CONTRACTS.md. Не используй архивные документы как источник актуальных решений. Выполняй только ближайшую незавершённую задачу. Не решай OPEN-вопросы молча. После работы запусти тесты и проверки, обнови ROADMAP.md и при необходимости CHANGELOG.md.
-```

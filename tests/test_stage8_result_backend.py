@@ -15,6 +15,7 @@ import yaml
 import fakedetector.lifecycle.receiver as receiver_module
 import fakedetector.result_finalization as result_finalization_module
 from fakedetector._runtime import _build_production_runtime
+from fakedetector.application import AnalysisPendingError
 from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
 from fakedetector.domain import (
@@ -112,6 +113,11 @@ def test_real_production_image_is_persisted_before_finished_and_facts_are_detach
         real_save(result)
         assert runtime.result_repository.get(result.analysis_id) == result
         assert runtime.registry.snapshot(result.analysis_id).stage is ProcessingStage.PERSISTENCE
+        live_status = runtime.application_service.get_status(result.analysis_id)
+        assert live_status.stage is ProcessingStage.PERSISTENCE
+        assert live_status.result_available is False
+        with pytest.raises(AnalysisPendingError):
+            runtime.application_service.get_result(result.analysis_id)
         task_at_save.context.source.external_reference = "mutated-reference"
         task_at_save.validated_file.original_name = "mutated-name.png"
 
@@ -136,6 +142,8 @@ def test_real_production_image_is_persisted_before_finished_and_facts_are_detach
     result = runtime.result_repository.get(outcome.analysis_id)
     assert result is not None
     assert not runtime.registry.contains(outcome.analysis_id)
+    assert runtime.application_service.get_status(outcome.analysis_id).result_available is True
+    assert runtime.application_service.get_result(outcome.analysis_id) == result
     assert save_observations == [
         (ProcessingStage.PERSISTENCE, TerminalSettlementPhase.FACT_READY)
     ]

@@ -1,4 +1,4 @@
-"""Immutable internal values shared by Stage 5 preprocessing."""
+"""Immutable internal values shared by media preprocessing."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from fakedetector.lifecycle.artifacts import WorkspaceArtifactRef
 
 @dataclass(frozen=True, slots=True)
 class PreparedArtifact:
-    """One registered Stage 5 artifact without a physical path or media bytes."""
+    """One registered generated artifact without a physical path or media bytes."""
 
     artifact_id: str
     artifact_type: str
@@ -56,7 +56,7 @@ class PreparedArtifact:
 
 @dataclass(frozen=True, slots=True)
 class PreparedMedia:
-    """Defensively immutable Stage 5 state for one accepted media source."""
+    """Defensively immutable prepared media state for one accepted media source."""
 
     analysis_id: str
     media_type: MediaType

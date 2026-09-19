@@ -1,4 +1,4 @@
-"""Sequential analyzer orchestration over controlled Stage 5 path callbacks."""
+"""Sequential analyzer orchestration over controlled source path callbacks."""
 
 from __future__ import annotations
 
