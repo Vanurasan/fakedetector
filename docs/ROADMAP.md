@@ -110,16 +110,17 @@ AFTER_MVP
 ## 2. Текущее состояние
 
 ```text
-Общий статус: IN_PROGRESS
-Последний закрытый этап: Этап 10 — Сборка и демонстрация MVP
+Общий статус: Stages 1–11 — DONE / CLOSED
+Последний закрытый этап: Stage 11 — Post-MVP Normalization & Hardening
 Статус Stage 10: DONE / CLOSED
-Текущий этап: Stage 11 — Post-MVP Normalization & Hardening
-Статус Stage 11: IN_PROGRESS
-Последний завершённый Macro: Macro 7 — Release Tooling Normalization (DONE / owner accepted)
-Текущая задача: Macro 8 — Final Whole-Project Audit / Certification / Graphify Review (NOT_STARTED / next action)
-Ближайшее действие: начать Stage 11 / Macro 8 — Final Whole-Project Audit / Certification / Graphify Review
+Текущий этап: отсутствует
+Статус Stage 11: DONE / CLOSED
+Статус Macros 0–8: DONE / owner accepted
+Последний завершённый Macro: Macro 8 — Final Whole-Project Audit / Certification / Graphify Review (DONE / owner accepted)
+Текущий Macro: отсутствует
+Следующие работы: Stage 12+ — AFTER_MVP / NOT_STARTED; требуется отдельное решение владельца
 Критические блокеры: отсутствуют
-Реализация программы: Этапы 1–10 завершены; MVP 0.1.0 DONE / CLOSED; post-MVP whole-codebase audit — READY_FOR_NORMALIZATION_PLANNING
+Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
 Документационная база: сформирована
 ```
 
@@ -137,7 +138,8 @@ AFTER_MVP
 
 ### 2.2. Ближайшая задача
 
-Начать Stage 11 / Macro 8 — Final Whole-Project Audit / Certification / Graphify Review.
+Текущей задачи нет. Stage 12+ — `AFTER_MVP / NOT_STARTED`;
+начало работ требует отдельного решения владельца.
 
 ---
 
@@ -156,8 +158,8 @@ AFTER_MVP
 | 8 | JSON, API и WebUI | DONE | Реализация и независимые аудиты завершены; этап закрыт |
 | 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
 | 10 | Сборка и демонстрация MVP | DONE / CLOSED | Macro 1–3 DONE / owner accepted; independent post-remediation audit — PASS; S10-A01–S10-A04 CLOSED |
-| 11 | Post-MVP Normalization & Hardening | IN_PROGRESS | Нормализация и укрепление MVP без широкого расширения возможностей |
-| 12+ | Расширения | AFTER_MVP | ML, интеграции, история, масштабирование |
+| 11 | Post-MVP Normalization & Hardening | DONE / CLOSED | Macros 0–8 DONE / owner accepted; финальная проверка и strict certification — PASS; actionable findings 0 |
+| 12+ | Расширения | AFTER_MVP / NOT_STARTED | ML, интеграции, история, масштабирование; отдельное решение владельца |
 
 ---
 
@@ -1791,7 +1793,7 @@ Normalization & Hardening, описанный ниже.
 
 ---
 
-# Stage 11 — Post-MVP Normalization & Hardening — IN_PROGRESS
+# Stage 11 — Post-MVP Normalization & Hardening — DONE / CLOSED
 
 ## Цель и принцип
 
@@ -1820,7 +1822,7 @@ Post-MVP whole-codebase audit завершён с вердиктом
 - Macro 6 — Tests / Comments / Documentation Normalization: **DONE / owner accepted**;
 - Macro 7 — Release Tooling Normalization: **DONE / owner accepted**;
 - Macro 8 — Final Whole-Project Audit / Certification / Graphify Review:
-  **NOT_STARTED / next action**.
+  **DONE / owner accepted**.
 
 ## Macro 0 — Roadmap Restructuring — DONE / owner accepted
 
@@ -2035,8 +2037,8 @@ AST, canonical snapshot, pickle/spawn и installed-wheel checks — `PASS`.
 Независимый аудит GPT-6 Astra Medium: финальный вердикт — **PASS**;
 замечаний, требующих исправления, нет.
 
-Stage 11 остаётся `IN_PROGRESS`; следующая задача — Macro 6, Tests / Comments /
-Documentation Normalization. Macro 6 ещё не начат.
+На момент закрытия Macro 5 Stage 11 оставался `IN_PROGRESS`; следующей задачей
+был Macro 6, Tests / Comments / Documentation Normalization, тогда ещё не начатый.
 
 ## Macro 6 — Tests / Comments / Documentation Normalization — DONE / owner accepted
 
@@ -2167,30 +2169,90 @@ Release gate не изменил состояние репозитория. По
 config schema, persisted result schema, lifecycle, analyzers,
 risk/completeness/recommendation, зависимости продукта и `uv.lock` сохранены.
 
-Stage 11 остаётся `IN_PROGRESS`; Macro 8 — `NOT_STARTED / next action`.
-Строгая сертификация tooling Macro 7 не является финальной whole-project
-сертификацией Stage 11 / Macro 8. Macro 8 не начат; решение по Graphify отложено.
+На момент закрытия Macro 7 Stage 11 оставался `IN_PROGRESS`; Macro 8 имел статус
+`NOT_STARTED / next action`. Строгая сертификация tooling Macro 7 не заменяла
+финальную whole-project сертификацию Stage 11 / Macro 8; решение по Graphify
+тогда было отложено.
 
-## Macro 8 — Final Whole-Project Audit / Certification / Graphify Review — NOT_STARTED / next action
+## Macro 8 — Final Whole-Project Audit / Certification / Graphify Review — DONE / owner accepted
 
-После завершения нормализации необходимо:
+Macro 8 завершён и принят владельцем. Первоначальный whole-project audit дал
+вердикт `REMEDIATE`: `M8-A01 MEDIUM`, `M8-A02 MEDIUM`, `M8-A03 LOW`, `M8-A04 LOW`.
+Ограниченная ремедиация в commit
+`0167f78e2ab18a7b297807e9cb3fa19f69b6a7ec` закрыла все четыре замечания:
 
-- выполнить полный project quality barrier;
-- выполнить release certification установленного артефакта;
-- провести независимый whole-project audit;
-- подтвердить отсутствие Stage-history residue в текущей production-архитектуре;
-- подтвердить сохранность гарантий этапов 1–10;
-- повторно оценить Graphify на нормализованном repository.
+| Finding | Статус | Исправление |
+|---|---|---|
+| M8-A01 — MEDIUM | CLOSED | Проверка provenance sdist отклоняет untracked, ignored и локально сгенерированное содержимое по принципу fail-closed; Graphify исключён из принимаемого sdist. |
+| M8-A02 — MEDIUM | CLOSED | Владение сырым процессом release-server начинается сразу после `Popen`; при ошибках `BaseException` в создании wrapper/reader процесс завершается с обязательным ожиданием его выхода (reap). |
+| M8-A03 — LOW | CLOSED | Глубокая рекурсия YAML преобразуется в безопасный `ConfigurationError`; CLI возвращает `2` без traceback и запуска сервера. |
+| M8-A04 — LOW | CLOSED | Два неуместных текущих имени с хронологической Stage-терминологией заменены семантическими именами по ответственности. |
 
-Решение по Graphify **DEFERRED** до Macro 8. Сейчас известно, что Graphify полезен
-как средство навигации агента, не является production dependency, а текущий
-generated graph устарел относительно последнего `main` и будет в значительной
-части инвалидирован структурной нормализацией. Только после неё владелец выбирает
-`KEEP`, `REMOVE` или `REBUILD POLICY`.
+Проверка полного diff владельцем — `PASS`; независимый целевой повторный аудит
+GPT-6 Astra High — `PASS`; strict clean-SHA certification — `PASS`; финальная
+независимая проверка закрытия GPT-6 Astra High — `PASS`.
+`STAGE_11_CLOSURE_RECOMMENDATION=YES`; все M8 findings — `CLOSED`.
+Осталось замечаний, требующих исправления: `BLOCKER 0`, `HIGH 0`, `MEDIUM 0`,
+`LOW 0`. `CURRENT_ARCHITECTURE_RESIDUE=0`; гарантии MVP A–R — `PASS`.
+
+### Финальные результаты проверок
+
+Итоговый набор: `1944 collected`, `1927 passed`, `17 skipped`, покрытие `90%`.
+Полный quality barrier — `PASS`: `uv lock --check`, Ruff, mypy
+(`65 source files`), pytest, pre-commit, `git diff --check`, product CLI help.
+Целевые наборы: release packaging — `18 passed`, release verification —
+`29 passed`, release tooling boundaries — `44 passed`, config / CLI / main —
+`112 passed`.
+
+Строгая сертификация командой `uv run python scripts/verify_release.py` на commit
+`0167f78e2ab18a7b297807e9cb3fa19f69b6a7ec` завершилась с
+`overall_status=passed`, `certification_mode=strict`, `certified=true`,
+`source_sha_stable=true`, `source_tree_clean=true`. SHA в начале и конце совпал
+с этим commit; source status в начале и конце пуст. Release gate не изменил
+состояние репозитория. Подтверждены:
+
+- состав sdist: `177` записей = `176` tracked файлов репозитория + корневой
+  `PKG-INFO`; принятых Graphify entries — `0`; provenance и хэши исходников
+  проверены, wheel собран из этого точного проверенного sdist;
+- точный release kit из `8` файлов, manifest schema `1.0`, целостность SHA-256,
+  безопасные проверка и извлечение ZIP;
+- свежее внешнее venv, установка из точного извлечённого wheel;
+  editable install — `false`, checkout отсутствует в `sys.path`, runtime
+  dependencies — `25/25`, dev-only зависимости отсутствуют;
+- реальный установленный CLI, реальные API и WebUI, анализ image/audio/video,
+  canonical persistence и получение прежних результатов после restart — `4/4`;
+- успешная очистка, завершение и reap двух собственных процессов, закрытые
+  listeners; graceful Windows `CTRL_BREAK_EVENT`, ожидаемый return code `3`;
+  широкая системная очистка не применялась.
+
+Это предоставленные финальные технические результаты до документационного
+закрытия. После commit документации владелец выполнит финальную строгую
+сертификацию на новом чистом SHA.
+
+### Graphify — принятая владельцем REBUILD_POLICY
+
+Финальная рекомендация `GRAPHIFY_RECOMMENDATION=REBUILD_POLICY` принята владельцем.
+Текущий локальный граф — `STALE`: он не является достоверным доказательством
+архитектуры. Graphify остаётся вспомогательным инструментом, не production
+dependency. `graphify-out/` остаётся ignored; сгенерированные данные должны
+оставаться ignored/untracked и не попадать в source distributions. Это включает
+`graph.json`, `graph.html`, cache, memory, reflections, generated learning data
+и локальные маркеры interpreter/root.
+
+Генерация выполняется только вручную и явно после существенных изменений
+структуры модулей, composition, импортов, lifecycle, каталога анализаторов,
+release tooling или нормативных архитектурных контрактов. При генерации
+фиксируются source/build SHA либо эквивалентный fingerprint исходников.
+Статус `CURRENT` допустим только при соответствии provenance текущим исходникам;
+иначе граф считается `STALE` и не используется как архитектурное доказательство.
+Валидация должна проверять охват исходников/модулей, существование путей и
+символов, provenance генератора и его версии, а также репрезентативные связи.
+В рамках этого закрытия Graphify не пересобирался; команда генерации не задаётся.
 
 ## Гарантии MVP, обязательные к сохранению
 
-Stage 11 не должен нарушить:
+Финальная проверка Macro 8 подтвердила `PASS` для всех гарантий A–R
+(ниже перечислены в том же порядке):
 
 - единый `AnalysisApplicationService` для API и WebUI;
 - immutable config snapshot;
@@ -2205,7 +2267,7 @@ Stage 11 не должен нарушить:
 - bounded worker protocol;
 - trusted/closed analyzer catalog;
 - subprocess/artifact/finding safety budgets;
-- correlation handling;
+- correlation handling без двойного учёта;
 - запрет fake calibrated probability claims;
 - safe diagnostics;
 - installed-wheel release guarantees;
@@ -2216,15 +2278,22 @@ Stage 11 не должен нарушить:
 
 ## Критерий завершения
 
-Macro 1–7 выполнены и проверены; Macro 8 подтвердил полный quality barrier,
-installed-artifact certification, независимый аудит, отсутствие актуальной
-Stage-терминологии в production-архитектуре и сохранение гарантий MVP.
+Критерий выполнен: Stage 11 — **DONE / CLOSED**, Macros 0–8 —
+**DONE / owner accepted**; текущего Macro нет. Основания закрытия:
+post-MVP whole-project audit, нормализация Macros 1–7, финальный аудит Macro 8,
+ограниченная ремедиация и независимый целевой повторный аудит, полный quality
+barrier и строгая сертификация установленного артефакта. Финальная проверка
+GPT-6 Astra High — `PASS`, рекомендация закрыть Stage 11 — `YES`.
+Замечаний, требующих исправления, осталось `0`;
+`CURRENT_ARCHITECTURE_RESIDUE=0` (неуместных текущих архитектурных имён с историей
+Stage нет); гарантии MVP A–R — `PASS`. Принята политика Graphify `REBUILD_POLICY`.
 
 ---
 
-# Stage 12+ — Расширения — AFTER_MVP
+# Stage 12+ — Расширения — AFTER_MVP / NOT_STARTED
 
-Работы выполняются только после завершения Stage 11 и отдельного решения.
+Stage 11 завершён. Работы Stage 12+ не начаты и требуют отдельного решения
+владельца.
 
 ## Анализ и качество
 
