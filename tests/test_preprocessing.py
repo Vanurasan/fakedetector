@@ -15,7 +15,7 @@ import yaml
 from PIL import Image, PngImagePlugin
 
 import fakedetector.preprocessing as preprocessing
-from fakedetector._stage5_resources import _GeneratedArtifactBudget
+from fakedetector._generated_artifact_budget import _GeneratedArtifactBudget
 from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import (
     AppConfig,

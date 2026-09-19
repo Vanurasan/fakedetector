@@ -11,14 +11,14 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
-from fakedetector._stage5_resources import _MAX_STAGE5_ARTIFACTS
+from fakedetector._generated_artifact_budget import _MAX_GENERATED_ARTIFACTS
 from fakedetector.analyzers._errors import AnalyzerInfrastructureError
 from fakedetector.analyzers._models import _AnalyzerFileFacts
 from fakedetector.analyzers._registry import AnalyzerRegistry, _ActiveAnalyzer
 from fakedetector.analyzers._transport import (
     _MAX_RESPONSE_BYTES,
-    _serialize_stage5_analyzer_result,
-    _Stage5AnalyzerResultSizeError,
+    _AnalyzerResultSizeError,
+    _serialize_analyzer_result,
     _WorkerArtifact,
     _WorkerRequest,
     _WorkerResponseKind,
@@ -164,7 +164,7 @@ class AnalyzerOrchestrator:
         artifact_registry: WorkspaceArtifactRegistry,
         remaining_timeout_seconds: Callable[[], float] | None,
     ) -> AnalyzerResult:
-        if len(prepared_media.artifacts) > _MAX_STAGE5_ARTIFACTS:
+        if len(prepared_media.artifacts) > _MAX_GENERATED_ARTIFACTS:
             raise AnalyzerInfrastructureError("worker_request")
         try:
             return prepared_media.source_file_ref.with_local_source_path(
@@ -246,8 +246,8 @@ class AnalyzerOrchestrator:
         _validate_result_identity(decoded.result, active, prepared_media)
         normalized_result = _with_duration(decoded.result, run.duration_ms)
         try:
-            _serialize_stage5_analyzer_result(normalized_result)
-        except _Stage5AnalyzerResultSizeError:
+            _serialize_analyzer_result(normalized_result)
+        except _AnalyzerResultSizeError:
             return _failure_result(active, prepared_media, run.duration_ms, timeout=False)
         return normalized_result
 
@@ -358,7 +358,7 @@ def _skipped_result(active: _ActiveAnalyzer, prepared_media: PreparedMedia) -> A
         warnings=[],
         errors=[],
     )
-    _serialize_stage5_analyzer_result(result)
+    _serialize_analyzer_result(result)
     return result
 
 

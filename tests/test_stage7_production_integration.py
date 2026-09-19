@@ -42,9 +42,9 @@ from fakedetector.domain import (
     SourceContext,
 )
 from fakedetector.intake import Stage3Accepted
-from fakedetector.lifecycle._stage7 import (
-    Stage7AssessmentError,
-    Stage7AssessmentService,
+from fakedetector.lifecycle._assessment import (
+    AnalysisAssessmentError,
+    AnalysisAssessmentService,
 )
 from fakedetector.lifecycle.models import AnalysisTask, TaskExecutionOutcome
 
@@ -239,7 +239,7 @@ def test_production_copy_move_uses_one_weak_bucket_and_is_deterministic(
         active.registration.analyzer_id
         for active in runtime.analyzer_registry.active_plan(result.file.media_type)
     )
-    service = Stage7AssessmentService(config.risk_assessment)
+    service = AnalysisAssessmentService(config.risk_assessment)
     assert service.assess(plan, results, findings) == stored
     assert service.assess(plan, results, findings) == stored
     assert result.status is AnalysisStatus.COMPLETED
@@ -366,14 +366,14 @@ def test_production_stage7_internal_failure_is_safe_and_uses_existing_cleanup(
     private_detail = "PRIVATE C:\\stage7\\source.png"
 
     def fail_assessment(
-        _self: Stage7AssessmentService,
+        _self: AnalysisAssessmentService,
         _planned_analyzer_ids: Sequence[str],
         _analyzer_results: Sequence[AnalyzerResult],
         _findings: Sequence[Finding],
     ) -> NoReturn:
-        raise Stage7AssessmentError(private_detail)
+        raise AnalysisAssessmentError(private_detail)
 
-    monkeypatch.setattr(Stage7AssessmentService, "assess", fail_assessment)
+    monkeypatch.setattr(AnalysisAssessmentService, "assess", fail_assessment)
     runtime = _production_runtime(_config(tmp_path))
     accepted, result = _run(runtime, _plain_png(256))
 
@@ -440,14 +440,14 @@ def test_production_not_assessed_from_stage7_is_an_internal_failure(
     )
 
     def return_not_assessed(
-        _self: Stage7AssessmentService,
+        _self: AnalysisAssessmentService,
         _planned_analyzer_ids: Sequence[str],
         _analyzer_results: Sequence[AnalyzerResult],
         _findings: Sequence[Finding],
     ) -> tuple[AnalysisCompleteness, RiskAssessment, Recommendation]:
         return not_assessed, risk, recommendation
 
-    monkeypatch.setattr(Stage7AssessmentService, "assess", return_not_assessed)
+    monkeypatch.setattr(AnalysisAssessmentService, "assess", return_not_assessed)
     runtime = _production_runtime(_config(tmp_path))
     accepted, result = _run(runtime, _plain_png(256))
 

@@ -11,8 +11,8 @@ from typing import Protocol, cast
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from fakedetector._stage5_resources import (
-    _MAX_STAGE5_ARTIFACTS,
+from fakedetector._generated_artifact_budget import (
+    _MAX_GENERATED_ARTIFACTS,
     _GeneratedArtifactBudget,
     _GeneratedArtifactLimitError,
     _GeneratedArtifactWriteError,
@@ -655,7 +655,7 @@ def _audio_generated_bytes_estimate(
 
 
 def _ensure_artifact_count(count: int) -> None:
-    if count > _MAX_STAGE5_ARTIFACTS:
+    if count > _MAX_GENERATED_ARTIFACTS:
         raise PreprocessingError("resource_limit", "artifact_count")
 
 

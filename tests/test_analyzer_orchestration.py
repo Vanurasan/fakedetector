@@ -17,7 +17,7 @@ import fakedetector.analyzers as analyzers_package
 import fakedetector.analyzers._orchestrator as orchestrator_module
 import fakedetector.analyzers._worker as analyzer_worker_module
 import fakedetector.domain as domain
-from fakedetector._stage5_resources import _MAX_STAGE5_ARTIFACTS
+from fakedetector._generated_artifact_budget import _MAX_GENERATED_ARTIFACTS
 from fakedetector.analyzers._catalog import (
     _framework_test_registrations,
     _resolve_worker_definition,
@@ -34,9 +34,9 @@ from fakedetector.analyzers._models import (
 from fakedetector.analyzers._orchestrator import AnalyzerOrchestrator, _WorkerRunner
 from fakedetector.analyzers._registry import AnalyzerRegistry
 from fakedetector.analyzers._transport import (
+    _MAX_ANALYZER_RESULT_BYTES,
     _MAX_FILE_FACTS_BYTES,
-    _MAX_STAGE5_ANALYZER_RESULT_BYTES,
-    _serialize_stage5_analyzer_result,
+    _serialize_analyzer_result,
     _WorkerRequest,
     _WorkerResponseKind,
 )
@@ -328,9 +328,9 @@ class _PostNormalizationOversizeRunner:
             warnings=[],
             errors=[],
         )
-        padding = _MAX_STAGE5_ANALYZER_RESULT_BYTES - len(_serialize_stage5_analyzer_result(base))
+        padding = _MAX_ANALYZER_RESULT_BYTES - len(_serialize_analyzer_result(base))
         result = base.model_copy(update={"summary": "x" * padding})
-        assert len(_serialize_stage5_analyzer_result(result)) == (_MAX_STAGE5_ANALYZER_RESULT_BYTES)
+        assert len(_serialize_analyzer_result(result)) == (_MAX_ANALYZER_RESULT_BYTES)
         return _WorkerRun(
             _WorkerRunKind.RESPONSE,
             duration_ms=123_456,
@@ -563,7 +563,7 @@ def test_runtime_policy_publishes_all_remaining_enabled_without_execution(
     def encode(result: AnalyzerResult) -> bytes:
         if result.status is AnalyzerStatus.SKIPPED:
             serialized_skips.append(result.analyzer_id)
-        return _serialize_stage5_analyzer_result(result)
+        return _serialize_analyzer_result(result)
 
     def forbidden(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("runtime-policy skip performed analyzer or preprocessing work")
@@ -574,7 +574,7 @@ def test_runtime_policy_publishes_all_remaining_enabled_without_execution(
             monkeypatch.setattr(orchestrator, "_execute_active", forbidden)
 
     monkeypatch.setattr(AnalyzerRegistry, "preprocessing_requirements", forbidden)
-    monkeypatch.setattr(orchestrator_module, "_serialize_stage5_analyzer_result", encode)
+    monkeypatch.setattr(orchestrator_module, "_serialize_analyzer_result", encode)
     with _prepared_case(tmp_path) as case:
         results = orchestrator.execute(
             case.prepared, case.descriptor, case.registry, result_callback=publish
@@ -610,7 +610,7 @@ def test_runtime_policy_publishes_all_remaining_enabled_without_execution(
             "Analyzer skipped by runtime policy after an earlier analyzer failure."
         )
         assert (
-            AnalyzerResult.model_validate_json(_serialize_stage5_analyzer_result(result)) == result
+            AnalyzerResult.model_validate_json(_serialize_analyzer_result(result)) == result
         )
 
 
@@ -811,7 +811,7 @@ def test_prepared_media_rejects_artifact_limit_plus_one_before_worker_start(
     runner = _ForbiddenRunner()
     with _prepared_case(tmp_path) as case:
         artifacts = list(case.prepared.artifacts)
-        for index in range(_MAX_STAGE5_ARTIFACTS):
+        for index in range(_MAX_GENERATED_ARTIFACTS):
             artifact_id = f"overflow_{index}"
             artifacts.append(
                 PreparedArtifact(
@@ -926,7 +926,7 @@ def test_worker_request_keeps_file_facts_and_artifact_count_defence_in_depth(
     with pytest.raises(ValueError, match="too many artifacts"):
         replace(
             request,
-            artifacts=request.artifacts * (_MAX_STAGE5_ARTIFACTS + 1),
+            artifacts=request.artifacts * (_MAX_GENERATED_ARTIFACTS + 1),
         )
 
 

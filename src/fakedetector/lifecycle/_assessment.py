@@ -1,4 +1,4 @@
-"""Pure deterministic completeness, risk, and recommendation policy for Stage 7."""
+"""Pure deterministic completeness, risk, and recommendation policy."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from fakedetector.domain import (
 )
 
 
-class Stage7AssessmentError(RuntimeError):
+class AnalysisAssessmentError(RuntimeError):
     """Safe failure raised when authoritative Stage 7 inputs are inconsistent."""
 
     def __init__(self, reason_code: str) -> None:
@@ -60,7 +60,7 @@ class CompletenessAssessmentService:
                 config.model_dump(mode="python", warnings="error")
             )
         except (PydanticSerializationError, TypeError, ValidationError, ValueError):
-            raise Stage7AssessmentError("invalid_configuration") from None
+            raise AnalysisAssessmentError("invalid_configuration") from None
 
     def assess(
         self,
@@ -82,7 +82,7 @@ class CompletenessAssessmentService:
             ValidationError,
             ValueError,
         ):
-            raise Stage7AssessmentError("invalid_completeness_input") from None
+            raise AnalysisAssessmentError("invalid_completeness_input") from None
 
 
 class RiskAssessmentService:
@@ -119,7 +119,7 @@ class RiskAssessmentService:
             ValidationError,
             ValueError,
         ):
-            raise Stage7AssessmentError("invalid_configuration") from None
+            raise AnalysisAssessmentError("invalid_configuration") from None
 
     def assess(
         self,
@@ -160,7 +160,7 @@ class RiskAssessmentService:
             ValidationError,
             ValueError,
         ):
-            raise Stage7AssessmentError("invalid_risk_input") from None
+            raise AnalysisAssessmentError("invalid_risk_input") from None
 
     def _severity_contribution(self, finding: Finding) -> int:
         scores = self._config.severity_scores
@@ -365,10 +365,10 @@ class RecommendationService:
             ValidationError,
             ValueError,
         ):
-            raise Stage7AssessmentError("invalid_recommendation_input") from None
+            raise AnalysisAssessmentError("invalid_recommendation_input") from None
 
 
-class Stage7AssessmentService:
+class AnalysisAssessmentService:
     """Compose the pure Stage 7 policy over one validated immutable config."""
 
     def __init__(self, config: RiskAssessmentConfig) -> None:
@@ -385,7 +385,7 @@ class Stage7AssessmentService:
             ValidationError,
             ValueError,
         ):
-            raise Stage7AssessmentError("invalid_configuration") from None
+            raise AnalysisAssessmentError("invalid_configuration") from None
         self._completeness = CompletenessAssessmentService(self._config.completeness)
         self._risk = RiskAssessmentService(self._config)
         self._recommendation = RecommendationService()

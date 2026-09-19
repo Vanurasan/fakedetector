@@ -35,14 +35,14 @@ from fakedetector.analyzers._models import (
     _ReadOnlyAnalyzerInput,
 )
 from fakedetector.analyzers._transport import (
-    _MAX_STAGE5_ANALYZER_RESULT_BYTES,
-    _serialize_stage5_analyzer_result,
+    _MAX_ANALYZER_RESULT_BYTES,
+    _serialize_analyzer_result,
     _WorkerArtifact,
     _WorkerRequest,
 )
 from fakedetector.analyzers._worker import _SpawnedWorkerRunner, _WorkerRunKind
 from fakedetector.domain import AnalyzerResult, AnalyzerStatus, ImageTechnicalParameters, MediaType
-from fakedetector.lifecycle._stage6 import Stage6FindingFormationError, Stage6FindingService
+from fakedetector.lifecycle._finding_formation import FindingFormationError, FindingFormationService
 
 _IMAGE_SIZE = 512
 _FIRST_REGION = (48, 64, 112, 112)
@@ -489,14 +489,14 @@ def test_copy_move_output_is_bounded_and_contains_no_feature_payload(tmp_path: P
     settings = ImageCopyMoveCorrespondenceSettings(max_keypoints=64, max_clusters=1)
 
     result = _analyze(path, settings=settings)
-    serialized = _serialize_stage5_analyzer_result(result)
+    serialized = _serialize_analyzer_result(result)
 
     assert result.raw_metrics["keypoint_count"] == 64
     assert result.raw_metrics["descriptor_count"] == 64
     assert result.raw_metrics["analysis_capped"] is True
     assert cast(int, result.raw_metrics["geometric_cluster_count"]) <= 1
     assert len(result.candidate_findings) <= 2
-    assert len(serialized) <= _MAX_STAGE5_ANALYZER_RESULT_BYTES
+    assert len(serialized) <= _MAX_ANALYZER_RESULT_BYTES
     payload = result.model_dump(mode="json", warnings="error")
     forbidden = {"descriptors", "keypoints", "matches", "pixels"}
     assert forbidden.isdisjoint(cast(dict[str, object], payload["raw_metrics"]))
@@ -557,7 +557,7 @@ def test_orb_tied_response_overflow_is_capped_before_matching_and_repeatable(
     assert descriptor_counts == [(settings.max_keypoints, settings.max_keypoints)] * 2
     assert all(len(result.candidate_findings) <= 8 for result in results)
     assert all(
-        len(_serialize_stage5_analyzer_result(result)) <= _MAX_STAGE5_ANALYZER_RESULT_BYTES
+        len(_serialize_analyzer_result(result)) <= _MAX_ANALYZER_RESULT_BYTES
         for result in results
     )
 
@@ -567,7 +567,7 @@ def test_positive_output_and_finding_identity_are_repeatable(tmp_path: Path) -> 
     _save_array(path, _positive_pixels(rgba=True))
     analyzer = ImageCopyMoveCorrespondenceAnalyzer()
     request = _request(path, path)
-    service = Stage6FindingService()
+    service = FindingFormationService()
 
     results = [analyzer.analyze(request) for _ in range(3)]
     findings = [service.form_findings((result,)) for result in results]
@@ -596,7 +596,7 @@ def test_converter_accepts_one_valid_copy_move_pair() -> None:
         ]
     )
 
-    findings = Stage6FindingService().form_findings((result,))
+    findings = FindingFormationService().form_findings((result,))
 
     assert len(findings) == 2
     assert {finding.correlation_group for finding in findings} == {
@@ -623,8 +623,8 @@ def test_converter_accepts_one_valid_copy_move_pair() -> None:
 def test_converter_rejects_malformed_copy_move_pair_structure(
     candidates: list[dict[str, object]],
 ) -> None:
-    with pytest.raises(Stage6FindingFormationError) as captured:
-        Stage6FindingService().form_findings((_copy_move_result(candidates),))
+    with pytest.raises(FindingFormationError) as captured:
+        FindingFormationService().form_findings((_copy_move_result(candidates),))
 
     assert captured.value.reason_code == "candidate_validation"
 
@@ -639,7 +639,7 @@ def test_converter_accepts_two_independent_copy_move_pairs() -> None:
         ]
     )
 
-    findings = Stage6FindingService().form_findings((result,))
+    findings = FindingFormationService().form_findings((result,))
 
     assert len(findings) == 4
     assert {
@@ -659,7 +659,7 @@ def test_copy_move_pair_validation_preserves_existing_finding_ids() -> None:
         ]
     )
 
-    findings = Stage6FindingService().form_findings((result,))
+    findings = FindingFormationService().form_findings((result,))
 
     assert [finding.finding_id for finding in findings] == [
         "finding_694f1a6c1e5e9046f143e45c8c9ab51fcaa8bf30386f98d549c5925a8197d443",
@@ -677,8 +677,8 @@ def test_converter_rejects_more_than_eight_copy_move_candidates(tmp_path: Path) 
         deep=True,
     )
 
-    with pytest.raises(Stage6FindingFormationError) as captured:
-        Stage6FindingService().form_findings((oversized,))
+    with pytest.raises(FindingFormationError) as captured:
+        FindingFormationService().form_findings((oversized,))
 
     assert captured.value.reason_code == "candidate_validation"
 
@@ -710,8 +710,8 @@ def test_converter_rejects_degenerate_or_out_of_bounds_copy_move_regions(
         deep=True,
     )
 
-    with pytest.raises(Stage6FindingFormationError) as captured:
-        Stage6FindingService().form_findings((invalid_result,))
+    with pytest.raises(FindingFormationError) as captured:
+        FindingFormationService().form_findings((invalid_result,))
 
     assert captured.value.reason_code == "candidate_validation"
 
@@ -721,7 +721,7 @@ def test_repeating_interface_elements_remain_weak_observations(tmp_path: Path) -
     _save_array(path, _repeating_ui_pixels())
 
     results = [_analyze(path), _analyze(path)]
-    findings = [Stage6FindingService().form_findings((result,)) for result in results]
+    findings = [FindingFormationService().form_findings((result,)) for result in results]
 
     assert all(result.status is AnalyzerStatus.COMPLETED for result in results)
     assert results[1] == results[0]

@@ -548,8 +548,10 @@ def test_missing_and_empty_file_are_transport_400_without_analysis_id() -> None:
     ("code", "category", "expected_status"),
     [
         ("file_too_large", "resource_limit", 413),
+        ("missing_extension", "unsupported_media", 415),
         ("unsupported_extension", "unsupported_media", 415),
         ("unsupported_mime_type", "unsupported_media", 415),
+        ("unsupported_media_type", "unsupported_media", 415),
         ("file_signature_mismatch", "validation", 415),
         ("unsafe_or_unreadable_file", "validation", 422),
     ],

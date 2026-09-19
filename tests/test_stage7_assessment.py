@@ -20,11 +20,11 @@ from fakedetector.domain import (
     RiskAssessment,
     RiskLevel,
 )
-from fakedetector.lifecycle._stage7 import (
+from fakedetector.lifecycle._assessment import (
+    AnalysisAssessmentError,
     CompletenessAssessmentService,
     RecommendationService,
     RiskAssessmentService,
-    Stage7AssessmentError,
     _TrustedCriticalRule,
 )
 
@@ -349,7 +349,7 @@ def test_completeness_rejects_results_not_matching_active_plan_order() -> None:
     results = [_result("analyzer_b"), _result("analyzer_a")]
 
     with pytest.raises(
-        Stage7AssessmentError,
+        AnalysisAssessmentError,
         match="Stage 7 assessment failed",
     ) as exc_info:
         service.assess(["analyzer_a", "analyzer_b"], results)
@@ -551,7 +551,7 @@ def test_risk_rejects_invalid_finding_provenance(
 ) -> None:
     completeness = _completeness(results)
 
-    with pytest.raises(Stage7AssessmentError) as exc_info:
+    with pytest.raises(AnalysisAssessmentError) as exc_info:
         RiskAssessmentService(_risk_config()).assess(completeness, results, [finding])
 
     assert exc_info.value.reason_code == "invalid_risk_input"
