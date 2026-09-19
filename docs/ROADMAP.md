@@ -115,9 +115,9 @@ AFTER_MVP
 Статус Stage 10: DONE / CLOSED
 Текущий этап: Stage 11 — Post-MVP Normalization & Hardening
 Статус Stage 11: IN_PROGRESS
-Последний завершённый Macro: Macro 4 — Product Naming & Architecture Normalization (DONE / owner accepted)
-Текущая задача: Macro 5 — Technical Debt / Config / Test-Support Cleanup (NOT_STARTED / next action)
-Ближайшее действие: начать Stage 11 / Macro 5 — Technical Debt / Config / Test-Support Cleanup
+Последний завершённый Macro: Macro 5 — Technical Debt / Config / Test-Support Cleanup (DONE / owner accepted)
+Текущая задача: Macro 6 — Tests / Comments / Documentation Normalization (NOT_STARTED / next action)
+Ближайшее действие: начать Stage 11 / Macro 6 — Tests / Comments / Documentation Normalization
 Критические блокеры: отсутствуют
 Реализация программы: Этапы 1–10 завершены; MVP 0.1.0 DONE / CLOSED; post-MVP whole-codebase audit — READY_FOR_NORMALIZATION_PLANNING
 Документационная база: сформирована
@@ -137,7 +137,7 @@ AFTER_MVP
 
 ### 2.2. Ближайшая задача
 
-Начать Stage 11 / Macro 5 — Technical Debt / Config / Test-Support Cleanup.
+Начать Stage 11 / Macro 6 — Tests / Comments / Documentation Normalization.
 
 ---
 
@@ -1816,8 +1816,8 @@ Post-MVP whole-codebase audit завершён с вердиктом
 - Macro 2 — Runtime State Retention: **DONE / owner accepted**;
 - Macro 3 — Analyzer Registration Normalization: **DONE / owner accepted**;
 - Macro 4 — Product Naming & Architecture Normalization: **DONE / owner accepted**;
-- Macro 5 — Technical Debt / Config / Test-Support Cleanup: **NOT_STARTED / next action**;
-- Macro 6 — Tests / Comments / Documentation Normalization: **NOT_STARTED**;
+- Macro 5 — Technical Debt / Config / Test-Support Cleanup: **DONE / owner accepted**;
+- Macro 6 — Tests / Comments / Documentation Normalization: **NOT_STARTED / next action**;
 - Macro 7 — Release Tooling Normalization: **NOT_STARTED**;
 - Macro 8 — Final Whole-Project Audit / Certification / Graphify Review:
   **NOT_STARTED**.
@@ -1999,26 +1999,46 @@ Compatibility shims, plugin architecture и новые зависимости н
 `1848 passed, 17 skipped`, покрытие `90%`; lock, Ruff, mypy, pre-commit,
 diff-check и CLI — `PASS`.
 
-Stage 11 остаётся `IN_PROGRESS`; следующая задача — Macro 5, Technical Debt /
-Config / Test-Support Cleanup.
+На момент закрытия Macro 4 Stage 11 оставался `IN_PROGRESS`; следующей задачей
+был Macro 5, Technical Debt / Config / Test-Support Cleanup.
 
-## Macro 5 — Technical Debt / Config / Test-Support Cleanup — NOT_STARTED
+## Macro 5 — Technical Debt / Config / Test-Support Cleanup — DONE / owner accepted
 
-Цель — устранить точечный технический долг, найденный аудитом:
+Macro 5 реализован, закоммичен, принят владельцем и прошёл независимый аудит.
+Точечная нормализация технического долга завершена:
 
-- **TD01:** подтверждённо мёртвый `_ALLOWED_MIME_TYPES`;
-- **TD02:** configuration fields с неактивным или неясным runtime-смыслом,
-  включая `hide_internal_error_details` и `external_systems.enabled`; schema
-  fields нельзя молча удалять, сначала принимается решение об их совместимости
-  и семантике;
-- **TD03:** test-only framework definitions/fake workers в production analyzer
-  catalog/package; требуется определить правильное размещение с сохранением
-  spawn-safe tests;
-- непосредственно подтверждённые мелкие stale suppressions и obsolete helpers.
+- **TD01:** удалён подтверждённо мёртвый `_ALLOWED_MIME_TYPES`; поведение
+  поддерживаемых MIME, форматов и сигнатур сохранено.
+- **TD02:** поля и имена схемы `1.0` сохранены;
+  `error_handling.hide_internal_error_details` допускает только `true`,
+  `external_systems.enabled` — только `false`. Ранее неактивные противоположные
+  значения отклоняются при валидации конфигурации. Defaults, `schema_version`,
+  поддерживаемый канонический JSON и идентичность config snapshot не изменены.
+  Раскрытие внутренних исключений и внешние интеграции не добавлены.
+- **TD03:** framework fake-анализаторы и fake worker definitions вынесены из
+  production-пакета и каталога в `tests/support`, отсутствующий в wheel.
+  Production-каталог содержит только прежние четыре доверенных first-party
+  built-in анализатора и не разрешает и не выполняет `framework_test.*`.
+  Узкий private resolver с явной инъекцией сохраняет реальные Windows-spawn
+  тесты. Plugin architecture, dynamic discovery, import-by-string, plugin entry
+  points и управление resolver через конфигурацию не введены.
 
-Широкая спекулятивная очистка не входит в Macro.
+Сохранены analyzer IDs, версии, группы и production worker keys, закрытая
+архитектура каталога Macro 3, имена по ответственности и HTTP-слои Macro 4,
+поведение lifecycle/risk/completeness/persistence и публичные контракты
+API/CLI/WebUI/result. Широкая очистка не выполнялась.
 
-## Macro 6 — Tests / Comments / Documentation Normalization — NOT_STARTED
+Целевая проверка реализации: `367 passed, 3 skipped`; независимый
+целевой аудит: `295 passed`, без пропусков; полный набор тестов: `1864 passed,
+17 skipped`, покрытие `90%`. Lock, Ruff, mypy, pre-commit, diff-check, CLI,
+AST, canonical snapshot, pickle/spawn и installed-wheel checks — `PASS`.
+Независимый аудит GPT-6 Astra Medium: финальный вердикт — **PASS**;
+замечаний, требующих исправления, нет.
+
+Stage 11 остаётся `IN_PROGRESS`; следующая задача — Macro 6, Tests / Comments /
+Documentation Normalization. Macro 6 ещё не начат.
+
+## Macro 6 — Tests / Comments / Documentation Normalization — NOT_STARTED / next action
 
 Цель — нормализовать архитектуру тестов и текущую техническую документацию после
 стабилизации production-имён и контрактов.
@@ -2033,6 +2053,15 @@ Config / Test-Support Cleanup.
 - добавлять отсутствующие реальные integration-boundary tests там, где mocks
   скрывали проблемы;
 - не сокращать число тестов ради уменьшения suite.
+
+Зарезервировано для Macro 6; при закрытии Macro 5 не выполняется:
+
+- нормализация терминологии Macro / Increment;
+- полное удаление финального раздела ROADMAP
+  `6. Команда агенту для продолжения разработки`, включая инструкцию, блок кода
+  и отдельный либо связанный `svg`;
+- устранение известной чувствительности изолированных тестов к порядку
+  импортов и циклическим импортам.
 
 Целевая политика comments/docstrings:
 
