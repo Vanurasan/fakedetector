@@ -7,8 +7,10 @@ FakeDetector 0.1.0 — локальный CPU-only MVP для предварит
 
 FakeDetector MVP 0.1.0 существует; Stages 1–10 — `DONE / CLOSED`. Текущий этап
 разработки — Stage 11, «Post-MVP Normalization & Hardening» (`IN_PROGRESS`).
-Macros 0–6 — `DONE / owner accepted`; следующая задача — Macro 7,
-«Release Tooling Normalization» (`NOT_STARTED / next action`). Macro 6 завершил
+Macros 0–7 — `DONE / owner accepted`; следующая задача — Macro 8,
+«Final Whole-Project Audit / Certification / Graphify Review»
+(`NOT_STARTED / next action`). Macro 7 завершил нормализацию release tooling;
+публичное поведение продукта не изменилось. Macro 6 завершил
 нормализацию тестов, комментариев и текущей документации, устранил циклическую
 зависимость импортов; публичное поведение сохранено. Независимый аудит
 GPT-6 Astra Low — `PASS`, замечаний, требующих исправления, нет.
