@@ -7,12 +7,12 @@ FakeDetector 0.1.0 — локальный CPU-only MVP для предварит
 
 FakeDetector MVP 0.1.0 существует; Stages 1–10 — `DONE / CLOSED`. Текущий этап
 разработки — Stage 11, «Post-MVP Normalization & Hardening» (`IN_PROGRESS`).
-Macro 0, «Roadmap Restructuring», Macro 1, «Confirmed Defect Remediation»,
-Macro 2, «Runtime State Retention», Macro 3, «Analyzer Registration
-Normalization», Macro 4, «Product Naming & Architecture Normalization», и
-Macro 5, «Technical Debt / Config / Test-Support Cleanup», —
-`DONE / owner accepted`; следующая задача — Macro 6, «Tests / Comments /
-Documentation Normalization» (`NOT_STARTED / next action`). После Macro 2 `TaskRegistry`
+Macros 0–6 — `DONE / owner accepted`; следующая задача — Macro 7,
+«Release Tooling Normalization» (`NOT_STARTED / next action`). Macro 6 завершил
+нормализацию тестов, комментариев и текущей документации, устранил циклическую
+зависимость импортов; публичное поведение сохранено. Независимый аудит
+GPT-6 Astra Low — `PASS`, замечаний, требующих исправления, нет.
+После Macro 2 `TaskRegistry`
 владеет только незавершённой live/recoverable работой, а завершённая история
 читается из `ResultRepository`; успешные сохранённые задачи вытесняются без
 terminal cache, TTL или LRU.
