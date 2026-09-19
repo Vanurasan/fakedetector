@@ -1,4 +1,4 @@
-"""Generate the deterministic FakeDetector Stage 10 demo media set."""
+"""Generate the deterministic FakeDetector release demo media set."""
 
 from __future__ import annotations
 
@@ -99,9 +99,7 @@ def _generate_video(path: Path, *, ffmpeg: str) -> None:
     except (OSError, subprocess.SubprocessError):
         raise DemoGenerationError("FFmpeg could not generate the demo video.") from None
     if completed.returncode != 0:
-        raise DemoGenerationError(
-            "FFmpeg lacks a capability required for the demo video recipe."
-        )
+        raise DemoGenerationError("FFmpeg lacks a capability required for the demo video recipe.")
 
 
 def _validate_image(path: Path) -> None:
@@ -110,9 +108,10 @@ def _validate_image(path: Path) -> None:
             image.load()
             if image.format != "PNG" or image.mode != "RGB" or image.size != (512, 512):
                 raise DemoGenerationError("Generated image failed validation.")
-            if image.crop((48, 64, 160, 176)).tobytes() != image.crop(
-                (320, 300, 432, 412)
-            ).tobytes():
+            if (
+                image.crop((48, 64, 160, 176)).tobytes()
+                != image.crop((320, 300, 432, 412)).tobytes()
+            ):
                 raise DemoGenerationError("Generated image lacks its repeated region.")
     except (OSError, ValueError):
         raise DemoGenerationError("Generated image failed validation.") from None

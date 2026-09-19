@@ -344,6 +344,58 @@ YYYY-MM-DD
 
 ### Изменено
 
+- **[Stage 11/Macro 7] Release Tooling Normalization завершён и принят
+  владельцем.** `generate_stage10_demo_media.py`, `verify_stage10_package.py`
+  и `verify_stage10_release.py` переименованы соответственно в
+  `generate_release_demo_media.py`, `verify_release_package.py` и
+  `verify_release.py`; текущие тесты также названы по ответственности.
+  Совместимые обёртки не оставлены: поддерживаемого внешнего контракта на старые
+  имена не обнаружено. Verifier размером около 2207 строк существенно
+  декомпозирован: координатор `scripts/verify_release.py` использует закрытый
+  пакет `scripts/release_tooling/` (`common`, `build`, `kit`, `environment`,
+  `demo`, `transport`, `server`, `probes`, `reporting`). Зависимости ацикличны,
+  закрытые модули не импортируют координатор; tooling остаётся вне runtime
+  пакета продукта. Сохранены strict clean-tree/HEAD/source-status проверки,
+  явно несертифицирующий development mode, Windows 11 x64 / Python 3.12,
+  source → sdist → wheel, constraints из `uv.lock`, точный состав kit,
+  manifest `1.0`, SHA-256, безопасное извлечение ZIP, свежее внешнее venv,
+  установка точного проверенного wheel, provenance/изоляция checkout,
+  равенство зависимостей, реальные CLI/API/WebUI, анализ image/audio/video,
+  persistence/restart retrieval, cleanup/graceful shutdown, завершение своих
+  процессов, сокрытие секретов и финальная проверка source/kit integrity.
+  Усилена безопасность startup: при исключении после spawn и до передачи
+  владения координатору `BaseException`-пути завершают свой процесс. Покрыты
+  `RuntimeError`, `KeyboardInterrupt`, `SystemExit`, `BaseException`, initial
+  и restart startup, terminate → bounded wait → kill; двойного cleanup/reap
+  не обнаружено. Добавлены 23 граничных случая release tooling: baseline
+  `1883 collected`, `1866 passed, 17 skipped`; итог `1906 collected`,
+  `1889 passed, 17 skipped`; покрытие осталось `90%`. Целевые наборы demo
+  handoff / packaging / verification / boundaries: `8 / 4 / 29 / 23 passed`.
+  `uv lock --check`, Ruff, mypy, pytest, pre-commit, `git diff --check` и product
+  CLI help — `PASS`. Owner complete-diff review и независимый аудит GPT-6 Astra
+  Medium — `PASS`; `BLOCKER 0`, `HIGH 0`, `MEDIUM 0`, `LOW 0`.
+  После commit `abe8270e967470d12b4bed25e690f264e9b52849` строгий запуск
+  `uv run python scripts/verify_release.py` прошёл:
+  `overall_status=passed`, `certification_mode=strict`, `certified=true`,
+  `source_sha_stable=true`, `source_tree_clean=true`. SHA в начале и конце
+  совпал с этим commit, оба source status пусты; gate не изменил репозиторий.
+  Подтверждены точный wheel из sdist, 8 файлов kit, manifest/ZIP/hashes,
+  безопасное чистое извлечение, установка wheel из проверенного ZIP во внешнее
+  venv без editable/checkout/dev-only зависимостей, dependency comparison
+  `25/25`, реальный CLI/API/WebUI и завершённый анализ demo image/audio/video.
+  Canonical persistence проверен; после restart получены все четыре прежних
+  результата, прежний результат отображён WebUI. Workspaces/quarantine residue
+  отсутствуют, demo media ограничены своим каталогом, два своих серверных
+  процесса завершены, listeners закрыты без широкой системной очистки.
+  Graceful Windows `CTRL_BREAK_EVENT`: return code `3`, lifecycle shutdown
+  markers подтверждены. Runtime-поведение продукта не изменилось: API
+  routes/schemas, WebUI behavior/auth, config и persisted result schemas,
+  lifecycle, analyzers, risk/completeness/recommendation, зависимости продукта
+  и `uv.lock` сохранены. Stage 11 остаётся `IN_PROGRESS`; Macro 8 —
+  `NOT_STARTED / next action`. Сертификация tooling Macro 7 не заменяет
+  финальную whole-project сертификацию Macro 8; Macro 8 и Graphify review не
+  начинались. Подробные результаты закрытия — в `ROADMAP.md`, Macro 7.
+
 - **[Stage 11/Macro 6] Tests / Comments / Documentation Normalization завершён
   и принят владельцем.** Реализация закоммичена; нормализованы тесты и текущая
   техническая документация после Macros 1–5 без изменения публичного поведения.

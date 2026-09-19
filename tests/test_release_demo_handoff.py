@@ -1,4 +1,4 @@
-"""Stage 10 Macro 2 demo-media and handoff regression tests."""
+"""Release demo-media and handoff regression tests."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from fakedetector.app import create_app
 from fakedetector.config.models import AppConfig
 
 _ROOT = Path(__file__).resolve().parents[1]
-_SCRIPT = _ROOT / "scripts" / "generate_stage10_demo_media.py"
+_SCRIPT = _ROOT / "scripts" / "generate_release_demo_media.py"
 _CONFIG = _ROOT / "config" / "config.example.yaml"
 _API_AUTH = {"Authorization": "Bearer stage8-test-token"}
 _EXPECTED_ANALYZERS = {
@@ -34,7 +34,7 @@ _EXPECTED_ANALYZERS = {
 
 
 def _load_generator() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("stage10_demo_generator", _SCRIPT)
+    spec = importlib.util.spec_from_file_location("release_demo_generator", _SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -43,7 +43,7 @@ def _load_generator() -> ModuleType:
 
 @pytest.fixture(scope="module")
 def generated_media(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
-    output = tmp_path_factory.mktemp("stage10-demo") / "media"
+    output = tmp_path_factory.mktemp("release-demo") / "media"
     module = _load_generator()
     paths = module.generate_demo_media(output)
     return {path.suffix.removeprefix("."): path for path in paths}
@@ -196,9 +196,10 @@ def test_png_and_wav_are_byte_deterministic(
 
     assert second["png"].read_bytes() == generated_media["png"].read_bytes()
     assert second["wav"].read_bytes() == generated_media["wav"].read_bytes()
-    assert _probe_video(second["mp4"])["streams"][0] == _probe_video(
-        generated_media["mp4"]
-    )["streams"][0]
+    assert (
+        _probe_video(second["mp4"])["streams"][0]
+        == _probe_video(generated_media["mp4"])["streams"][0]
+    )
 
 
 def test_handoff_examples_are_safe_and_profile_b_valid() -> None:

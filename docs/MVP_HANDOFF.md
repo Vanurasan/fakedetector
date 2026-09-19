@@ -11,7 +11,7 @@ FakeDetector формирует технические признаки и об�
 
 ## Состав release kit и роли
 
-Macro 3 собирает и проверяет versioned release kit со следующим точным
+Инструмент `verify_release.py` собирает и проверяет versioned release kit со следующим точным
 recipient-facing inventory:
 
 ```text
@@ -19,7 +19,7 @@ fakedetector-0.1.0-py3-none-any.whl
 runtime-constraints.txt
 config.example.yaml
 .env.example
-generate_stage10_demo_media.py
+generate_release_demo_media.py
 MVP_HANDOFF.md
 CHANGELOG.md
 release-manifest.json
@@ -49,14 +49,14 @@ uv export --locked --no-dev --no-emit-project --format requirements.txt `
 non-certifying режиме:
 
 ```powershell
-uv run python scripts/verify_stage10_release.py --development
+uv run python scripts/verify_release.py --development
 ```
 
 После review и commit строгий запуск требует чистое source tree и связывает
 release с новым commit SHA:
 
 ```powershell
-uv run python scripts/verify_stage10_release.py
+uv run python scripts/verify_release.py
 ```
 
 По умолчанию output создаётся во внешнем OS temp directory. Для явного внешнего
@@ -190,7 +190,7 @@ API token также должен быть непустым. При отсутс
 Из каталога `work`:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\generate_stage10_demo_media.py `
+..\.venv\Scripts\python.exe ..\generate_release_demo_media.py `
   --output-dir .\demo-media
 ```
 

@@ -1,4 +1,4 @@
-"""Stage 10 Macro 1 package-version and artifact regression tests."""
+"""release package-version and artifact regression tests."""
 
 from __future__ import annotations
 
@@ -53,9 +53,7 @@ def _requirements(path: Path) -> list[Requirement]:
 def _locked_markers(value: object) -> set[str]:
     if isinstance(value, dict):
         markers = {
-            str(Marker(marker))
-            for marker in [value.get("marker")]
-            if isinstance(marker, str)
+            str(Marker(marker)) for marker in [value.get("marker")] if isinstance(marker, str)
         }
         for child in value.values():
             markers.update(_locked_markers(child))

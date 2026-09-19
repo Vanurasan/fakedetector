@@ -1916,10 +1916,23 @@ CPU-only. Основной артефакт установки — wheel; sdist 
 
 Runtime constraints генерируются механически из `uv.lock` через
 `uv export --locked --no-dev --no-emit-project`; отдельный вручную
-поддерживаемый lock не вводится. `scripts/verify_stage10_package.py`
+поддерживаемый lock не вводится. `scripts/verify_release_package.py`
 собирает sdist и wheel, устанавливает точный wheel с constraints в
 свежее внешнее venv и проверяет distribution versions, import origin,
 console script и package resources.
+
+Полную проверку поставки координирует `scripts/verify_release.py`.
+Её закрытая реализация находится в `scripts/release_tooling/`: `common`
+отвечает за ошибки, команды, изоляцию окружения, хэши и сокрытие секретов;
+`build` — за исходное дерево, платформу и сборку; `kit` — за состав поставки,
+manifest и ZIP; `environment` — за установку и provenance; `demo` — за
+генерацию и свойства демонстрационных файлов; `server` — за конфигурацию
+проверки и принадлежащие ей процессы; `probes` — за API/WebUI, результаты,
+сохранение и повторное получение после перезапуска; `reporting` — за отчёт.
+Общий модуль `transport` ограничивает HTTP-ответы и запрещает автоматические
+перенаправления. `server` и `probes` используют его независимо друг от друга.
+Внутренние модули не импортируют координирующий скрипт; зависимости ацикличны.
+Эти инструменты остаются вне runtime-пакета продукта.
 
 ### 16.3. Базовые зависимости
 

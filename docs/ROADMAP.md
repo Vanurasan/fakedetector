@@ -115,9 +115,9 @@ AFTER_MVP
 Статус Stage 10: DONE / CLOSED
 Текущий этап: Stage 11 — Post-MVP Normalization & Hardening
 Статус Stage 11: IN_PROGRESS
-Последний завершённый Macro: Macro 6 — Tests / Comments / Documentation Normalization (DONE / owner accepted)
-Текущая задача: Macro 7 — Release Tooling Normalization (NOT_STARTED / next action)
-Ближайшее действие: начать Stage 11 / Macro 7 — Release Tooling Normalization
+Последний завершённый Macro: Macro 7 — Release Tooling Normalization (DONE / owner accepted)
+Текущая задача: Macro 8 — Final Whole-Project Audit / Certification / Graphify Review (NOT_STARTED / next action)
+Ближайшее действие: начать Stage 11 / Macro 8 — Final Whole-Project Audit / Certification / Graphify Review
 Критические блокеры: отсутствуют
 Реализация программы: Этапы 1–10 завершены; MVP 0.1.0 DONE / CLOSED; post-MVP whole-codebase audit — READY_FOR_NORMALIZATION_PLANNING
 Документационная база: сформирована
@@ -137,7 +137,7 @@ AFTER_MVP
 
 ### 2.2. Ближайшая задача
 
-Начать Stage 11 / Macro 7 — Release Tooling Normalization.
+Начать Stage 11 / Macro 8 — Final Whole-Project Audit / Certification / Graphify Review.
 
 ---
 
@@ -1818,9 +1818,9 @@ Post-MVP whole-codebase audit завершён с вердиктом
 - Macro 4 — Product Naming & Architecture Normalization: **DONE / owner accepted**;
 - Macro 5 — Technical Debt / Config / Test-Support Cleanup: **DONE / owner accepted**;
 - Macro 6 — Tests / Comments / Documentation Normalization: **DONE / owner accepted**;
-- Macro 7 — Release Tooling Normalization: **NOT_STARTED / next action**;
+- Macro 7 — Release Tooling Normalization: **DONE / owner accepted**;
 - Macro 8 — Final Whole-Project Audit / Certification / Graphify Review:
-  **NOT_STARTED**.
+  **NOT_STARTED / next action**.
 
 ## Macro 0 — Roadmap Restructuring — DONE / owner accepted
 
@@ -2081,33 +2081,97 @@ Macro 6 реализован, закоммичен, принят владель�
 порядка импортов в свежих процессах — `PASS`. Независимый аудит GPT-6 Astra Low:
 финальный вердикт — **PASS**, замечаний, требующих исправления, нет.
 
-Stage 11 остаётся `IN_PROGRESS`; следующая задача — Macro 7, Release Tooling
-Normalization (`NOT_STARTED / next action`). Работы Macro 7 и Macro 8 не начаты.
+На момент закрытия Macro 6 Stage 11 оставался `IN_PROGRESS`; следующей задачей
+был Macro 7, Release Tooling Normalization (`NOT_STARTED / next action`).
+Работы Macro 7 и Macro 8 тогда не были начаты.
 
-## Macro 7 — Release Tooling Normalization — NOT_STARTED / next action
+## Macro 7 — Release Tooling Normalization — DONE / owner accepted
 
-Цель — преобразовать Stage 10 release tooling в долгоживущий product release
-tooling без ослабления сертификационных гарантий.
+Нормализация release tooling завершена и принята владельцем. Полный diff
+проверен владельцем — `PASS`; независимый аудит GPT-6 Astra Medium — `PASS`,
+замечаний, требующих исправления, нет (`BLOCKER 0`, `HIGH 0`, `MEDIUM 0`, `LOW 0`).
+Реализация зафиксирована в commit `abe8270e967470d12b4bed25e690f264e9b52849`.
 
-Предполагаемое семантическое переименование:
+В Macro 7 выполнены семантические переименования:
 
-```text
-generate_stage10_demo_media.py → semantic release/demo name
-verify_stage10_package.py → semantic package verification name
-verify_stage10_release.py → semantic release certification name
-```
+- `generate_stage10_demo_media.py` → `generate_release_demo_media.py`;
+- `verify_stage10_package.py` → `verify_release_package.py`;
+- `verify_stage10_release.py` → `verify_release.py`.
 
-Ответственности постепенно разделяются на build/provenance, kit
-manifest/extraction, installed environment, server lifecycle, HTTP/result probes
-и report generation. Чисто эстетическая перепись не требуется.
+Текущие тесты release tooling также получили имена по ответственности.
+Совместимые обёртки не оставлены: поддерживаемого внешнего контракта,
+требующего старых имён файлов, не обнаружено. Прежний verifier размером около
+2207 строк существенно декомпозирован: `scripts/verify_release.py` стал
+высокоуровневым координатором, а реализация вынесена в закрытый пакет
+`scripts/release_tooling/` с модулями `common`, `build`, `kit`, `environment`,
+`demo`, `transport`, `server`, `probes`, `reporting`. Граф зависимостей ацикличен;
+закрытые модули не импортируют координатор, инструменты остаются вне runtime
+пакета продукта. Описание ответственности модулей — в `PROJECT.md`, §16.2.1.
 
-Должны сохраниться все доказанные гарантии Stage 10: sdist → wheel; constraints
-из lock; exact release kit; manifest/hashes; clean extraction; fresh environment;
-provenance установленного wheel; отсутствие checkout import; реальные HTTP
-API/WebUI; анализ image/audio/video; persistence; restart retrieval; cleanup;
-graceful shutdown; clean-SHA certification.
+Сохранены сертификационные гарантии:
 
-## Macro 8 — Final Whole-Project Audit / Certification / Graphify Review — NOT_STARTED
+- strict требует чистого дерева tracked и untracked файлов; development явно
+  не сертифицирует; проверяются стабильность HEAD и source status, контракт
+  хоста Windows 11 x64 workstation / Python 3.12;
+- source → sdist → wheel из этого точного sdist; runtime constraints механически
+  экспортируются из `uv.lock`; проверяются точный состав release kit,
+  manifest schema `1.0`, SHA-256, безопасные ZIP validation и extraction;
+- свежее внешнее venv, установка из точного проверенного извлечённого wheel,
+  provenance установленного пакета, изоляция от checkout и равенство runtime
+  dependencies;
+- реальный установленный CLI, HTTP-проверки API/WebUI, анализ image/audio/video,
+  persistence, получение прежних результатов после restart, cleanup,
+  graceful shutdown и завершение принадлежащих проверке процессов;
+- безопасное сокрытие секретов и итоговые проверки целостности исходного дерева
+  и release kit.
+
+Устранён узкий пробел владения процессом: если startup завершается исключением
+после создания сервера, но до передачи владения координатору, обработка
+`BaseException` завершает принадлежащий проверке процесс. Покрыты `RuntimeError`,
+`KeyboardInterrupt`, `SystemExit`, `BaseException`, первоначальный и повторный
+startup, эскалация terminate → bounded wait → kill. Двойного cleanup/reap не
+обнаружено. Это усиление безопасности tooling, а не изменение поведения продукта.
+
+Результаты проверок реализации: baseline — `1883 collected`,
+`1866 passed, 17 skipped`, покрытие `90%`; итог — `1906 collected`,
+`1889 passed, 17 skipped`, покрытие `90%`. Добавлены `23` граничных случая
+release tooling. Целевые наборы: release demo handoff — `8 passed`, release
+packaging — `4 passed`, release verification — `29 passed`, release tooling
+boundaries — `23 passed`. Полный quality barrier: `uv lock --check`, Ruff,
+mypy, pytest, pre-commit, `git diff --check`, product CLI help — `PASS`.
+
+Строгая проверка после implementation commit командой
+`uv run python scripts/verify_release.py` — `PASS`:
+`overall_status=passed`, `certification_mode=strict`, `certified=true`,
+`source_sha_stable=true`, `source_tree_clean=true`. SHA в начале и конце —
+`abe8270e967470d12b4bed25e690f264e9b52849`; source status в начале и конце пуст.
+Release gate не изменил состояние репозитория. Подтверждено:
+
+- создан sdist, wheel собран из него, проверен точный wheel;
+- release kit содержит ровно 8 файлов; manifest и ZIP проверены, имена членов
+  безопасны, извлечение чистое, хэши совпали;
+- создано свежее внешнее venv, установлен wheel из проверенного ZIP;
+  editable install — `false`, checkout отсутствует в `sys.path`, сравнение
+  зависимостей — `25/25`, установленных dev-only зависимостей нет;
+- сгенерированы demo image/audio/video, запущен реальный установленный CLI
+  server, проверены API/WebUI; анализ всех трёх типов завершён, canonical
+  persistence подтверждён; после restart получены все четыре прежних результата,
+  WebUI отобразил прежний результат;
+- workspaces и остатки quarantine отсутствуют, demo media ограничены своим
+  каталогом; два принадлежащих проверке серверных процесса завершены, listeners
+  закрыты, широкая системная очистка не применялась;
+- graceful shutdown через Windows `CTRL_BREAK_EVENT` подтверждён кодом возврата
+  `3` и lifecycle shutdown markers.
+
+Поведение runtime продукта не изменилось: API routes/schemas, WebUI behavior/auth,
+config schema, persisted result schema, lifecycle, analyzers,
+risk/completeness/recommendation, зависимости продукта и `uv.lock` сохранены.
+
+Stage 11 остаётся `IN_PROGRESS`; Macro 8 — `NOT_STARTED / next action`.
+Строгая сертификация tooling Macro 7 не является финальной whole-project
+сертификацией Stage 11 / Macro 8. Macro 8 не начат; решение по Graphify отложено.
+
+## Macro 8 — Final Whole-Project Audit / Certification / Graphify Review — NOT_STARTED / next action
 
 После завершения нормализации необходимо:
 
