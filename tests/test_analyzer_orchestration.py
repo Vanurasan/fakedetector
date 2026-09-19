@@ -10,19 +10,22 @@ from io import BytesIO, UnsupportedOperation
 from pathlib import Path
 
 import pytest
+import support.framework_analyzers as framework_support
 import yaml
+from support.framework_analyzers import (
+    _execute_framework_worker,
+    _framework_registry,
+    _framework_runner,
+    _framework_test_registrations,
+    _resolve_framework_definition,
+)
 
 import fakedetector
 import fakedetector.analyzers as analyzers_package
 import fakedetector.analyzers._orchestrator as orchestrator_module
-import fakedetector.analyzers._worker as analyzer_worker_module
 import fakedetector.domain as domain
 from fakedetector._generated_artifact_budget import _MAX_GENERATED_ARTIFACTS
-from fakedetector.analyzers._catalog import (
-    _framework_test_registrations,
-    _resolve_worker_definition,
-    _WorkerAnalyzerDefinition,
-)
+from fakedetector.analyzers._catalog import _WorkerAnalyzerDefinition
 from fakedetector.analyzers._errors import AnalyzerInfrastructureError
 from fakedetector.analyzers._models import (
     AnalyzerArtifactInput,
@@ -42,7 +45,6 @@ from fakedetector.analyzers._transport import (
 )
 from fakedetector.analyzers._worker import (
     _encode_response,
-    _execute_worker,
     _WorkerRun,
     _WorkerRunKind,
 )
@@ -187,9 +189,9 @@ def _orchestrator(
     *,
     runner: _WorkerRunner | None = None,
 ) -> AnalyzerOrchestrator:
-    registry = AnalyzerRegistry(config, _framework_test_registrations())
+    registry = _framework_registry(config, _framework_test_registrations())
     if runner is None:
-        return AnalyzerOrchestrator(registry)
+        return AnalyzerOrchestrator(registry, runner=_framework_runner())
     return AnalyzerOrchestrator(registry, runner=runner)
 
 
@@ -275,7 +277,7 @@ def test_disabled_analyzer_creates_no_result_and_no_worker(tmp_path: Path) -> No
 class _ContractResultRunner:
     def run(self, request: _WorkerRequest, timeout_seconds: float) -> _WorkerRun:
         assert timeout_seconds == request.timeout_seconds
-        definition = _resolve_worker_definition(request.worker_key)
+        definition = _resolve_framework_definition(request.worker_key)
         assert definition is not None
         result = AnalyzerResult(
             analyzer_id=definition.analyzer_id,
@@ -308,7 +310,7 @@ class _ContractResultRunner:
 class _PostNormalizationOversizeRunner:
     def run(self, request: _WorkerRequest, timeout_seconds: float) -> _WorkerRun:
         assert timeout_seconds == request.timeout_seconds
-        definition = _resolve_worker_definition(request.worker_key)
+        definition = _resolve_framework_definition(request.worker_key)
         assert definition is not None
         base = AnalyzerResult(
             analyzer_id=definition.analyzer_id,
@@ -367,7 +369,7 @@ def test_post_duration_result_overflow_becomes_controlled_analyzer_failure(
 
 def test_registry_plan_is_detached_from_later_source_config_mutation() -> None:
     config = _config(MediaType.IMAGE, ["fake_image_analyzer"])
-    registry = AnalyzerRegistry(config, _framework_test_registrations())
+    registry = _framework_registry(config, _framework_test_registrations())
 
     config.analyzers.image.enabled.clear()
     config.analyzers.defaults.timeout_seconds = 99
@@ -516,7 +518,7 @@ class _ExecutingRunner:
         return _WorkerRun(
             _WorkerRunKind.RESPONSE,
             duration_ms=1,
-            response=_execute_worker(request),
+            response=_execute_framework_worker(request),
         )
 
 
@@ -710,7 +712,7 @@ def _install_stream_operation_analyzer(
     target: str,
     operation: str,
 ) -> None:
-    definition = _resolve_worker_definition("framework_test.image")
+    definition = _resolve_framework_definition("framework_test.image")
     assert definition is not None
     analyzer = _StreamOperationAnalyzer(
         definition,
@@ -719,8 +721,8 @@ def _install_stream_operation_analyzer(
     )
     replacement = replace(definition, factory=lambda: analyzer)
     monkeypatch.setattr(
-        analyzer_worker_module,
-        "_resolve_worker_definition",
+        framework_support,
+        "_resolve_framework_definition",
         lambda worker_key: replacement if worker_key == replacement.worker_key else None,
     )
 
@@ -842,7 +844,7 @@ class _CapturingRunner:
         return _WorkerRun(
             _WorkerRunKind.RESPONSE,
             duration_ms=3,
-            response=_execute_worker(request),
+            response=_execute_framework_worker(request),
         )
 
 
@@ -953,7 +955,7 @@ def test_worker_local_analyzer_request_has_only_read_capabilities(tmp_path: Path
     artifact_path = tmp_path / "artifact.bin"
     source_path.write_bytes(b"source")
     artifact_path.write_bytes(b"artifact")
-    definition = _resolve_worker_definition("framework_test.image")
+    definition = _resolve_framework_definition("framework_test.image")
     assert definition is not None
     settings = definition.settings_model.model_validate({})
     source = _ReadOnlyAnalyzerInput(source_path)

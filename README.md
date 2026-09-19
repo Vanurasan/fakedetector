@@ -9,9 +9,10 @@ FakeDetector MVP 0.1.0 существует; Stages 1–10 — `DONE / CLOSED`. 
 разработки — Stage 11, «Post-MVP Normalization & Hardening» (`IN_PROGRESS`).
 Macro 0, «Roadmap Restructuring», Macro 1, «Confirmed Defect Remediation»,
 Macro 2, «Runtime State Retention», Macro 3, «Analyzer Registration
-Normalization», и Macro 4, «Product Naming & Architecture Normalization», —
-`DONE / owner accepted`; следующая задача — Macro 5, «Technical Debt / Config /
-Test-Support Cleanup». После Macro 2 `TaskRegistry`
+Normalization», Macro 4, «Product Naming & Architecture Normalization», и
+Macro 5, «Technical Debt / Config / Test-Support Cleanup», —
+`DONE / owner accepted`; следующая задача — Macro 6, «Tests / Comments /
+Documentation Normalization» (`NOT_STARTED / next action`). После Macro 2 `TaskRegistry`
 владеет только незавершённой live/recoverable работой, а завершённая история
 читается из `ResultRepository`; успешные сохранённые задачи вытесняются без
 terminal cache, TTL или LRU.
@@ -23,6 +24,13 @@ Macro 4 нормализовал внутренние имена production-мо
 ответственности и закрыл A03: API и WebUI используют общую нейтральную
 HTTP-политику, WebUI больше не зависит от реализации API adapter. Внешние
 контракты и поведение сохранены; финальный независимый аудит — `PASS`.
+Macro 5 устранил подтверждённый технический долг: удалена мёртвая MIME-константа,
+неподдерживаемые значения двух полей конфигурации теперь отклоняются при
+валидации, а framework fake-анализаторы перенесены в `tests/support` и исключены
+из production-каталога и wheel. Схема `1.0`, defaults, поддерживаемые config
+snapshots и публичные контракты сохранены; реальные Windows-spawn тесты
+продолжают выполняться. Независимый аудит GPT-6 Astra Medium — `PASS`,
+замечаний, требующих исправления, нет.
 Stage 11 не расширяет продукт широкими новыми возможностями: он нормализует и
 укрепляет доказанное MVP-поведение. Подробный план и статусы — в
 [ROADMAP](docs/ROADMAP.md).

@@ -12,6 +12,7 @@ import yaml
 from pydantic import ValidationError as PydanticValidationError
 from pytest import param
 
+from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.loader import ConfigurationError, load_config
 from fakedetector.config.models import (
     APIConfig,
@@ -19,6 +20,7 @@ from fakedetector.config.models import (
     CompletenessConfig,
     CriticalOverrideConfig,
     ErrorHandlingConfig,
+    ExternalSystemsConfig,
     LoggingConfig,
     RiskAssessmentConfig,
     RiskThresholds,
@@ -1339,3 +1341,58 @@ def test_configuration_error_chain_does_not_leak_env_value() -> None:
         assert error.__context__ is None
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "unsupported"),
+    [("error_handling", "hide_internal_error_details", False),
+     ("external_systems", "enabled", True)],
+)
+def test_unsupported_inert_config_modes_fail_safely(
+    tmp_path: Path, section: str, field: str, unsupported: bool,
+) -> None:
+    raw = yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+    raw[section][field] = unsupported
+    with pytest.raises(PydanticValidationError) as error:
+        AppConfig.model_validate(raw)
+    assert error.value.errors()[0]["loc"] == (section, field)
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigurationError, match="^Configuration validation failed$"):
+        load_config(path, env={})
+
+    env_key = f"FAKEDETECTOR_{section.upper()}__{field.upper()}"
+    for value in (str(unsupported).lower(), "PRIVATE-config-value"):
+        with pytest.raises(ConfigurationError) as error:
+            load_config("config/config.example.yaml", env={env_key: value})
+        diagnostic = "".join(traceback.format_exception(error.value))
+        assert value not in diagnostic
+        assert error.value.__context__ is None
+
+
+def test_fixed_config_defaults_schema_and_baseline_snapshot_are_preserved() -> None:
+    config = load_config("config/config.example.yaml", env={})
+    assert config.schema_version == "1.0"
+    assert config.error_handling.hide_internal_error_details is True
+    assert config.external_systems.enabled is False
+    assert ErrorHandlingConfig().hide_internal_error_details is True
+    assert ExternalSystemsConfig().enabled is False
+    for model, field, value in (
+        (ErrorHandlingConfig, "hide_internal_error_details", True),
+        (ExternalSystemsConfig, "enabled", False),
+    ):
+        schema = model.model_json_schema()["properties"][field]
+        assert schema["const"] is value
+        assert schema["default"] is value
+        assert schema["type"] == "boolean"
+    snapshot = _ConfigSnapshot.capture(config)
+    # Captured from the supported canonical example at the Macro 5 baseline HEAD.
+    assert snapshot.snapshot_id == (
+        "1d8a5ae7d4f7f6a8d77fbc5987fc09af237a00a77c16a833e15f9841f57a8f66"
+    )
+    assert _ConfigSnapshot.capture(snapshot.materialize()) == snapshot
+    raw = config.model_dump(mode="json")
+    del raw["error_handling"]["hide_internal_error_details"]
+    del raw["external_systems"]["enabled"]
+    reordered = AppConfig.model_validate(dict(reversed(raw.items())))
+    assert _ConfigSnapshot.capture(reordered) == snapshot

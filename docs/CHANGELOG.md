@@ -344,6 +344,35 @@ YYYY-MM-DD
 
 ### Изменено
 
+- **[Stage 11/Macro 5] Technical Debt / Config / Test-Support Cleanup завершён
+  и принят владельцем.** Реализация закоммичена; выполнена точечная нормализация
+  технического долга, конфигурации и тестовой поддержки. TD01: удалён
+  подтверждённо мёртвый `_ALLOWED_MIME_TYPES`, поведение MIME/форматов/сигнатур
+  не изменено. TD02: поля и имена схемы `1.0` сохранены;
+  `error_handling.hide_internal_error_details` допускает только `true`,
+  `external_systems.enabled` — только `false`. Неподдерживаемые ранее неактивные
+  противоположные значения отклоняются при валидации конфигурации. Defaults,
+  `schema_version=1.0`, поддерживаемый канонический JSON и идентичность config
+  snapshot сохранены; раскрытие внутренних исключений и внешние интеграции
+  не добавлены. TD03: framework fake-анализаторы и fake worker definitions
+  удалены из production-пакета `fakedetector` и каталога; они находятся только
+  в `tests/support` и отсутствуют в wheel. Production-каталог содержит прежние
+  четыре доверенных first-party built-in анализатора и не разрешает и не
+  выполняет `framework_test.*`. Узкий private resolver с явной инъекцией
+  сохраняет реальные Windows-spawn тесты без plugin architecture, dynamic
+  discovery, import-by-string, plugin entry points или управления resolver
+  через конфигурацию. Сохранены analyzer IDs, версии, группы и production
+  worker keys, закрытый каталог Macro 3, имена по ответственности и HTTP-слои
+  Macro 4, lifecycle/risk/completeness/persistence и публичные контракты
+  API/CLI/WebUI/result. Целевая проверка реализации: `367 passed,
+  3 skipped`; независимый целевой аудит: `295 passed`, без пропусков; полный
+  suite: `1864 passed, 17 skipped`, покрытие `90%`. Lock, Ruff, mypy,
+  pre-commit, diff-check, CLI, AST, canonical snapshot, pickle/spawn и
+  installed-wheel checks — `PASS`. Независимый аудит GPT-6 Astra Medium:
+  финальный вердикт — `PASS`, замечаний, требующих исправления, нет.
+  Stage 11 остаётся `IN_PROGRESS`; следующая задача — Macro 6, Tests / Comments /
+  Documentation Normalization (`NOT_STARTED / next action`).
+
 - **[Stage 11/Macro 4] Product Naming & Architecture Normalization завершён и
   принят владельцем.** Выполнена внутренняя архитектурная нормализация:
   `_stage5_resources.py` переименован в `_generated_artifact_budget.py`, а

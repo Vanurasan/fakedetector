@@ -369,7 +369,7 @@ class ErrorHandlingConfig(BaseModel):
 
     continue_if_analyzer_fails: bool = True
     mark_partial_on_analyzer_failure: bool = True
-    hide_internal_error_details: bool = True
+    hide_internal_error_details: Literal[True] = True
 
     @field_validator("mark_partial_on_analyzer_failure")
     @classmethod
@@ -404,7 +404,7 @@ class ExternalSystemsConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False
+    enabled: Literal[False] = False
 
 
 class AppConfig(BaseModel):

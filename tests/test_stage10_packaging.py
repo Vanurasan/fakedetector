@@ -5,6 +5,8 @@ from __future__ import annotations
 import configparser
 import importlib.metadata
 import subprocess
+import sys
+import textwrap
 import tomllib
 import zipfile
 from email.parser import BytesParser
@@ -127,6 +129,19 @@ def test_sdist_wheel_metadata_entry_point_and_resources(tmp_path: Path) -> None:
 
     with zipfile.ZipFile(wheel) as archive:
         names = set(archive.namelist())
+        assert not any(name.startswith(("tests/", "support/")) for name in names)
+        assert {
+            "fakedetector/analyzers/_image_metadata.py",
+            "fakedetector/analyzers/_image_copy_move.py",
+            "fakedetector/analyzers/_audio_pcm.py",
+            "fakedetector/analyzers/_video_frames.py",
+        } <= names
+        for name in names:
+            if name.endswith(".py"):
+                source = archive.read(name)
+                assert b"_FakeAnalyzer" not in source
+                assert b"framework_test" not in source
+                assert b"framework_analyzers" not in source
         metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
         entry_points_name = next(
             name for name in names if name.endswith(".dist-info/entry_points.txt")
@@ -141,6 +156,30 @@ def test_sdist_wheel_metadata_entry_point_and_resources(tmp_path: Path) -> None:
     assert metadata["Version"] == expected_version
     assert entry_points["console_scripts"]["fakedetector"] == "fakedetector.main:main"
     assert names >= _RESOURCES
+
+    installed = tmp_path / "installed"
+    _run("uv", "pip", "install", "--no-deps", "--target", str(installed), str(wheel), cwd=tmp_path)
+    probe = textwrap.dedent("""\
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, sys.argv[1])
+        import fakedetector
+        from fakedetector.analyzers._catalog import (
+            _built_in_analyzer_registrations, _resolve_worker_definition,
+        )
+        from fakedetector.app import create_app
+        from fakedetector.config.models import AppConfig
+        assert Path(fakedetector.__file__).is_relative_to(Path(sys.argv[1]))
+        assert len(_built_in_analyzer_registrations()) == 4
+        assert _resolve_worker_definition("framework_test.image") is None
+        config = AppConfig.model_validate_json(Path(sys.argv[2]).read_bytes())
+        app = create_app(config)
+        assert app.state.runtime.application_service is app.state.application_service
+        assert not config.external_systems.enabled
+        """)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(_config_with_disabled_channels().model_dump_json(), encoding="utf-8")
+    _run(sys.executable, "-I", "-c", probe, str(installed), str(config_path), cwd=tmp_path)
 
 
 def test_runtime_constraints_are_exported_from_lock_without_dev_or_project(

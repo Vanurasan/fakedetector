@@ -16,6 +16,12 @@ from typing import NoReturn, cast
 import pytest
 import yaml
 from result_backend_fakes import SuccessfulAcceptedResultFinalizer
+from support.framework_analyzers import (
+    _execute_framework_worker,
+    _framework_registry,
+    _framework_runner,
+    _framework_test_registrations,
+)
 
 import fakedetector.analyzers._orchestrator as orchestrator_module
 import fakedetector.analyzers._worker as worker_module
@@ -24,10 +30,8 @@ import fakedetector.lifecycle as lifecycle
 import fakedetector.lifecycle.execution as execution_module
 import fakedetector.preprocessing._media_tools as preprocessing_tools_module
 from fakedetector._generated_artifact_budget import _GeneratedArtifactBudget
-from fakedetector.analyzers._catalog import _framework_test_registrations
 from fakedetector.analyzers._errors import AnalyzerInfrastructureError
 from fakedetector.analyzers._orchestrator import AnalyzerOrchestrator, _WorkerRunner
-from fakedetector.analyzers._registry import AnalyzerRegistry
 from fakedetector.analyzers._transport import (
     _MAX_ANALYZER_RESULT_BYTES,
     _MAX_RESPONSE_BYTES,
@@ -38,7 +42,6 @@ from fakedetector.analyzers._transport import (
 )
 from fakedetector.analyzers._worker import (
     _encode_response,
-    _execute_worker,
     _WorkerRun,
     _WorkerRunKind,
 )
@@ -310,7 +313,7 @@ class _SequencedRunner:
         return _WorkerRun(
             kind,
             duration_ms=1,
-            response=_execute_worker(request),
+            response=_execute_framework_worker(request),
         )
 
 
@@ -556,9 +559,9 @@ def _service(
 ) -> AnalysisExecutionService:
     if isinstance(preprocessing, _SnapshotBoundTestComponent):
         preprocessing._bind_config(config)
-    analyzer_registry = AnalyzerRegistry(config, _framework_test_registrations())
+    analyzer_registry = _framework_registry(config, _framework_test_registrations())
     orchestrator = (
-        AnalyzerOrchestrator(analyzer_registry)
+        AnalyzerOrchestrator(analyzer_registry, runner=_framework_runner())
         if runner is None
         else AnalyzerOrchestrator(analyzer_registry, runner=runner)
     )
@@ -713,7 +716,8 @@ def test_integrated_stage3_stage4_stage5_production_path(
         registry=registry,
         preprocessing=PreprocessingDispatcher(config),
         orchestrator=AnalyzerOrchestrator(
-            AnalyzerRegistry(config, _framework_test_registrations())
+            _framework_registry(config, _framework_test_registrations()),
+            runner=_framework_runner(),
         ),
         finding_service=FindingFormationService(),
         assessment_service=AnalysisAssessmentService(config.risk_assessment),
@@ -1941,7 +1945,7 @@ def test_equal_distinct_configs_share_one_stage5_snapshot_identity(
         registry=TaskRegistry(),
         preprocessing=PreprocessingDispatcher(dispatcher_config),
         orchestrator=AnalyzerOrchestrator(
-            AnalyzerRegistry(registry_config, _framework_test_registrations())
+            _framework_registry(registry_config, _framework_test_registrations())
         ),
         finding_service=FindingFormationService(),
         assessment_service=AnalysisAssessmentService(config.risk_assessment),
@@ -1963,7 +1967,7 @@ def test_stage5_constructor_rejects_mixed_dispatcher_snapshot(
             registry=TaskRegistry(),
             preprocessing=PreprocessingDispatcher(different),
             orchestrator=AnalyzerOrchestrator(
-                AnalyzerRegistry(config, _framework_test_registrations())
+                _framework_registry(config, _framework_test_registrations())
             ),
             finding_service=FindingFormationService(),
             assessment_service=AnalysisAssessmentService(config.risk_assessment),
@@ -1983,7 +1987,7 @@ def test_stage5_constructor_rejects_mixed_analyzer_snapshot(
             registry=TaskRegistry(),
             preprocessing=PreprocessingDispatcher(config),
             orchestrator=AnalyzerOrchestrator(
-                AnalyzerRegistry(different, _framework_test_registrations())
+                _framework_registry(different, _framework_test_registrations())
             ),
             finding_service=FindingFormationService(),
             assessment_service=AnalysisAssessmentService(config.risk_assessment),
@@ -2001,7 +2005,7 @@ def test_stage5_constructor_rejects_mixed_stage7_policy(tmp_path: Path) -> None:
             registry=TaskRegistry(),
             preprocessing=PreprocessingDispatcher(config),
             orchestrator=AnalyzerOrchestrator(
-                AnalyzerRegistry(config, _framework_test_registrations())
+                _framework_registry(config, _framework_test_registrations())
             ),
             finding_service=FindingFormationService(),
             assessment_service=AnalysisAssessmentService(different.risk_assessment),
