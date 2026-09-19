@@ -141,7 +141,7 @@ def load_config(
     yaml_error = False
     try:
         raw_data = yaml.safe_load(raw_text)
-    except yaml.YAMLError:
+    except (yaml.YAMLError, RecursionError):
         yaml_error = True
 
     if yaml_error:

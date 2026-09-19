@@ -130,6 +130,7 @@ def _build_release_inputs(
     )
     try:
         sdist = package_verifier._single_artifact(artifacts, f"{project_name}-*.tar.gz")
+        package_verifier._verify_sdist_provenance(sdist, repository=repository)
     except package_verifier.VerificationError as error:
         raise common.ReleaseVerificationError("build_sdist", str(error)) from None
     common._run_command(

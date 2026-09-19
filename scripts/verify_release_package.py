@@ -9,11 +9,12 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import textwrap
 import tomllib
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from packaging.requirements import Requirement
@@ -73,6 +74,51 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _verify_sdist_provenance(sdist: Path, *, repository: Path) -> None:
+    """Accept only tracked working-tree files and Hatchling's root PKG-INFO.
+
+    Use working-tree bytes so development verification supports tracked edits.
+    Strict certification separately requires a clean tree at a stable Git SHA.
+    """
+    tracked = set(
+        _run(["git", "ls-files", "-z"], cwd=repository).stdout.rstrip("\0").split("\0")
+    )
+    if not tracked or "" in tracked:
+        raise VerificationError("Sdist provenance requires tracked repository source files.")
+    expected = tracked | {"PKG-INFO"}
+    seen: set[str] = set()
+    root = sdist.name.removesuffix(".tar.gz")
+    with tarfile.open(sdist, "r:gz") as archive:
+        for member in archive:
+            path = PurePosixPath(member.name)
+            if (
+                not member.isfile()
+                or len(path.parts) < 2
+                or path.parts[0] != root
+                or ".." in path.parts
+                or "\\" in member.name
+                or path.as_posix() != member.name
+            ):
+                raise VerificationError(f"Invalid sdist source member: {member.name!r}")
+            relative = PurePosixPath(*path.parts[1:]).as_posix()
+            if relative not in expected or relative in seen:
+                raise VerificationError(f"Untracked or duplicate sdist source member: {relative!r}")
+            seen.add(relative)
+            if relative == "PKG-INFO":
+                continue
+            source = repository / relative
+            if not source.resolve().is_relative_to(repository.resolve()) or not source.is_file():
+                raise VerificationError(f"Sdist source is outside the repository: {relative!r}")
+            stream = archive.extractfile(member)
+            assert stream is not None
+            with stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            if digest != _sha256(source):
+                raise VerificationError(f"Sdist source differs from working tree: {relative!r}")
+    if seen != expected:
+        raise VerificationError(f"Sdist source inventory is incomplete: {sorted(expected - seen)}")
 
 
 def _sanitized_environment() -> dict[str, str]:
@@ -302,6 +348,7 @@ def verify(output_directory: Path | None = None) -> dict[str, Any]:
         env=environment,
     )
     sdist = _single_artifact(artifacts, f"{_PROJECT_NAME}-*.tar.gz")
+    _verify_sdist_provenance(sdist, repository=repository)
     _run(
         [
             uv,

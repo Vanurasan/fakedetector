@@ -344,6 +344,30 @@ YYYY-MM-DD
 
 ### Изменено
 
+- **[Stage 11/Macro 8] Final Whole-Project Audit / Certification / Graphify Review
+  завершён и принят владельцем.** Первоначальный вердикт `REMEDIATE`:
+  M8-A01/M8-A02 — MEDIUM, M8-A03/M8-A04 — LOW; все четыре — `CLOSED` после
+  ограниченной ремедиации в commit `0167f78e2ab18a7b297807e9cb3fa19f69b6a7ec`.
+  Усилены provenance sdist (fail-closed, Graphify исключён) и владение процессом
+  сразу после `Popen`; глубокая рекурсия YAML безопасно завершается через
+  `ConfigurationError` и CLI exit `2`; два текущих Stage-имени заменены именами
+  по ответственности. Итог: `1944 collected`, `1927 passed / 17 skipped`,
+  покрытие `90%`; полный quality barrier — `PASS`. Проверка полного diff
+  владельцем, независимый целевой повторный аудит GPT-6 Astra High, strict
+  clean-SHA installed-artifact certification на указанном commit и финальная
+  проверка закрытия GPT-6 Astra High — `PASS`; actionable findings — `0`.
+  Владелец принял Graphify `REBUILD_POLICY`: текущий граф `STALE`, генерация
+  ручная, данные ignored/untracked и исключены из sdist. Граф не пересобирался;
+  полная политика и доказательства закрытия записаны в `ROADMAP.md`, Macro 8.
+
+- **[Stage 11/Closure] Post-MVP Normalization & Hardening — DONE / CLOSED.**
+  Macros 0–8 — `DONE / owner accepted`; текущего Macro нет. Финальный аудит,
+  ремедиация, независимые проверки и строгая сертификация подтвердили гарантии
+  MVP A–R (`PASS`), отсутствие actionable findings и
+  `CURRENT_ARCHITECTURE_RESIDUE=0`. Рекомендация закрыть Stage 11 — `YES`.
+  Stage 12+ остаётся `AFTER_MVP / NOT_STARTED` и требует отдельного решения
+  владельца. Это документационное закрытие; версия продукта остаётся `0.1.0`.
+
 - **[Stage 11/Macro 7] Release Tooling Normalization завершён и принят
   владельцем.** `generate_stage10_demo_media.py`, `verify_stage10_package.py`
   и `verify_stage10_release.py` переименованы соответственно в

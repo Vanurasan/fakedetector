@@ -135,6 +135,7 @@ tests/private_data/
 .cline/
 .roo/
 .continue/sessions/
+graphify-out/
 
 # ============================================================
 # Local tools and temporary files
