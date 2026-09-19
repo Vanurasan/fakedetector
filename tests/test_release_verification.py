@@ -1,4 +1,4 @@
-"""Fast regression tests for the Stage 10 Macro 3 release gate."""
+"""Fast regression tests for product release verification."""
 
 from __future__ import annotations
 
@@ -11,14 +11,14 @@ from types import ModuleType
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-_SCRIPT = _ROOT / "scripts" / "verify_stage10_release.py"
+_SCRIPT = _ROOT / "scripts" / "verify_release.py"
 
 
 def _load_release_gate() -> ModuleType:
     scripts_directory = str(_SCRIPT.parent)
     if scripts_directory not in sys.path:
         sys.path.insert(0, scripts_directory)
-    spec = importlib.util.spec_from_file_location("stage10_release_gate", _SCRIPT)
+    spec = importlib.util.spec_from_file_location("release_release_gate", _SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -30,33 +30,33 @@ def release_gate() -> ModuleType:
     return _load_release_gate()
 
 
-def test_sha256_file_hashes_exact_bytes(tmp_path: Path, release_gate: ModuleType) -> None:
+def test_sha256_file_hashes_exact_bytes(tmp_path: Path, common: ModuleType) -> None:
     path = tmp_path / "artifact.bin"
-    payload = b"stage-10-release-artifact\x00\xff"
+    payload = b"release-artifact\x00\xff"
     path.write_bytes(payload)
 
-    assert release_gate._sha256_file(path) == hashlib.sha256(payload).hexdigest()
+    assert common._sha256_file(path) == hashlib.sha256(payload).hexdigest()
 
 
-def test_certification_decision_is_strict_by_default(release_gate: ModuleType) -> None:
-    strict = release_gate._certification_state(development=False, source_status=[])
+def test_certification_decision_is_strict_by_default(build: ModuleType, common: ModuleType) -> None:
+    strict = build._certification_state(development=False, source_status=[])
 
     assert strict == {
         "certification_mode": "strict",
         "source_tree_clean": True,
         "certified": True,
     }
-    with pytest.raises(release_gate.ReleaseGateError, match="clean"):
-        release_gate._certification_state(
+    with pytest.raises(common.ReleaseVerificationError, match="clean"):
+        build._certification_state(
             development=False,
-            source_status=[" M scripts/verify_stage10_release.py"],
+            source_status=[" M scripts/verify_release.py"],
         )
 
 
-def test_development_mode_is_explicitly_non_certifying(release_gate: ModuleType) -> None:
-    state = release_gate._certification_state(
+def test_development_mode_is_explicitly_non_certifying(build: ModuleType) -> None:
+    state = build._certification_state(
         development=True,
-        source_status=["?? tests/test_stage10_release.py"],
+        source_status=["?? tests/test_release_verification.py"],
     )
 
     assert state == {
@@ -67,9 +67,9 @@ def test_development_mode_is_explicitly_non_certifying(release_gate: ModuleType)
 
 
 def test_supported_host_accepts_windows_11_x64_python_312(
-    release_gate: ModuleType,
+    build: ModuleType,
 ) -> None:
-    release_gate._validate_supported_host(
+    build._validate_supported_host(
         platform_name="win32",
         machine="AMD64",
         python_version=(3, 12),
@@ -96,15 +96,16 @@ def test_supported_host_accepts_windows_11_x64_python_312(
     ],
 )
 def test_supported_host_rejects_unsupported_windows_matrix(
-    release_gate: ModuleType,
+    build: ModuleType,
+    common: ModuleType,
     machine: str,
     python_version: tuple[int, int],
     windows_major: int,
     windows_build: int,
     windows_product_type: int,
 ) -> None:
-    with pytest.raises(release_gate.ReleaseGateError, match="Windows 11 x64"):
-        release_gate._validate_supported_host(
+    with pytest.raises(common.ReleaseVerificationError, match="Windows 11 x64"):
+        build._validate_supported_host(
             platform_name="win32",
             machine=machine,
             python_version=python_version,
@@ -115,10 +116,11 @@ def test_supported_host_rejects_unsupported_windows_matrix(
 
 
 def test_supported_host_rejects_server_despite_high_windows_build(
-    release_gate: ModuleType,
+    build: ModuleType,
+    common: ModuleType,
 ) -> None:
-    with pytest.raises(release_gate.ReleaseGateError, match="workstation"):
-        release_gate._validate_supported_host(
+    with pytest.raises(common.ReleaseVerificationError, match="workstation"):
+        build._validate_supported_host(
             platform_name="win32",
             machine="AMD64",
             python_version=(3, 12),
@@ -129,9 +131,9 @@ def test_supported_host_rejects_server_despite_high_windows_build(
 
 
 def test_graceful_exit_code_accepts_observed_windows_ctrl_break_code(
-    release_gate: ModuleType,
+    server: ModuleType,
 ) -> None:
-    release_gate._validate_graceful_exit_code(
+    server._validate_graceful_exit_code(
         returncode=3,
         signal_method="CTRL_BREAK_EVENT",
         platform_name="win32",
@@ -140,11 +142,12 @@ def test_graceful_exit_code_accepts_observed_windows_ctrl_break_code(
 
 @pytest.mark.parametrize("returncode", [0, 42, 3221225477, -9])
 def test_graceful_exit_code_rejects_unexpected_windows_codes(
-    release_gate: ModuleType,
+    common: ModuleType,
+    server: ModuleType,
     returncode: int,
 ) -> None:
-    with pytest.raises(release_gate.ReleaseGateError, match="Unexpected") as caught:
-        release_gate._validate_graceful_exit_code(
+    with pytest.raises(common.ReleaseVerificationError, match="Unexpected") as caught:
+        server._validate_graceful_exit_code(
             returncode=returncode,
             signal_method="CTRL_BREAK_EVENT",
             platform_name="win32",
@@ -154,43 +157,45 @@ def test_graceful_exit_code_rejects_unexpected_windows_codes(
 
 
 def test_graceful_exit_code_uses_narrow_non_windows_policy(
-    release_gate: ModuleType,
+    common: ModuleType,
+    server: ModuleType,
 ) -> None:
-    release_gate._validate_graceful_exit_code(
+    server._validate_graceful_exit_code(
         returncode=0,
         signal_method="SIGINT",
         platform_name="linux",
     )
-    with pytest.raises(release_gate.ReleaseGateError, match="Unexpected"):
-        release_gate._validate_graceful_exit_code(
+    with pytest.raises(common.ReleaseVerificationError, match="Unexpected"):
+        server._validate_graceful_exit_code(
             returncode=-2,
             signal_method="SIGINT",
             platform_name="linux",
         )
 
 
-def test_project_identity_has_no_release_tool_version_source(release_gate: ModuleType) -> None:
-    assert release_gate._project_identity(
-        {"project": {"name": "sample-product", "version": "7.8.9"}}
-    ) == ("sample-product", "7.8.9")
-    assert not hasattr(release_gate, "_PACKAGE_VERSION")
+def test_project_identity_has_no_release_tool_version_source(build: ModuleType) -> None:
+    assert build._project_identity({"project": {"name": "sample-product", "version": "7.8.9"}}) == (
+        "sample-product",
+        "7.8.9",
+    )
+    assert not hasattr(build, "_PACKAGE_VERSION")
 
 
-def test_final_source_integrity_rejects_changed_head(release_gate: ModuleType) -> None:
-    release_gate._require_stable_source_sha(initial_sha="a" * 40, final_sha="a" * 40)
+def test_final_source_integrity_rejects_changed_head(build: ModuleType, common: ModuleType) -> None:
+    build._require_stable_source_sha(initial_sha="a" * 40, final_sha="a" * 40)
 
-    with pytest.raises(release_gate.ReleaseGateError, match="HEAD changed"):
-        release_gate._require_stable_source_sha(initial_sha="a" * 40, final_sha="b" * 40)
+    with pytest.raises(common.ReleaseVerificationError, match="HEAD changed"):
+        build._require_stable_source_sha(initial_sha="a" * 40, final_sha="b" * 40)
 
 
 def test_manifest_covers_every_recipient_file_without_self_hash(
-    release_gate: ModuleType,
+    kit: ModuleType,
 ) -> None:
     wheel = "sample_product-7.8.9-py3-none-any.whl"
-    covered_names = release_gate._expected_kit_names(wheel) - {release_gate._MANIFEST_NAME}
+    covered_names = kit._expected_kit_names(wheel) - {kit._MANIFEST_NAME}
     file_hashes = {name: hashlib.sha256(name.encode()).hexdigest() for name in covered_names}
 
-    manifest = release_gate._build_manifest(
+    manifest = kit._build_manifest(
         product_name="sample-product",
         package_version="7.8.9",
         source_head_sha="a" * 40,
@@ -224,15 +229,17 @@ def test_manifest_covers_every_recipient_file_without_self_hash(
     assert all(not Path(item["path"]).is_absolute() for item in manifest["covered_files"])
 
 
-def test_kit_inventory_rejects_missing_and_excluded_content(release_gate: ModuleType) -> None:
+def test_kit_inventory_rejects_missing_and_excluded_content(
+    common: ModuleType, kit: ModuleType
+) -> None:
     wheel = "sample_product-7.8.9-py3-none-any.whl"
-    expected = release_gate._expected_kit_names(wheel)
+    expected = kit._expected_kit_names(wheel)
 
-    release_gate._validate_kit_inventory(set(expected), expected)
-    with pytest.raises(release_gate.ReleaseGateError, match="inventory"):
-        release_gate._validate_kit_inventory(expected | {"runtime/results/result.json"}, expected)
-    with pytest.raises(release_gate.ReleaseGateError, match="inventory"):
-        release_gate._validate_kit_inventory(expected - {"MVP_HANDOFF.md"}, expected)
+    kit._validate_kit_inventory(set(expected), expected)
+    with pytest.raises(common.ReleaseVerificationError, match="inventory"):
+        kit._validate_kit_inventory(expected | {"runtime/results/result.json"}, expected)
+    with pytest.raises(common.ReleaseVerificationError, match="inventory"):
+        kit._validate_kit_inventory(expected - {"MVP_HANDOFF.md"}, expected)
 
 
 @pytest.mark.parametrize(
@@ -246,28 +253,29 @@ def test_kit_inventory_rejects_missing_and_excluded_content(release_gate: Module
     ],
 )
 def test_zip_member_validation_rejects_traversal_and_absolute_paths(
-    release_gate: ModuleType,
+    common: ModuleType,
+    kit: ModuleType,
     unsafe_name: str,
 ) -> None:
     expected = {"release-manifest.json"}
 
-    with pytest.raises(release_gate.ReleaseGateError, match="Unsafe ZIP member"):
-        release_gate._validate_zip_member_names([unsafe_name], expected)
+    with pytest.raises(common.ReleaseVerificationError, match="Unsafe ZIP member"):
+        kit._validate_zip_member_names([unsafe_name], expected)
 
 
-def test_zip_member_validation_rejects_duplicates(release_gate: ModuleType) -> None:
-    with pytest.raises(release_gate.ReleaseGateError, match="duplicate"):
-        release_gate._validate_zip_member_names(
+def test_zip_member_validation_rejects_duplicates(common: ModuleType, kit: ModuleType) -> None:
+    with pytest.raises(common.ReleaseVerificationError, match="duplicate"):
+        kit._validate_zip_member_names(
             ["release-manifest.json", "release-manifest.json"],
             {"release-manifest.json"},
         )
 
 
 def test_failure_redaction_removes_raw_and_derived_auth_material(
-    release_gate: ModuleType,
+    common: ModuleType,
 ) -> None:
     credentials, basic_header, bearer_header, secret_values = (
-        release_gate._auth_headers_and_redaction_values(
+        common._auth_headers_and_redaction_values(
             api_token="api-secret",
             webui_username="gate-user",
             webui_password="web-secret",
@@ -288,7 +296,7 @@ def test_failure_redaction_removes_raw_and_derived_auth_material(
         )
     )
 
-    redacted = release_gate._redact(message, secret_values)
+    redacted = common._redact(message, secret_values)
 
     for secret in secret_values:
         assert secret not in redacted
@@ -296,7 +304,8 @@ def test_failure_redaction_removes_raw_and_derived_auth_material(
 
 
 def test_result_validation_uses_explicit_expected_application_version(
-    release_gate: ModuleType,
+    common: ModuleType,
+    probes: ModuleType,
 ) -> None:
     result = {
         "schema_version": "1.0",
@@ -317,7 +326,7 @@ def test_result_validation_uses_explicit_expected_application_version(
         "processing": {"application_version": "7.8.9"},
     }
 
-    evidence = release_gate._validate_result(
+    evidence = probes._validate_result(
         result=result,
         analysis_id="analysis-id",
         suffix=".wav",
@@ -325,8 +334,8 @@ def test_result_validation_uses_explicit_expected_application_version(
     )
 
     assert evidence["status"] == "passed"
-    with pytest.raises(release_gate.ReleaseGateError, match="structural validation"):
-        release_gate._validate_result(
+    with pytest.raises(common.ReleaseVerificationError, match="structural validation"):
+        probes._validate_result(
             result=result,
             analysis_id="analysis-id",
             suffix=".wav",
@@ -334,8 +343,8 @@ def test_result_validation_uses_explicit_expected_application_version(
         )
 
 
-def test_initial_report_is_stable_and_non_certifying(release_gate: ModuleType) -> None:
-    report = release_gate._initial_report(output=Path("C:/gate"), development=True)
+def test_initial_report_is_stable_and_non_certifying(reporting: ModuleType) -> None:
+    report = reporting._initial_report(output=Path("C:/gate"), development=True)
 
     assert report["tool_version"] == "1.0.0"
     assert report["certification_mode"] == "development"
@@ -343,3 +352,33 @@ def test_initial_report_is_stable_and_non_certifying(release_gate: ModuleType) -
     assert report["source_sha_at_end"] is None
     assert report["source_sha_stable"] is None
     assert report["overall_status"] == "running"
+
+
+@pytest.fixture(scope="module")
+def common(release_gate: ModuleType) -> ModuleType:
+    return __import__("release_tooling.common", fromlist=["common"])
+
+
+@pytest.fixture(scope="module")
+def build(release_gate: ModuleType) -> ModuleType:
+    return __import__("release_tooling.build", fromlist=["build"])
+
+
+@pytest.fixture(scope="module")
+def kit(release_gate: ModuleType) -> ModuleType:
+    return __import__("release_tooling.kit", fromlist=["kit"])
+
+
+@pytest.fixture(scope="module")
+def server(release_gate: ModuleType) -> ModuleType:
+    return __import__("release_tooling.server", fromlist=["server"])
+
+
+@pytest.fixture(scope="module")
+def probes(release_gate: ModuleType) -> ModuleType:
+    return __import__("release_tooling.probes", fromlist=["probes"])
+
+
+@pytest.fixture(scope="module")
+def reporting(release_gate: ModuleType) -> ModuleType:
+    return __import__("release_tooling.reporting", fromlist=["reporting"])

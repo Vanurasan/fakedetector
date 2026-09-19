@@ -58,14 +58,14 @@ Release producer собирает и проверяет весь handoff одн�
 даёт честное non-certifying evidence:
 
 ```powershell
-uv run python scripts/verify_stage10_release.py --development
+uv run python scripts/verify_release.py --development
 ```
 
 После review и commit строгий запуск без флага требует чистое source tree и
 создаёт сертифицирующий отчёт:
 
 ```powershell
-uv run python scripts/verify_stage10_release.py
+uv run python scripts/verify_release.py
 ```
 
 В versioned ZIP находятся wheel, runtime constraints, canonical config,
@@ -93,7 +93,7 @@ $webPassword = ([BitConverter]::ToString($passwordBytes)).Replace("-", "")
 $env:MEDIA_ANALYZER_WEBUI_CREDENTIALS = "analyst:$webPassword"
 $webPassword
 
-..\.venv\Scripts\python.exe ..\generate_stage10_demo_media.py `
+..\.venv\Scripts\python.exe ..\generate_release_demo_media.py `
   --output-dir .\demo-media
 ..\.venv\Scripts\fakedetector.exe --config .\config.yaml
 ```

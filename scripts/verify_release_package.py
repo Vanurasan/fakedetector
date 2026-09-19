@@ -1,4 +1,4 @@
-"""Build and verify the Stage 10 Macro 1 release artifacts."""
+"""Build and verify product release artifacts."""
 
 from __future__ import annotations
 
@@ -125,9 +125,7 @@ def _assert_runtime_matches_constraints(
     direct_dev_names: set[str],
 ) -> dict[str, Any]:
     project_name = canonicalize_name(_PROJECT_NAME)
-    normalized_installed = {
-        canonicalize_name(name): version for name, version in installed.items()
-    }
+    normalized_installed = {canonicalize_name(name): version for name, version in installed.items()}
     runtime_installed = {
         name: version
         for name, version in normalized_installed.items()
@@ -141,9 +139,7 @@ def _assert_runtime_matches_constraints(
         if expected[name] != runtime_installed[name]
     }
     dev_only_installed = sorted(
-        name
-        for name in direct_dev_names
-        if name in runtime_installed and name not in expected
+        name for name in direct_dev_names if name in runtime_installed and name not in expected
     )
     if missing or unexpected or mismatched or dev_only_installed:
         raise VerificationError(
@@ -258,7 +254,7 @@ def _installed_probe(python: Path, *, cwd: Path, env: dict[str, str]) -> dict[st
 
 def _prepare_output_directory(requested: Path | None) -> Path:
     if requested is None:
-        return Path(tempfile.mkdtemp(prefix="fakedetector-stage10-")).resolve()
+        return Path(tempfile.mkdtemp(prefix="fakedetector-release-")).resolve()
     output = requested.resolve()
     output.mkdir(parents=True, exist_ok=True)
     if any(output.iterdir()):
@@ -275,16 +271,14 @@ def verify(output_directory: Path | None = None) -> dict[str, Any]:
 
     uv = shutil.which("uv")
     if uv is None:
-        raise VerificationError("uv is required for Stage 10 package verification.")
+        raise VerificationError("uv is required for release package verification.")
 
     artifacts = output / "artifacts"
     artifacts.mkdir()
     constraints = output / "runtime-constraints.txt"
     environment = _sanitized_environment()
 
-    source_sha = _run(
-        ["git", "rev-parse", "HEAD"], cwd=repository, env=environment
-    ).stdout.strip()
+    source_sha = _run(["git", "rev-parse", "HEAD"], cwd=repository, env=environment).stdout.strip()
     source_status = _run(
         ["git", "status", "--short", "--untracked-files=all"],
         cwd=repository,
@@ -322,16 +316,12 @@ def verify(output_directory: Path | None = None) -> dict[str, Any]:
         env=environment,
     )
     wheel = _single_artifact(artifacts, f"{_PROJECT_NAME}-*.whl")
-    expected_wheel_resources = {
-        f"fakedetector/{resource}" for resource in _REQUIRED_RESOURCES
-    }
+    expected_wheel_resources = {f"fakedetector/{resource}" for resource in _REQUIRED_RESOURCES}
     with zipfile.ZipFile(wheel) as archive:
         wheel_names = set(archive.namelist())
     missing_wheel_resources = sorted(expected_wheel_resources - wheel_names)
     if missing_wheel_resources:
-        raise VerificationError(
-            f"Wheel resources are missing: {missing_wheel_resources}"
-        )
+        raise VerificationError(f"Wheel resources are missing: {missing_wheel_resources}")
 
     constraints_command = [
         uv,
@@ -469,7 +459,7 @@ def verify(output_directory: Path | None = None) -> dict[str, Any]:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build and verify the Stage 10 Macro 1 wheel in an isolated venv."
+        description="Build and verify the release wheel in an isolated venv."
     )
     parser.add_argument(
         "--output-dir",
@@ -485,7 +475,7 @@ def main() -> int:
     try:
         report = verify(args.output_dir)
     except VerificationError as error:
-        print(f"Stage 10 package verification failed: {error}", file=sys.stderr)
+        print(f"release package verification failed: {error}", file=sys.stderr)
         return 1
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

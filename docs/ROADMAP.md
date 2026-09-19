@@ -2089,17 +2089,18 @@ Normalization (`NOT_STARTED / next action`). Работы Macro 7 и Macro 8 н�
 Цель — преобразовать Stage 10 release tooling в долгоживущий product release
 tooling без ослабления сертификационных гарантий.
 
-Предполагаемое семантическое переименование:
+Семантические имена текущих инструментов:
 
 ```text
-generate_stage10_demo_media.py → semantic release/demo name
-verify_stage10_package.py → semantic package verification name
-verify_stage10_release.py → semantic release certification name
+generate_release_demo_media.py
+verify_release_package.py
+verify_release.py
 ```
 
-Ответственности постепенно разделяются на build/provenance, kit
-manifest/extraction, installed environment, server lifecycle, HTTP/result probes
-и report generation. Чисто эстетическая перепись не требуется.
+Реализация разделяет обязанности в закрытом пакете `scripts/release_tooling/`;
+`verify_release.py` координирует полный цикл. Границы модулей описаны в
+`PROJECT.md`, раздел 16.2.1. Статус Macro 7 остаётся `NOT_STARTED / next action`
+до review владельца, независимого аудита и закрытия; Macro 8 не продвигается.
 
 Должны сохраниться все доказанные гарантии Stage 10: sdist → wheel; constraints
 из lock; exact release kit; manifest/hashes; clean extraction; fresh environment;
