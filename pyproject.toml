@@ -104,3 +104,23 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fakedetector"]
+
+[tool.hatch.build.targets.sdist]
+# Release verifiers additionally require every member to have tracked provenance.
+include = [
+    "/.archive/",
+    "/.env.example",
+    "/.gitattributes",
+    "/.gitignore",
+    "/.pre-commit-config.yaml",
+    "/.python-version",
+    "/AGENTS.md",
+    "/README.md",
+    "/config/",
+    "/docs/",
+    "/pyproject.toml",
+    "/scripts/",
+    "/src/",
+    "/tests/",
+    "/uv.lock",
+]

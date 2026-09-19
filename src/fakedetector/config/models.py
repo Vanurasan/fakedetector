@@ -373,7 +373,7 @@ class ErrorHandlingConfig(BaseModel):
 
     @field_validator("mark_partial_on_analyzer_failure")
     @classmethod
-    def require_canonical_stage7_partial_policy(cls, value: bool) -> bool:
+    def require_canonical_partial_policy(cls, value: bool) -> bool:
         """Reject the alternate status semantics that schema 1.0 does not define."""
         if not value:
             raise ValueError("mark_partial_on_analyzer_failure must be enabled")

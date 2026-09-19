@@ -7,9 +7,10 @@ import importlib
 import json
 import os
 import subprocess
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -154,6 +155,107 @@ def test_emergency_stop_escalates_only_owned_process(tools: SimpleNamespace) -> 
     owned.process.kill.assert_called_once_with()
     assert owned.process.wait.call_count == 2
     owned.join_readers.assert_called_once_with()
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt, SystemExit, BaseException])
+@pytest.mark.parametrize("reader_number", [1, 2])
+@pytest.mark.parametrize("escalate", [False, True])
+def test_reader_start_failure_reaps_raw_process(
+    tools: SimpleNamespace,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: type[BaseException],
+    reader_number: int,
+    escalate: bool,
+) -> None:
+    process = Mock(stdout=StringIO("output\n"), stderr=StringIO("error\n"))
+    process.poll.return_value = None
+    if escalate:
+        process.wait.side_effect = [subprocess.TimeoutExpired("owned", 5), 0]
+    monkeypatch.setattr(tools.server.subprocess, "Popen", lambda *a, **kw: process)
+    thread_type = tools.server.threading.Thread
+    real_start, real_join = thread_type.start, thread_type.join
+    attempted = []
+    joined = []
+    injected = failure("reader start failed")
+
+    def start(thread):
+        attempted.append(thread)
+        if len(attempted) == reader_number:
+            raise injected
+        real_start(thread)
+
+    def join(thread, *, timeout):
+        assert timeout == 2.0
+        assert process.wait.called
+        joined.append(thread)
+        real_join(thread, timeout=timeout)
+
+    monkeypatch.setattr(thread_type, "start", start)
+    monkeypatch.setattr(thread_type, "join", join)
+    with pytest.raises(failure) as caught:
+        tools.server._spawn_server(
+            cli=tmp_path / "cli", config_path=tmp_path / "config.yaml",
+            work=tmp_path, env={}, port=12345,
+        )
+
+    assert caught.value is injected
+    process.terminate.assert_called_once_with()
+    assert process.wait.call_args_list == [call(timeout=5.0)] * (2 if escalate else 1)
+    assert process.kill.call_count == int(escalate)
+    assert joined == attempted[:-1]
+    assert all(thread.ident is not None and not thread.is_alive() for thread in joined)
+    assert attempted[-1].ident is None
+    assert process.stdout.closed and process.stderr.closed
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt, SystemExit, BaseException])
+def test_reader_construction_failure_reaps_raw_process(
+    tools: SimpleNamespace,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: type[BaseException],
+) -> None:
+    process = Mock(stdout=StringIO(), stderr=StringIO())
+    process.poll.return_value = None
+    monkeypatch.setattr(tools.server.subprocess, "Popen", lambda *a, **kw: process)
+    injected = failure("reader construction failed")
+    monkeypatch.setattr(tools.server.threading, "Thread", Mock(side_effect=injected))
+    with pytest.raises(failure) as caught:
+        tools.server._spawn_server(
+            cli=tmp_path / "cli", config_path=tmp_path / "config.yaml",
+            work=tmp_path, env={}, port=12345,
+        )
+    assert caught.value is injected
+    process.terminate.assert_called_once_with()
+    process.wait.assert_called_once_with(timeout=5.0)
+    process.kill.assert_not_called()
+    assert process.stdout.closed and process.stderr.closed
+
+
+def test_spawn_hands_off_without_premature_or_double_cleanup(
+    tools: SimpleNamespace,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = Mock(stdout=StringIO("output\n"), stderr=StringIO("error\n"))
+    process.poll.return_value = None
+    monkeypatch.setattr(tools.server.subprocess, "Popen", lambda *a, **kw: process)
+    server = tools.server._spawn_server(
+        cli=tmp_path / "cli", config_path=tmp_path / "config.yaml",
+        work=tmp_path, env={}, port=12345,
+    )
+    assert server.process is process
+    assert server.port == 12345
+    process.terminate.assert_not_called()
+    process.wait.assert_not_called()
+    process.kill.assert_not_called()
+    server.join_readers()
+    assert list(server.stdout_lines) == ["output"]
+    assert list(server.stderr_lines) == ["error"]
+    tools.server._emergency_stop(server)
+    process.terminate.assert_called_once_with()
+    process.wait.assert_called_once_with(timeout=5.0)
 
 
 @pytest.mark.parametrize(

@@ -6,6 +6,7 @@ import logging
 import tempfile
 from io import StringIO
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -17,6 +18,23 @@ from fakedetector.config.loader import ConfigurationError
 from fakedetector.config.models import AppConfig
 from fakedetector.logging_setup import LoggingSetupError
 from fakedetector.runtime_setup import RuntimeSetupError
+
+
+def test_deep_yaml_prevents_startup(tmp_path, monkeypatch, capsys) -> None:
+    path = tmp_path / "deep.yaml"
+    path.write_text("x: " + "[" * 1200 + "0" + "]" * 1200 + "\n", encoding="utf-8")
+    startup = Mock()
+    monkeypatch.setattr(main_module, "ensure_runtime_directories", startup.runtime)
+    monkeypatch.setattr(main_module, "configure_logging", startup.logging)
+    monkeypatch.setattr(main_module, "create_app", startup.app)
+    monkeypatch.setattr(main_module.uvicorn, "run", startup.run)
+
+    assert main_module.main(["--config", str(path)]) == 2
+
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == "Configuration error: unable to load or validate configuration.\n"
+    assert startup.mock_calls == []
 
 
 def make_config(*, host: str = "127.0.0.1", port: int = 8080) -> AppConfig:

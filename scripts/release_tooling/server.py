@@ -40,6 +40,8 @@ class _ServerProcess:
                 daemon=True,
             ),
         )
+
+    def start_readers(self) -> None:
         for thread in self._threads:
             thread.start()
 
@@ -53,7 +55,8 @@ class _ServerProcess:
 
     def join_readers(self) -> None:
         for thread in self._threads:
-            thread.join(timeout=2.0)
+            if thread.ident is not None:
+                thread.join(timeout=2.0)
 
     def output_tail(self, secret_values: tuple[str, ...]) -> str:
         lines = [*(f"stdout: {line}" for line in self.stdout_lines)]
@@ -169,7 +172,22 @@ def _spawn_server(
         raise common.ReleaseVerificationError(
             "startup", "Installed CLI process could not be started."
         ) from None
-    return _ServerProcess(process, port)
+    # Own the raw child until wrapper construction and reader startup both succeed.
+    server: _ServerProcess | None = None
+    try:
+        server = _ServerProcess(process, port)
+        server.start_readers()
+    except BaseException:
+        try:
+            _stop_process(process)
+        finally:
+            if server is not None:
+                server.join_readers()
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+        raise
+    return server
 
 
 def _wait_for_health(
@@ -227,8 +245,7 @@ def _is_bind_failure(output: str) -> bool:
     )
 
 
-def _emergency_stop(server: _ServerProcess) -> None:
-    process = server.process
+def _stop_process(process: subprocess.Popen[str]) -> None:
     if process.poll() is None:
         process.terminate()
         try:
@@ -236,6 +253,10 @@ def _emergency_stop(server: _ServerProcess) -> None:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5.0)
+
+
+def _emergency_stop(server: _ServerProcess) -> None:
+    _stop_process(server.process)
     server.join_readers()
 
 

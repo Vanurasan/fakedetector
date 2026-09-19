@@ -924,6 +924,18 @@ server:
         Path(tmp_path).unlink(missing_ok=True)
 
 
+def test_deep_yaml_raises_controlled_error_without_exception_chain(tmp_path: Path) -> None:
+    path = tmp_path / "deep.yaml"
+    path.write_text("x: " + "[" * 1200 + "0" + "]" * 1200 + "\n", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError) as caught:
+        load_config(path, env={})
+
+    assert str(caught.value) == "Configuration file contains invalid YAML"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
 def test_missing_file_raises_controlled_error() -> None:
     """A non-existent file path raises ConfigurationError."""
     with pytest.raises(ConfigurationError, match="not found"):

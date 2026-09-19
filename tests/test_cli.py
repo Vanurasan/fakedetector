@@ -70,3 +70,27 @@ def test_installed_console_script_help() -> None:
     assert "usage" in help_output
     assert "fakedetector" in help_output
     assert "--config" in help_output
+
+
+def test_installed_console_script_rejects_deep_yaml(tmp_path: Path) -> None:
+    executable = shutil.which("fakedetector")
+    assert executable is not None
+    path = tmp_path / "deep.yaml"
+    path.write_text("x: " + "[" * 1200 + "0" + "]" * 1200 + "\n", encoding="utf-8")
+    environment = {
+        key: value for key, value in os.environ.items()
+        if not key.upper().startswith("FAKEDETECTOR_")
+    }
+    completed = subprocess.run(
+        [executable, "--config", str(path)],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=_HELP_TIMEOUT_SECONDS,
+    )
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr == "Configuration error: unable to load or validate configuration.\n"
+    assert sorted(tmp_path.iterdir()) == [path]

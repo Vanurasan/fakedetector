@@ -113,7 +113,7 @@ def install_api(
     authenticator: APIBearerAuthenticator | None,
     config: AppConfig,
 ) -> None:
-    """Install exactly the three Stage 8 MVP API routes."""
+    """Install exactly the three supported analysis API routes."""
 
     body_limit_bytes = multipart_body_limit_bytes(config)
     request_timeout_seconds = config.server.request_timeout_seconds
