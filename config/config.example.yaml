@@ -113,7 +113,7 @@ result:
 error_handling:
   continue_if_analyzer_fails: true
   mark_partial_on_analyzer_failure: true
-  hide_internal_error_details: true
+  hide_internal_error_details: true # В схеме 1.0 допустимо только true.
 
 logging:
   level: "INFO"
@@ -122,4 +122,4 @@ logging:
   rotation_backup_count: 5
 
 external_systems:
-  enabled: false
+  enabled: false # Интеграции отсутствуют; допустимо только false.

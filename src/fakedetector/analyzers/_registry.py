@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel, ValidationError
 from pydantic_core import PydanticSerializationError
 
-from fakedetector.analyzers._catalog import _resolve_worker_definition
+from fakedetector.analyzers._catalog import _resolve_worker_definition, _WorkerDefinitionResolver
 from fakedetector.analyzers._errors import AnalyzerConfigurationError
 from fakedetector.analyzers._models import AnalyzerRegistration
 from fakedetector.analyzers._transport import _MAX_SETTINGS_BYTES
@@ -37,6 +37,8 @@ class AnalyzerRegistry:
         self,
         config: AppConfig,
         registrations: Sequence[AnalyzerRegistration],
+        *,
+        _definition_resolver: _WorkerDefinitionResolver | None = None,
     ) -> None:
         self._config_snapshot = _ConfigSnapshot.capture(config)
         captured_config = self._config_snapshot.materialize()
@@ -49,7 +51,7 @@ class AnalyzerRegistry:
         registered = tuple(registrations)
         by_id: dict[str, AnalyzerRegistration] = {}
         for registration in registered:
-            self._validate_registration(registration)
+            self._validate_registration(registration, _definition_resolver)
             if registration.analyzer_id in by_id:
                 raise AnalyzerConfigurationError("duplicate_registration")
             by_id[registration.analyzer_id] = registration
@@ -127,7 +129,10 @@ class AnalyzerRegistry:
         )
 
     @staticmethod
-    def _validate_registration(registration: AnalyzerRegistration) -> None:
+    def _validate_registration(
+        registration: AnalyzerRegistration,
+        definition_resolver: _WorkerDefinitionResolver | None = None,
+    ) -> None:
         if not isinstance(registration, AnalyzerRegistration):
             raise AnalyzerConfigurationError("registration_type")
         if _SAFE_ANALYZER_ID.fullmatch(registration.analyzer_id) is None:
@@ -171,7 +176,8 @@ class AnalyzerRegistry:
         ):
             raise AnalyzerConfigurationError("candidate_findings")
 
-        definition = _resolve_worker_definition(registration.worker_key)
+        resolver = definition_resolver or _resolve_worker_definition
+        definition = resolver(registration.worker_key)
         if definition is None:
             raise AnalyzerConfigurationError("worker_key")
         implementation = definition.factory

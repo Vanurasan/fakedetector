@@ -90,7 +90,6 @@ _FORMAT_BY_EXTENSION = {
     "mkv": _DetectedFormat("mkv", "video/x-matroska", MediaType.VIDEO, "mkv"),
 }
 _ALLOWED_EXTENSIONS = frozenset(_FORMAT_BY_EXTENSION)
-_ALLOWED_MIME_TYPES = frozenset(item.detected_mime for item in _FORMAT_BY_EXTENSION.values())
 
 
 class FileValidator:

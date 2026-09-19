@@ -11,6 +11,11 @@ from multiprocessing.process import BaseProcess
 from pathlib import Path
 
 import pytest
+from support.framework_analyzers import (
+    _execute_framework_worker,
+    _framework_runner,
+    _resolve_framework_definition,
+)
 
 from fakedetector.analyzers._catalog import _resolve_worker_definition
 from fakedetector.analyzers._errors import AnalyzerInfrastructureError
@@ -30,7 +35,6 @@ from fakedetector.analyzers._transport import (
 )
 from fakedetector.analyzers._worker import (
     _encode_response,
-    _execute_worker,
     _MultiprocessingSpawnBackend,
     _SpawnedWorkerRunner,
     _validate_completed_result,
@@ -152,7 +156,8 @@ class _FakeBackend:
         args: tuple[object, ...],
     ) -> _FakeProcess:
         assert callable(target)
-        assert len(args) == 2
+        assert len(args) == 3
+        assert args[2] is _resolve_framework_definition
         self.process_creations += 1
         return self.process
 
@@ -243,7 +248,7 @@ def _request(
 ) -> _WorkerRequest:
     source = tmp_path / "source.bin"
     source.write_bytes(b"source")
-    definition = _resolve_worker_definition(worker_key)
+    definition = _resolve_framework_definition(worker_key)
     assert definition is not None
     settings = definition.settings_model.model_validate({"applicable": applicable})
     return _WorkerRequest(
@@ -265,7 +270,7 @@ def test_timeout_terminate_path_is_bounded_reaped_and_closes_resources(
 ) -> None:
     process = _FakeProcess(terminate_stops=True, kill_stops=True)
     backend = _FakeBackend(process)
-    runner = _SpawnedWorkerRunner(backend=backend, monotonic=lambda: 0.0)
+    runner = _framework_runner(backend=backend, monotonic=lambda: 0.0)
 
     outcome = runner.run(_request(tmp_path), 0.05)
 
@@ -282,7 +287,7 @@ def test_timeout_terminate_path_is_bounded_reaped_and_closes_resources(
 def test_process_creation_failure_closes_both_ipc_endpoints(tmp_path: Path) -> None:
     process = _FakeProcess(terminate_stops=True, kill_stops=True)
     backend = _BrokenProcessCreationBackend(process)
-    runner = _SpawnedWorkerRunner(backend=backend)
+    runner = _framework_runner(backend=backend)
 
     try:
         runner.run(_request(tmp_path), 0.05)
@@ -298,7 +303,7 @@ def test_process_creation_failure_closes_both_ipc_endpoints(tmp_path: Path) -> N
 def test_timeout_uses_kill_fallback_and_confirms_reap(tmp_path: Path) -> None:
     process = _FakeProcess(terminate_stops=False, kill_stops=True)
     backend = _FakeBackend(process)
-    runner = _SpawnedWorkerRunner(backend=backend, monotonic=lambda: 0.0)
+    runner = _framework_runner(backend=backend, monotonic=lambda: 0.0)
 
     outcome = runner.run(_request(tmp_path), 0.05)
 
@@ -313,7 +318,7 @@ def test_timeout_uses_kill_fallback_and_confirms_reap(tmp_path: Path) -> None:
 def test_unreapable_worker_is_fatal_and_never_timeout(tmp_path: Path) -> None:
     process = _FakeProcess(terminate_stops=False, kill_stops=False)
     backend = _FakeBackend(process)
-    runner = _SpawnedWorkerRunner(backend=backend, monotonic=lambda: 0.0)
+    runner = _framework_runner(backend=backend, monotonic=lambda: 0.0)
 
     barrier = None
     try:
@@ -343,7 +348,7 @@ def test_stopped_worker_with_unconfirmed_join_defers_cleanup_safety(
 ) -> None:
     process = _JoinFailureProcess()
     backend = _FakeBackend(process)
-    runner = _SpawnedWorkerRunner(backend=backend, monotonic=lambda: 0.0)
+    runner = _framework_runner(backend=backend, monotonic=lambda: 0.0)
 
     try:
         runner.run(_request(tmp_path), 0.05)
@@ -364,7 +369,7 @@ def test_stopped_worker_with_unconfirmed_join_defers_cleanup_safety(
 def test_repeated_real_timeouts_leave_no_spawned_children(tmp_path: Path) -> None:
     baseline_pids = {child.pid for child in multiprocessing.active_children()}
     request = _request(tmp_path)
-    runner = _SpawnedWorkerRunner()
+    runner = _framework_runner()
     started_at = time.monotonic()
 
     outcomes = [runner.run(request, 0.05) for _ in range(2)]
@@ -387,7 +392,7 @@ def test_runner_reaps_normal_response_and_closes_all_handles(tmp_path: Path) -> 
     backend = _FakeBackend(process)
     backend.receive.poll_result = True
     backend.receive.response = b'{"kind":"worker_error"}'
-    runner = _SpawnedWorkerRunner(backend=backend, monotonic=lambda: 0.0)
+    runner = _framework_runner(backend=backend, monotonic=lambda: 0.0)
 
     outcome = runner.run(_request(tmp_path), 0.05)
 
@@ -400,11 +405,15 @@ def test_runner_reaps_normal_response_and_closes_all_handles(tmp_path: Path) -> 
 
 
 def test_worker_response_kinds_distinguish_framework_outcomes(tmp_path: Path) -> None:
-    completed = _execute_worker(_request(tmp_path, "framework_test.image"))
-    not_applicable = _execute_worker(_request(tmp_path, "framework_test.image", applicable=False))
-    analyzer_error = _execute_worker(_request(tmp_path, "framework_test.error"))
-    serialization_error = _execute_worker(_request(tmp_path, "framework_test.serialization"))
-    unknown_worker = _execute_worker(
+    completed = _execute_framework_worker(_request(tmp_path, "framework_test.image"))
+    not_applicable = _execute_framework_worker(
+        _request(tmp_path, "framework_test.image", applicable=False)
+    )
+    analyzer_error = _execute_framework_worker(_request(tmp_path, "framework_test.error"))
+    serialization_error = _execute_framework_worker(
+        _request(tmp_path, "framework_test.serialization")
+    )
+    unknown_worker = _execute_framework_worker(
         replace(_request(tmp_path, "framework_test.image"), worker_key="not_trusted")
     )
 
@@ -421,7 +430,7 @@ def test_worker_rejects_invalid_transport_settings_without_details(tmp_path: Pat
         settings_json='{"applicable":"secret-invalid-value"}',
     )
 
-    response = _execute_worker(request)
+    response = _execute_framework_worker(request)
 
     assert _decoded(response) == {"kind": "worker_error"}
     assert b"secret-invalid-value" not in response
@@ -431,7 +440,7 @@ def test_generic_worker_validation_accepts_contractual_score_and_findings(
     tmp_path: Path,
 ) -> None:
     transport_request = _request(tmp_path, "framework_test.image")
-    definition = _resolve_worker_definition(transport_request.worker_key)
+    definition = _resolve_framework_definition(transport_request.worker_key)
     assert definition is not None
     analyzer = definition.factory()
     request = AnalyzerRequest(
@@ -468,7 +477,7 @@ def test_worker_input_read_failure_is_a_safe_worker_error(tmp_path: Path) -> Non
     request = _request(tmp_path, "framework_test.image")
     Path(request.source_path).unlink()
 
-    response = _execute_worker(request)
+    response = _execute_framework_worker(request)
 
     assert _decoded(response) == {"kind": "worker_error"}
     assert str(tmp_path).encode() not in response
@@ -539,7 +548,7 @@ def test_response_encoder_rejects_oversized_canonical_result_without_fallback() 
 
 
 def test_runner_uses_explicit_spawn_context() -> None:
-    runner = _SpawnedWorkerRunner()
+    runner = _framework_runner()
 
     assert isinstance(runner._backend, _MultiprocessingSpawnBackend)
     assert runner._backend._context.get_start_method() == "spawn"
@@ -622,7 +631,7 @@ def test_real_worker_interruption_reaps_before_propagation(
             monkeypatch.setattr(receive, "recv_bytes", response_before_interrupted_join)
 
     with pytest.raises(type(process_interruption)) as raised:
-        _SpawnedWorkerRunner(backend=backend, monotonic=monotonic).run(_request(tmp_path), 5.0)
+        _framework_runner(backend=backend, monotonic=monotonic).run(_request(tmp_path), 5.0)
 
     assert raised.value is process_interruption
     assert injected
@@ -655,7 +664,7 @@ def test_real_worker_interrupted_escalation_preserves_barrier(
 
     monkeypatch.setattr(receive, "poll", timeout_with_interrupted_termination)
     with pytest.raises(_CleanupSafetyInterruption) as raised:
-        _SpawnedWorkerRunner(backend=backend).run(_request(tmp_path), 5.0)
+        _framework_runner(backend=backend).run(_request(tmp_path), 5.0)
 
     assert raised.value.interruption is process_interruption
     barrier = raised.value._cleanup_safety_barrier
@@ -671,3 +680,36 @@ def _decoded(response: bytes) -> dict[str, object]:
     decoded = json.loads(response)
     assert isinstance(decoded, dict)
     return decoded
+
+
+@pytest.mark.parametrize(
+    ("worker_key", "applicable", "kind", "status"),
+    [
+        ("framework_test.image", True, "result", "completed"),
+        ("framework_test.image", False, "result", "not_applicable"),
+        ("framework_test.error", True, "analyzer_error", None),
+        ("framework_test.serialization", True, "serialization_error", None),
+    ],
+)
+def test_importable_test_resolver_runs_production_worker_under_real_spawn(
+    tmp_path: Path, worker_key: str, applicable: bool, kind: str, status: str | None,
+) -> None:
+    before = {child.pid for child in multiprocessing.active_children()}
+    request = _request(tmp_path, worker_key, applicable=applicable)
+    outcome = _framework_runner().run(request, 5.0)
+    assert outcome.kind is _WorkerRunKind.RESPONSE
+    assert outcome.response is not None
+    assert len(outcome.response) <= _MAX_RESPONSE_BYTES
+    response = _decoded(outcome.response)
+    assert response["kind"] == kind
+    if status is not None:
+        assert response["result"]["status"] == status
+    assert {child.pid for child in multiprocessing.active_children()} == before
+
+
+def test_production_spawn_cannot_activate_test_worker_by_key(tmp_path: Path) -> None:
+    assert _resolve_worker_definition("framework_test.image") is None
+    outcome = _SpawnedWorkerRunner().run(_request(tmp_path, "framework_test.image"), 5.0)
+    assert outcome.kind is _WorkerRunKind.RESPONSE
+    assert outcome.response is not None
+    assert _decoded(outcome.response) == {"kind": "worker_error"}

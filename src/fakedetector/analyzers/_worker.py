@@ -20,6 +20,7 @@ from pydantic_core import PydanticSerializationError
 from fakedetector.analyzers._catalog import (
     _resolve_worker_definition,
     _WorkerAnalyzerDefinition,
+    _WorkerDefinitionResolver,
 )
 from fakedetector.analyzers._errors import (
     AnalyzerInfrastructureError,
@@ -131,9 +132,11 @@ class _SpawnedWorkerRunner:
         *,
         backend: _SpawnBackend | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        _definition_resolver: _WorkerDefinitionResolver | None = None,
     ) -> None:
         self._backend = backend or _MultiprocessingSpawnBackend()
         self._monotonic = monotonic
+        self._definition_resolver = _definition_resolver
 
     def run(self, request: _WorkerRequest, timeout_seconds: float) -> _WorkerRun:
         """Return only after normal reap or a confirmed terminate/kill timeout path."""
@@ -147,7 +150,7 @@ class _SpawnedWorkerRunner:
         try:
             process = self._backend.create_process(
                 target=_worker_main,
-                args=(send_connection, request),
+                args=(send_connection, request, self._definition_resolver),
             )
         except BaseException as error:
             _close_connection(receive_connection)
@@ -327,10 +330,14 @@ class _WorkerReapBarrier:
         return True
 
 
-def _worker_main(send_connection: _Connection, request: _WorkerRequest) -> None:
+def _worker_main(
+    send_connection: _Connection,
+    request: _WorkerRequest,
+    _definition_resolver: _WorkerDefinitionResolver | None = None,
+) -> None:
     """Resolve trusted code in the child and return one bounded JSON envelope."""
     try:
-        response = _execute_worker(request)
+        response = _execute_worker(request, _definition_resolver=_definition_resolver)
     except Exception:
         response = _encode_response(_WorkerResponseKind.WORKER_ERROR)
     try:
@@ -341,8 +348,13 @@ def _worker_main(send_connection: _Connection, request: _WorkerRequest) -> None:
         _close_connection(send_connection)
 
 
-def _execute_worker(request: _WorkerRequest) -> bytes:
-    definition = _resolve_worker_definition(request.worker_key)
+def _execute_worker(
+    request: _WorkerRequest,
+    *,
+    _definition_resolver: _WorkerDefinitionResolver | None = None,
+) -> bytes:
+    resolver = _definition_resolver or _resolve_worker_definition
+    definition = resolver(request.worker_key)
     if definition is None:
         return _encode_response(_WorkerResponseKind.WORKER_ERROR)
     try:

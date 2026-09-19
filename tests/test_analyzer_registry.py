@@ -7,11 +7,13 @@ from pathlib import Path
 
 import pytest
 import yaml
-
-from fakedetector.analyzers._catalog import (
+from support.framework_analyzers import (
+    _framework_registry,
     _framework_test_registrations,
-    _resolve_worker_definition,
+    _resolve_framework_definition,
 )
+
+from fakedetector.analyzers._catalog import _resolve_worker_definition
 from fakedetector.analyzers._errors import AnalyzerConfigurationError
 from fakedetector.analyzers._registry import AnalyzerRegistry
 from fakedetector.config.models import AppConfig
@@ -44,14 +46,14 @@ def test_registry_rejects_duplicate_registration_without_overwrite() -> None:
     registration = _framework_test_registrations()[0]
 
     with pytest.raises(AnalyzerConfigurationError) as error:
-        AnalyzerRegistry(_config(), (registration, registration))
+        _framework_registry(_config(), (registration, registration))
 
     assert error.value.phase == "duplicate_registration"
 
 
 def test_registry_rejects_unknown_enabled_analyzer() -> None:
     with pytest.raises(AnalyzerConfigurationError) as error:
-        AnalyzerRegistry(
+        _framework_registry(
             _config(image=["not_registered"]),
             _framework_test_registrations(),
         )
@@ -61,7 +63,7 @@ def test_registry_rejects_unknown_enabled_analyzer() -> None:
 
 def test_registry_rejects_analyzer_enabled_for_wrong_media() -> None:
     with pytest.raises(AnalyzerConfigurationError) as error:
-        AnalyzerRegistry(
+        _framework_registry(
             _config(audio=["fake_image_analyzer"]),
             _framework_test_registrations(),
         )
@@ -74,7 +76,7 @@ def test_registry_rejects_invalid_analyzer_id(analyzer_id: str) -> None:
     registration = replace(_framework_test_registrations()[0], analyzer_id=analyzer_id)
 
     with pytest.raises(AnalyzerConfigurationError) as error:
-        AnalyzerRegistry(_config(), (registration,))
+        _framework_registry(_config(), (registration,))
 
     assert error.value.phase == "analyzer_id"
 
@@ -102,14 +104,14 @@ def test_registry_rejects_invalid_registration_contract(
     )
 
     with pytest.raises(AnalyzerConfigurationError) as error:
-        AnalyzerRegistry(_config(), (registration,))
+        _framework_registry(_config(), (registration,))
 
     assert error.value.phase == phase
 
 
 def test_registry_rejects_non_registration_object() -> None:
     with pytest.raises(AnalyzerConfigurationError) as error:
-        AnalyzerRegistry(_config(), (object(),))
+        _framework_registry(_config(), (object(),))
 
     assert error.value.phase == "registration_type"
 
@@ -121,7 +123,7 @@ def test_registry_rejects_registration_media_declaration_mismatch() -> None:
     )
 
     with pytest.raises(AnalyzerConfigurationError) as error:
-        AnalyzerRegistry(_config(), (registration,))
+        _framework_registry(_config(), (registration,))
 
     assert error.value.phase == "registration_mismatch"
 
@@ -130,12 +132,12 @@ def test_registry_rejects_catalog_implementation_identity_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registration = _framework_test_registrations()[0]
-    definition = _resolve_worker_definition(registration.worker_key)
+    definition = _resolve_framework_definition(registration.worker_key)
     assert definition is not None
     monkeypatch.setattr(definition.factory, "analyzer_version", "9.9.9")
 
     with pytest.raises(AnalyzerConfigurationError) as error:
-        AnalyzerRegistry(_config(), (registration,))
+        _framework_registry(_config(), (registration,))
 
     assert error.value.phase == "registration_mismatch"
 
@@ -147,14 +149,14 @@ def test_registry_rejects_untrusted_worker_key() -> None:
     )
 
     with pytest.raises(AnalyzerConfigurationError) as error:
-        AnalyzerRegistry(_config(), (registration,))
+        _framework_registry(_config(), (registration,))
 
     assert error.value.phase == "worker_key"
 
 
 def test_registry_preserves_exact_config_order() -> None:
     configured_order = ["fake_image_second_analyzer", "fake_image_analyzer"]
-    registry = AnalyzerRegistry(
+    registry = _framework_registry(
         _config(image=configured_order),
         tuple(reversed(_framework_test_registrations())),
     )
@@ -178,7 +180,7 @@ def test_registry_rejects_invalid_typed_settings_without_raw_value(
     settings: dict[str, object],
 ) -> None:
     with pytest.raises(AnalyzerConfigurationError) as error:
-        AnalyzerRegistry(
+        _framework_registry(
             _config(image=["fake_image_analyzer"], settings=settings),
             _framework_test_registrations(),
         )
@@ -190,7 +192,7 @@ def test_registry_rejects_invalid_typed_settings_without_raw_value(
 
 def test_registry_rejects_settings_for_unknown_analyzer() -> None:
     with pytest.raises(AnalyzerConfigurationError) as error:
-        AnalyzerRegistry(
+        _framework_registry(
             _config(settings={"unknown": {"secret": "do-not-expose"}}),
             _framework_test_registrations(),
         )
@@ -200,7 +202,7 @@ def test_registry_rejects_settings_for_unknown_analyzer() -> None:
 
 
 def test_registry_accepts_valid_typed_settings_and_equal_continue_policy() -> None:
-    registry = AnalyzerRegistry(
+    registry = _framework_registry(
         _config(
             image=["fake_image_analyzer"],
             settings={"fake_image_analyzer": {"applicable": False}},
@@ -217,7 +219,7 @@ def test_registry_accepts_valid_typed_settings_and_equal_continue_policy() -> No
 
 def test_registry_rejects_mismatched_duplicate_continue_policy() -> None:
     with pytest.raises(AnalyzerConfigurationError) as error:
-        AnalyzerRegistry(
+        _framework_registry(
             _config(continue_on_failure=True, legacy_continue=False),
             _framework_test_registrations(),
         )
@@ -227,7 +229,7 @@ def test_registry_rejects_mismatched_duplicate_continue_policy() -> None:
 
 def test_registry_rejects_duplicate_enabled_id() -> None:
     with pytest.raises(AnalyzerConfigurationError) as error:
-        AnalyzerRegistry(
+        _framework_registry(
             _config(image=["fake_image_analyzer", "fake_image_analyzer"]),
             _framework_test_registrations(),
         )
@@ -236,7 +238,7 @@ def test_registry_rejects_duplicate_enabled_id() -> None:
 
 
 def test_registry_derives_requirements_only_from_enabled_analyzers() -> None:
-    registry = AnalyzerRegistry(
+    registry = _framework_registry(
         _config(
             image=["fake_image_analyzer"],
             audio=["fake_audio_analyzer"],
@@ -258,7 +260,7 @@ def test_registry_derives_requirements_only_from_enabled_analyzers() -> None:
 
 
 def test_disabled_analyzer_does_not_contribute_preprocessing_requirements() -> None:
-    registry = AnalyzerRegistry(_config(), _framework_test_registrations())
+    registry = _framework_registry(_config(), _framework_test_registrations())
 
     assert registry.preprocessing_requirements(MediaType.AUDIO) == PreprocessingRequirements()
     assert registry.preprocessing_requirements(MediaType.VIDEO) == PreprocessingRequirements()
@@ -271,6 +273,14 @@ def test_registry_rejects_requirement_for_unsupported_media() -> None:
     )
 
     with pytest.raises(AnalyzerConfigurationError) as error:
-        AnalyzerRegistry(_config(), (registration,))
+        _framework_registry(_config(), (registration,))
 
     assert error.value.phase == "preprocessing_requirements"
+
+
+@pytest.mark.parametrize("registration", _framework_test_registrations())
+def test_production_catalog_and_registry_reject_every_framework_worker(registration) -> None:
+    assert _resolve_worker_definition(registration.worker_key) is None
+    with pytest.raises(AnalyzerConfigurationError) as error:
+        AnalyzerRegistry(_config(), (registration,))
+    assert error.value.phase == "worker_key"
