@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import cast
 
 import numpy as np
+import pytest
 import yaml
 from PIL import Image
 
@@ -29,6 +30,10 @@ from fakedetector.domain import (
     SourceContext,
 )
 from fakedetector.intake import Stage3Accepted
+from fakedetector.lifecycle._analysis_execution import AnalysisExecutionService
+from fakedetector.lifecycle._assessment import AnalysisAssessmentService
+from fakedetector.lifecycle._finding_formation import FindingFormationService
+from fakedetector.lifecycle.models import AnalysisTask, TaskExecutionOutcome
 
 _EXAMPLE_CONFIG = Path("config/config.example.yaml")
 
@@ -201,7 +206,18 @@ def test_production_image_vertical_publishes_authoritative_results_and_findings(
 def test_production_image_no_candidates_publishes_empty_stage6_state(
     tmp_path: Path,
     real_worker_processes: list[BaseProcess],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    executors: list[AnalysisExecutionService] = []
+    execute = AnalysisExecutionService.execute
+
+    def record_execution(
+        executor: AnalysisExecutionService, task: AnalysisTask
+    ) -> TaskExecutionOutcome:
+        executors.append(executor)
+        return execute(executor, task)
+
+    monkeypatch.setattr(AnalysisExecutionService, "execute", record_execution)
     runtime = _production_runtime(_config(tmp_path))
     _, result = _run(
         runtime,
@@ -209,6 +225,9 @@ def test_production_image_no_candidates_publishes_empty_stage6_state(
         original_name="plain.png",
         declared_content_type="image/png",
     )
+    assert len(executors) == 1
+    assert isinstance(executors[0]._finding_service, FindingFormationService)
+    assert isinstance(executors[0]._assessment_service, AnalysisAssessmentService)
 
     assert all(analyzer.status is AnalyzerStatus.COMPLETED for analyzer in result.analyzers)
     assert result.findings == []

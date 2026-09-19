@@ -9,7 +9,7 @@ from pathlib import Path
 from time import monotonic
 from typing import BinaryIO
 
-from fakedetector._stage5_resources import (
+from fakedetector._generated_artifact_budget import (
     _GeneratedArtifactBudget,
     _GeneratedArtifactLimitError,
     _GeneratedArtifactWriteError,

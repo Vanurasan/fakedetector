@@ -1,4 +1,4 @@
-"""Private Stage 5 generated-artifact count and byte-budget capabilities."""
+"""Private generated-artifact count and byte-budget capabilities."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.domain import MediaType
 
 _BYTES_PER_MEBIBYTE = 1_048_576
-_MAX_STAGE5_ARTIFACTS = 256
+_MAX_GENERATED_ARTIFACTS = 256
 
 
 class _GeneratedArtifactLimitError(Exception):

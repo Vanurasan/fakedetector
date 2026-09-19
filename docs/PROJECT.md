@@ -659,7 +659,7 @@ arbitrary analyzer code и не через обычные поля `AnalyzerRequ
 `WorkspaceArtifactRegistry → WorkspaceCleanup → Stage4TaskProcessor terminal
 cleanup`; отдельная Stage 5 cleanup subsystem не вводится.
 
-Для одной задачи действует единый внутренний предел `_MAX_STAGE5_ARTIFACTS = 256`:
+Для одной задачи действует единый внутренний предел `_MAX_GENERATED_ARTIFACTS = 256`:
 производитель проверяет план до первой регистрации, `PreparedMedia` защищает
 инвариант, а `WorkerRequest` повторяет проверку на границе транспорта. Совокупный
 максимальный физический размер всех созданных артефактов для типа `m`
@@ -748,13 +748,13 @@ terminate/kill и join/reap worker. Невозможность подтверд�
 случае запрещены.
 
 `limits.processing_timeout_seconds` задаёт общий monotonic budget Stage 5. Он
-начинается при входе в `Stage5ExecutionService.execute(task)` после Stage 4 claim
+начинается при входе в `AnalysisExecutionService.execute(task)` после Stage 4 claim
 в состоянии `RUNNING / PREPROCESSING`; каждая bounded operation получает минимум
 собственного timeout и remaining overall budget. Исчерпание общего budget —
 task-level processing failure, а не набор обычных analyzer timeout.
 
 Контекст Stage 4, `PreprocessingDispatcher`, `AnalyzerRegistry`/
-`AnalyzerOrchestrator`, `Stage5ExecutionService` и бюджет созданных артефактов связаны единым
+`AnalyzerOrchestrator`, `AnalysisExecutionService` и бюджет созданных артефактов связаны единым
 внутренним идентификатором неизменяемого снимка конфигурации: каноническими байтами
 провалидированного JSON и полным SHA-256. Разные экземпляры `AppConfig` с одинаковым
 содержимым совместимы; последующее изменение исходного объекта не влияет на зафиксированное
@@ -930,7 +930,7 @@ Stage 8. Единственный `ResultFinalizationService` принимает
    controlled source передаются дальнейшему lifecycle.
 10. Принятая задача поступает во внутреннюю очередь обработки.
 11. `Stage4TaskProcessor` подтверждает execution claim и публикует
-    `RUNNING / PREPROCESSING`; `Stage5ExecutionService`, реализующий существующий
+    `RUNNING / PREPROCESSING`; `AnalysisExecutionService`, реализующий существующий
     `TaskExecutor.execute(task) -> TaskExecutionOutcome`, фиксирует общий
     monotonic processing deadline и выполняет подготовку по типу медиа.
 12. Через authoritative `TaskRegistry` публикуется `RUNNING / ANALYSIS`, после
@@ -981,10 +981,10 @@ Stage 7 хранит отдельный предназначенный толь�
 жизненного цикла допускает
 `RISK_ASSESSMENT → COMPLETED | PARTIAL | FAILED / CLEANUP` и проводит `PARTIAL`
 через тот же механизм терминального завершения и владения очисткой Stage 4 до
-`FINISHED`. Рабочий `Stage5ExecutionService` после публикации Stage 6 получает
+`FINISHED`. Рабочий `AnalysisExecutionService` после публикации Stage 6 получает
 независимо восстановленные авторитетные `AnalyzerResult[]` и `Finding[]`,
 использует активный план анализаторов того же неизменяемого снимка конфигурации,
-вызывает чистый `Stage7AssessmentService` и публикует Stage 7 до возврата
+вызывает чистый `AnalysisAssessmentService` и публикует Stage 7 до возврата
 основного результата выполнения.
 `complete` возвращает `TaskExecutionOutcome.completed()`, а `partial` и
 `insufficient` — `TaskExecutionOutcome.partial()`; внутренний сбой Stage 7

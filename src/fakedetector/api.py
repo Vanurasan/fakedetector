@@ -19,6 +19,7 @@ from starlette.datastructures import FormData, UploadFile
 from starlette.formparsers import MultiPartException
 from starlette.responses import Response
 
+from fakedetector._http_status import intake_http_status
 from fakedetector._http_upload import (
     RequestBodyDeadlineError,
     RequestBodyTooLargeError,
@@ -358,7 +359,7 @@ def _submission_response(request: Request, submission: AnalysisSubmission) -> Re
 
     result = submission.terminal_result
     error = result.errors[0] if result.errors else _internal_error()
-    status_code = stage3_http_status(result.status, error.code)
+    status_code = intake_http_status(result.status, error.code)
     return _error_response(
         request,
         status_code,
@@ -421,22 +422,6 @@ def _error_response(
 def _analysis_urls(analysis_id: str) -> tuple[str, str]:
     status_url = f"/api/v1/analyses/{analysis_id}"
     return status_url, f"{status_url}/result"
-
-
-def stage3_http_status(status: AnalysisStatus, error_code: str) -> int:
-    if status is AnalysisStatus.FAILED:
-        return 500
-    if error_code == "file_too_large":
-        return 413
-    if error_code in {
-        "missing_extension",
-        "unsupported_extension",
-        "unsupported_mime_type",
-        "unsupported_media_type",
-        "file_signature_mismatch",
-    }:
-        return 415
-    return 422
 
 
 def _file_missing_error() -> ErrorDetail:

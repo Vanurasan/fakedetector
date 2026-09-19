@@ -680,9 +680,28 @@ def test_result_pending_is_consistent_202_status_page(tmp_path: Path) -> None:
     assert 'http-equiv="refresh"' in response.text
 
 
-def test_immediate_rejection_has_safe_result_navigation(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("status", "code", "category", "expected_status"),
+    [
+        (AnalysisStatus.REJECTED, "file_too_large", "resource_limit", 413),
+        (AnalysisStatus.REJECTED, "missing_extension", "unsupported_media", 415),
+        (AnalysisStatus.REJECTED, "unsupported_extension", "unsupported_media", 415),
+        (AnalysisStatus.REJECTED, "unsupported_mime_type", "unsupported_media", 415),
+        (AnalysisStatus.REJECTED, "unsupported_media_type", "unsupported_media", 415),
+        (AnalysisStatus.REJECTED, "file_signature_mismatch", "validation", 415),
+        (AnalysisStatus.REJECTED, "unsafe_or_unreadable_file", "validation", 422),
+        (AnalysisStatus.FAILED, "internal_error", "internal", 500),
+    ],
+)
+def test_immediate_rejection_has_safe_result_navigation(
+    tmp_path: Path,
+    status: AnalysisStatus,
+    code: str,
+    category: str,
+    expected_status: int,
+) -> None:
     service = StubApplicationService()
-    result = make_rejected_result()
+    result = make_rejected_result(status=status, code=code, category=category)
     service.submission = AnalysisSubmission(
         analysis_id=result.analysis_id,
         status=result.status,
@@ -697,9 +716,9 @@ def test_immediate_rejection_has_safe_result_navigation(tmp_path: Path) -> None:
         auth=AUTH,
     )
 
-    assert response.status_code == 415
+    assert response.status_code == expected_status
     assert f"/analyses/{result.analysis_id}/result" in response.text
-    assert "unsupported_extension" in response.text
+    assert code in response.text
 
 
 @pytest.mark.parametrize(

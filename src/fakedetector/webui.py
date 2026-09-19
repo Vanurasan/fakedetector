@@ -18,13 +18,13 @@ from starlette.datastructures import FormData, UploadFile
 from starlette.formparsers import MultiPartException
 from starlette.responses import Response
 
+from fakedetector._http_status import intake_http_status
 from fakedetector._http_upload import (
     RequestBodyDeadlineError,
     RequestBodyTooLargeError,
     multipart_body_limit_bytes,
     parse_bounded_multipart,
 )
-from fakedetector.api import stage3_http_status
 from fakedetector.application import (
     AnalysisApplicationService,
     AnalysisInternalError,
@@ -370,7 +370,7 @@ def _submission_response(
     return _error_page(
         templates,
         request,
-        status_code=stage3_http_status(result.status, error.code),
+        status_code=intake_http_status(result.status, error.code),
         error=error,
         analysis_id=result.analysis_id,
         status_url=f"/analyses/{result.analysis_id}",

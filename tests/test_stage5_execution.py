@@ -23,16 +23,16 @@ import fakedetector.core._bounded_process as bounded_process_module
 import fakedetector.lifecycle as lifecycle
 import fakedetector.lifecycle.execution as execution_module
 import fakedetector.preprocessing._media_tools as preprocessing_tools_module
-from fakedetector._stage5_resources import _GeneratedArtifactBudget
+from fakedetector._generated_artifact_budget import _GeneratedArtifactBudget
 from fakedetector.analyzers._catalog import _framework_test_registrations
 from fakedetector.analyzers._errors import AnalyzerInfrastructureError
 from fakedetector.analyzers._orchestrator import AnalyzerOrchestrator, _WorkerRunner
 from fakedetector.analyzers._registry import AnalyzerRegistry
 from fakedetector.analyzers._transport import (
+    _MAX_ANALYZER_RESULT_BYTES,
     _MAX_RESPONSE_BYTES,
-    _MAX_STAGE5_ANALYZER_RESULT_BYTES,
-    _serialize_stage5_analyzer_result,
-    _Stage5AnalyzerResultSizeError,
+    _AnalyzerResultSizeError,
+    _serialize_analyzer_result,
     _WorkerRequest,
     _WorkerResponseKind,
 )
@@ -88,9 +88,9 @@ from fakedetector.lifecycle import (
     WorkspaceArtifactRegistry,
     config_snapshot_fingerprint,
 )
-from fakedetector.lifecycle._stage5 import Stage5ExecutionService
-from fakedetector.lifecycle._stage6 import Stage6FindingService
-from fakedetector.lifecycle._stage7 import Stage7AssessmentService
+from fakedetector.lifecycle._analysis_execution import AnalysisExecutionService
+from fakedetector.lifecycle._assessment import AnalysisAssessmentService
+from fakedetector.lifecycle._finding_formation import FindingFormationService
 from fakedetector.lifecycle.models import (
     Stage5TaskData,
     Stage6TaskData,
@@ -553,7 +553,7 @@ def _service(
     *,
     runner: _WorkerRunner | None = None,
     monotonic: Callable[[], float],
-) -> Stage5ExecutionService:
+) -> AnalysisExecutionService:
     if isinstance(preprocessing, _SnapshotBoundTestComponent):
         preprocessing._bind_config(config)
     analyzer_registry = AnalyzerRegistry(config, _framework_test_registrations())
@@ -562,13 +562,13 @@ def _service(
         if runner is None
         else AnalyzerOrchestrator(analyzer_registry, runner=runner)
     )
-    return Stage5ExecutionService(
+    return AnalysisExecutionService(
         config=config,
         registry=registry,
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=orchestrator,
-        finding_service=Stage6FindingService(),
-        assessment_service=Stage7AssessmentService(config.risk_assessment),
+        finding_service=FindingFormationService(),
+        assessment_service=AnalysisAssessmentService(config.risk_assessment),
         monotonic=monotonic,
     )
 
@@ -708,15 +708,15 @@ def test_integrated_stage3_stage4_stage5_production_path(
     lifecycle_clock = AuthoritativeLifecycleClock(_IncrementingClock())
     registry = _RecordingRegistry()
     queue = DeterministicTaskQueue()
-    executor = Stage5ExecutionService(
+    executor = AnalysisExecutionService(
         config=config,
         registry=registry,
         preprocessing=PreprocessingDispatcher(config),
         orchestrator=AnalyzerOrchestrator(
             AnalyzerRegistry(config, _framework_test_registrations())
         ),
-        finding_service=Stage6FindingService(),
-        assessment_service=Stage7AssessmentService(config.risk_assessment),
+        finding_service=FindingFormationService(),
+        assessment_service=AnalysisAssessmentService(config.risk_assessment),
     )
     receiver = Stage4TaskReceiver(
         config=config,
@@ -1003,7 +1003,7 @@ def _stage7_values(
 def _publish_stage6_state(task: AnalysisTask, registry: TaskRegistry) -> None:
     result = _stage6_source_result()
     registry.append_stage5_analyzer_result(task, result)
-    registry.publish_stage6_findings(task, Stage6FindingService().form_findings((result,)))
+    registry.publish_stage6_findings(task, FindingFormationService().form_findings((result,)))
 
 
 def test_stage5_execution_forms_and_publishes_findings_from_authoritative_results(
@@ -1022,13 +1022,13 @@ def test_stage5_execution_forms_and_publishes_findings_from_authoritative_result
     orchestrator._bind_config(config)
     preprocessing = _RecordingPreprocessing(create_artifact=True)
     preprocessing._bind_config(config)
-    service = Stage5ExecutionService(
+    service = AnalysisExecutionService(
         config=config,
         registry=registry,
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=cast(AnalyzerOrchestrator, orchestrator),
-        finding_service=Stage6FindingService(),
-        assessment_service=Stage7AssessmentService(config.risk_assessment),
+        finding_service=FindingFormationService(),
+        assessment_service=AnalysisAssessmentService(config.risk_assessment),
         monotonic=_ManualMonotonic(),
     )
 
@@ -1083,13 +1083,13 @@ def test_injected_results_cannot_change_the_bound_active_plan(
     orchestrator._bind_config(config)
     preprocessing = _RecordingPreprocessing(create_artifact=True)
     preprocessing._bind_config(config)
-    service = Stage5ExecutionService(
+    service = AnalysisExecutionService(
         config=config,
         registry=registry,
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=cast(AnalyzerOrchestrator, orchestrator),
-        finding_service=Stage6FindingService(),
-        assessment_service=Stage7AssessmentService(config.risk_assessment),
+        finding_service=FindingFormationService(),
+        assessment_service=AnalysisAssessmentService(config.risk_assessment),
         monotonic=_ManualMonotonic(),
     )
 
@@ -1135,13 +1135,13 @@ def test_malformed_trusted_candidate_causes_safe_analysis_failure(
     orchestrator._bind_config(config)
     preprocessing = _RecordingPreprocessing(create_artifact=True)
     preprocessing._bind_config(config)
-    service = Stage5ExecutionService(
+    service = AnalysisExecutionService(
         config=config,
         registry=registry,
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=cast(AnalyzerOrchestrator, orchestrator),
-        finding_service=Stage6FindingService(),
-        assessment_service=Stage7AssessmentService(config.risk_assessment),
+        finding_service=FindingFormationService(),
+        assessment_service=AnalysisAssessmentService(config.risk_assessment),
         monotonic=_ManualMonotonic(),
     )
 
@@ -1170,7 +1170,7 @@ def test_stage6_sibling_state_uses_canonical_bytes_and_detached_reads(tmp_path: 
     result = _stage6_source_result()
     registry.append_stage5_analyzer_result(task, result)
     authoritative_results = registry._read_stage5_analyzer_results(task)
-    findings = Stage6FindingService().form_findings(authoritative_results)
+    findings = FindingFormationService().form_findings(authoritative_results)
     expected = tuple(finding.model_dump(mode="json") for finding in findings)
 
     registry.publish_stage6_findings(task, findings)
@@ -1203,7 +1203,7 @@ def test_stage6_sibling_state_uses_canonical_bytes_and_detached_reads(tmp_path: 
     )
 
     with pytest.raises(LifecycleStateError):
-        registry.publish_stage6_findings(task, Stage6FindingService().form_findings((result,)))
+        registry.publish_stage6_findings(task, FindingFormationService().form_findings((result,)))
     with pytest.raises(LifecycleStateError):
         registry.append_stage5_analyzer_result(task, result)
 
@@ -1517,7 +1517,7 @@ def test_stage6_publication_requires_authoritative_result_identity(
     _start_result_publication(task, registry)
     result = _stage6_source_result()
     registry.append_stage5_analyzer_result(task, result)
-    finding = Stage6FindingService().form_findings((result,))[0]
+    finding = FindingFormationService().form_findings((result,))[0]
     mismatched = finding.model_copy(update={field_name: field_value})
 
     with pytest.raises(LifecycleStateError):
@@ -1546,7 +1546,7 @@ def test_authoritative_results_remain_immutable_through_terminal_settlement(
     original.warnings = ["Initial warning"]
     original.errors[0].safe_details = {"values": [{"signal": [0.42]}]}
     expected = original.model_dump(mode="json")
-    payload = _serialize_stage5_analyzer_result(original)
+    payload = _serialize_analyzer_result(original)
     registry.append_stage5_analyzer_result(task, original)
     assert task.stage5_data is not None
     stored_data = task.stage5_data
@@ -1634,22 +1634,22 @@ def test_storage_reuses_exact_r2_result_bytes_at_utf8_bound(
     result.raw_metrics = {"nested": ["Ж", {"signal": 0.42}]}
     result.candidate_findings = [{"values": ["🙂", 0.42]}]
     result.summary = suffix
-    padding = _MAX_STAGE5_ANALYZER_RESULT_BYTES - len(_serialize_stage5_analyzer_result(result))
+    padding = _MAX_ANALYZER_RESULT_BYTES - len(_serialize_analyzer_result(result))
     result.summary += "x" * padding
-    payload = _serialize_stage5_analyzer_result(result)
+    payload = _serialize_analyzer_result(result)
     response = _encode_response(_WorkerResponseKind.RESULT, result=result)
-    assert len(payload) == _MAX_STAGE5_ANALYZER_RESULT_BYTES
+    assert len(payload) == _MAX_ANALYZER_RESULT_BYTES
     assert len(response) == _MAX_RESPONSE_BYTES
     assert response == b'{"kind":"result","result":' + payload + b"}"
     calls: list[bytes] = []
 
     def encode_unlocked(value: AnalyzerResult) -> bytes:
         _assert_registry_unlocked(registry, task.context.analysis_id)
-        encoded = _serialize_stage5_analyzer_result(value)
+        encoded = _serialize_analyzer_result(value)
         calls.append(encoded)
         return encoded
 
-    monkeypatch.setattr(execution_module, "_serialize_stage5_analyzer_result", encode_unlocked)
+    monkeypatch.setattr(execution_module, "_serialize_analyzer_result", encode_unlocked)
     registry.append_stage5_analyzer_result(task, result)
     assert calls == [payload]
     assert task.stage5_data is not None
@@ -1664,14 +1664,14 @@ def test_storage_reuses_exact_r2_result_bytes_at_utf8_bound(
     monkeypatch.setattr(AnalyzerResult, "model_validate_json", classmethod(materialize_unlocked))
     assert registry._read_stage5_analyzer_results(task) == (result,)
     assert (
-        _serialize_stage5_analyzer_result(registry._read_stage5_analyzer_results(task)[0])
+        _serialize_analyzer_result(registry._read_stage5_analyzer_results(task)[0])
         == payload
     )
 
     oversized = result.model_copy(update={"analyzer_id": "fake_error_analyzer"})
     # Keep the same identity byte length, then exceed the result bound by one byte.
     oversized.summary += "x" * (len(result.analyzer_id) - len(oversized.analyzer_id) + 1)
-    with pytest.raises(_Stage5AnalyzerResultSizeError):
+    with pytest.raises(_AnalyzerResultSizeError):
         _encode_response(_WorkerResponseKind.RESULT, result=oversized)
     with pytest.raises(LifecycleStateError):
         registry.append_stage5_analyzer_result(task, oversized)
@@ -1804,7 +1804,7 @@ def test_individual_analyzer_failures_remain_results_and_execution_is_partial(
     assert len(runner.requests) == (2 if continue_on_failure else 1)
     assert preprocessing.calls == len(preprocessing.requirements) == 1
     assert [stored.canonical_json for stored in task.stage5_data.analyzer_results] == [
-        _serialize_stage5_analyzer_result(result) for result in results
+        _serialize_analyzer_result(result) for result in results
     ]
     assessment = registry._read_stage7_assessment(task)
     assert assessment is not None
@@ -1936,15 +1936,15 @@ def test_equal_distinct_configs_share_one_stage5_snapshot_identity(
     dispatcher_config = AppConfig.model_validate(config.model_dump(mode="python"))
     registry_config = AppConfig.model_validate(config.model_dump(mode="python"))
 
-    service = Stage5ExecutionService(
+    service = AnalysisExecutionService(
         config=config,
         registry=TaskRegistry(),
         preprocessing=PreprocessingDispatcher(dispatcher_config),
         orchestrator=AnalyzerOrchestrator(
             AnalyzerRegistry(registry_config, _framework_test_registrations())
         ),
-        finding_service=Stage6FindingService(),
-        assessment_service=Stage7AssessmentService(config.risk_assessment),
+        finding_service=FindingFormationService(),
+        assessment_service=AnalysisAssessmentService(config.risk_assessment),
     )
 
     assert service._config_snapshot.snapshot_id == config_snapshot_fingerprint(config)
@@ -1958,15 +1958,15 @@ def test_stage5_constructor_rejects_mixed_dispatcher_snapshot(
     different.preprocessing.audio.fragment_duration_seconds += 1
 
     with pytest.raises(ValueError, match="different config snapshots"):
-        Stage5ExecutionService(
+        AnalysisExecutionService(
             config=config,
             registry=TaskRegistry(),
             preprocessing=PreprocessingDispatcher(different),
             orchestrator=AnalyzerOrchestrator(
                 AnalyzerRegistry(config, _framework_test_registrations())
             ),
-            finding_service=Stage6FindingService(),
-            assessment_service=Stage7AssessmentService(config.risk_assessment),
+            finding_service=FindingFormationService(),
+            assessment_service=AnalysisAssessmentService(config.risk_assessment),
         )
 
 
@@ -1978,15 +1978,15 @@ def test_stage5_constructor_rejects_mixed_analyzer_snapshot(
     different.analyzers.defaults.timeout_seconds += 1
 
     with pytest.raises(ValueError, match="different config snapshots"):
-        Stage5ExecutionService(
+        AnalysisExecutionService(
             config=config,
             registry=TaskRegistry(),
             preprocessing=PreprocessingDispatcher(config),
             orchestrator=AnalyzerOrchestrator(
                 AnalyzerRegistry(different, _framework_test_registrations())
             ),
-            finding_service=Stage6FindingService(),
-            assessment_service=Stage7AssessmentService(config.risk_assessment),
+            finding_service=FindingFormationService(),
+            assessment_service=AnalysisAssessmentService(config.risk_assessment),
         )
 
 
@@ -1996,15 +1996,15 @@ def test_stage5_constructor_rejects_mixed_stage7_policy(tmp_path: Path) -> None:
     different.risk_assessment.thresholds.low_max += 1
 
     with pytest.raises(ValueError, match="different risk configuration"):
-        Stage5ExecutionService(
+        AnalysisExecutionService(
             config=config,
             registry=TaskRegistry(),
             preprocessing=PreprocessingDispatcher(config),
             orchestrator=AnalyzerOrchestrator(
                 AnalyzerRegistry(config, _framework_test_registrations())
             ),
-            finding_service=Stage6FindingService(),
-            assessment_service=Stage7AssessmentService(different.risk_assessment),
+            finding_service=FindingFormationService(),
+            assessment_service=AnalysisAssessmentService(different.risk_assessment),
         )
 
 
@@ -2643,13 +2643,13 @@ def test_stage5_runs_filesystem_and_analyzer_work_without_registry_lock(
     preprocessing._bind_config(config)
     orchestrator = _LockProbeOrchestrator(lock_probe)
     orchestrator._bind_config(config)
-    service = Stage5ExecutionService(
+    service = AnalysisExecutionService(
         config=config,
         registry=registry,
         preprocessing=cast(PreprocessingDispatcher, preprocessing),
         orchestrator=cast(AnalyzerOrchestrator, orchestrator),
-        finding_service=Stage6FindingService(),
-        assessment_service=Stage7AssessmentService(config.risk_assessment),
+        finding_service=FindingFormationService(),
+        assessment_service=AnalysisAssessmentService(config.risk_assessment),
         monotonic=_ManualMonotonic(),
     )
 
@@ -2665,4 +2665,4 @@ def test_stage5_runs_filesystem_and_analyzer_work_without_registry_lock(
 
 
 def test_stage5_service_does_not_expand_public_lifecycle_facade() -> None:
-    assert not hasattr(lifecycle, "Stage5ExecutionService")
+    assert not hasattr(lifecycle, "AnalysisExecutionService")

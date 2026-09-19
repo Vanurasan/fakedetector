@@ -344,6 +344,31 @@ YYYY-MM-DD
 
 ### Изменено
 
+- **[Stage 11/Macro 4] Product Naming & Architecture Normalization завершён и
+  принят владельцем.** Выполнена внутренняя архитектурная нормализация:
+  `_stage5_resources.py` переименован в `_generated_artifact_budget.py`, а
+  `lifecycle/_stage5.py`, `lifecycle/_stage6.py` и `lifecycle/_stage7.py` — в
+  `lifecycle/_analysis_execution.py`, `lifecycle/_finding_formation.py` и
+  `lifecycle/_assessment.py`. Основные сервисы получили имена
+  `AnalysisExecutionService`, `FindingFormationService` и
+  `AnalysisAssessmentService`; связанные private transport/resource symbols
+  также нормализованы по ответственности. A03 закрыт переносом общего mapping
+  HTTP-статуса терминального исхода intake в нейтральный `_http_status.py`:
+  API и WebUI используют одну политику, зависимости WebUI от реализации API
+  adapter больше нет. Compatibility identifiers, включая
+  `stage5_resource_limit`, и lifecycle state/data contracts `Stage5TaskData`,
+  `Stage6TaskData`, `Stage7TaskData` сохранены. Это не ребрендинг и не изменение
+  публичных контрактов: package name, CLI, env vars, analyzer IDs, схемы,
+  API routes, persisted result format, версия `0.1.0`, auth, risk/completeness
+  и lifecycle-поведение не изменены. Compatibility shims, plugin architecture
+  и новые зависимости не добавлены. Самопроверка реализации, полный review diff
+  владельцем и независимый архитектурный/regression-аудит GPT-6 Astra Low
+  завершены; аудит подтвердил семантическую/AST-эквивалентность и импорты из
+  установленного wheel. Итоговая валидация: `1848 passed, 17 skipped`, покрытие
+  `90%`; lock, Ruff, mypy, pre-commit, diff-check и CLI — `PASS`. Финальный
+  независимый вердикт — `PASS`. Stage 11 остаётся `IN_PROGRESS`; следующая
+  задача — Macro 5, Technical Debt / Config / Test-Support Cleanup.
+
 - **[Stage 11/Macro 3] Analyzer Registration Normalization завершён и принят
   владельцем.** Один authoritative static internal catalog теперь определяет
   production built-in анализаторы и централизует их identity, version, media,

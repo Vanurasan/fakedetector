@@ -115,9 +115,9 @@ AFTER_MVP
 Статус Stage 10: DONE / CLOSED
 Текущий этап: Stage 11 — Post-MVP Normalization & Hardening
 Статус Stage 11: IN_PROGRESS
-Последний завершённый Macro: Macro 3 — Analyzer Registration Normalization (DONE / owner accepted)
-Текущая задача: Macro 4 — Product Naming & Architecture Normalization (NOT_STARTED / next action)
-Ближайшее действие: начать Stage 11 / Macro 4 — Product Naming & Architecture Normalization
+Последний завершённый Macro: Macro 4 — Product Naming & Architecture Normalization (DONE / owner accepted)
+Текущая задача: Macro 5 — Technical Debt / Config / Test-Support Cleanup (NOT_STARTED / next action)
+Ближайшее действие: начать Stage 11 / Macro 5 — Technical Debt / Config / Test-Support Cleanup
 Критические блокеры: отсутствуют
 Реализация программы: Этапы 1–10 завершены; MVP 0.1.0 DONE / CLOSED; post-MVP whole-codebase audit — READY_FOR_NORMALIZATION_PLANNING
 Документационная база: сформирована
@@ -137,7 +137,7 @@ AFTER_MVP
 
 ### 2.2. Ближайшая задача
 
-Начать Stage 11 / Macro 4 — Product Naming & Architecture Normalization.
+Начать Stage 11 / Macro 5 — Technical Debt / Config / Test-Support Cleanup.
 
 ---
 
@@ -1815,8 +1815,8 @@ Post-MVP whole-codebase audit завершён с вердиктом
 - Macro 1 — Confirmed Defect Remediation: **DONE / owner accepted**;
 - Macro 2 — Runtime State Retention: **DONE / owner accepted**;
 - Macro 3 — Analyzer Registration Normalization: **DONE / owner accepted**;
-- Macro 4 — Product Naming & Architecture Normalization: **NOT_STARTED / next action**;
-- Macro 5 — Technical Debt / Config / Test-Support Cleanup: **NOT_STARTED**;
+- Macro 4 — Product Naming & Architecture Normalization: **DONE / owner accepted**;
+- Macro 5 — Technical Debt / Config / Test-Support Cleanup: **NOT_STARTED / next action**;
 - Macro 6 — Tests / Comments / Documentation Normalization: **NOT_STARTED**;
 - Macro 7 — Release Tooling Normalization: **NOT_STARTED**;
 - Macro 8 — Final Whole-Project Audit / Certification / Graphify Review:
@@ -1959,32 +1959,48 @@ Implementation self-review, owner review, independent audit, remediation
 `M3-AUD-001` и focused independent re-audit завершены; финальный независимый
 вердикт — **PASS**.
 
-## Macro 4 — Product Naming & Architecture Normalization — NOT_STARTED
+## Macro 4 — Product Naming & Architecture Normalization — DONE / owner accepted
 
-Цель — убрать vocabulary этапов разработки из текущей production-архитектуры и
-исправить небольшое нарушение adapter boundary, найденное аудитом.
+Macro 4 завершён, реализация закоммичена и принята владельцем. Текущие
+production-модули реализации lifecycle переименованы из имён этапов разработки
+в имена по ответственности; это внутренняя архитектурная нормализация, а не
+ребрендинг продукта или изменение публичных контрактов.
 
-Направление переименований по ответственности:
+Выполненные переименования:
 
 ```text
-_stage5_resources.py → semantic responsibility-based name
-lifecycle/_stage5.py → analysis execution name
-lifecycle/_stage6.py → finding formation name
-lifecycle/_stage7.py → assessment name
+_stage5_resources.py → _generated_artifact_budget.py
+lifecycle/_stage5.py → lifecycle/_analysis_execution.py
+lifecycle/_stage6.py → lifecycle/_finding_formation.py
+lifecycle/_stage7.py → lifecycle/_assessment.py
 Stage5ExecutionService → AnalysisExecutionService
 Stage6FindingService → FindingFormationService
 Stage7AssessmentService → AnalysisAssessmentService
 ```
 
-Также Macro включает architecture finding A03: WebUI не должен напрямую
-зависеть от реализации API adapter ради общей политики HTTP status/error mapping.
-Только действительно общая HTTP-политика переносится в нейтральное внутреннее
-место.
+Связанные private transport/resource symbols также получили семантические
+имена. A03 закрыт: общий mapping HTTP-статуса терминального исхода intake
+перенесён в нейтральный внутренний `_http_status.py`. API и WebUI используют
+одну HTTP-политику; WebUI больше не зависит от реализации API adapter.
 
-Публичные и внешне наблюдаемые compatibility identifiers механически не
-переименовываются. Например, error code `stage5_resource_limit` требует явного
-рассмотрения совместимости. Исторические ссылки на Stage в ROADMAP, CHANGELOG и
-архиве остаются историческими и массово не переименовываются.
+Внешне наблюдаемые compatibility identifiers, включая `stage5_resource_limit`,
+сохранены. Lifecycle state/data contracts `Stage5TaskData`, `Stage6TaskData` и
+`Stage7TaskData` намеренно оставлены без переименования. Package name, CLI,
+переменные окружения, analyzer IDs, схемы, API routes, формат сохранённого
+результата, версия, auth, risk/completeness и lifecycle-поведение не изменены.
+Compatibility shims, plugin architecture и новые зависимости не добавлены.
+Исторические Stage-ссылки сохранены; `PROJECT.md` и `CONTRACTS.md` были точечно
+синхронизированы в implementation commit.
+
+Самопроверка реализации, полный просмотр diff владельцем и независимый
+архитектурный/regression-аудит GPT-6 Astra Low завершены. Независимый аудит
+подтвердил семантическую/AST-эквивалентность и импорты из установленного wheel;
+финальный независимый вердикт — **PASS**. Итоговая валидация реализации:
+`1848 passed, 17 skipped`, покрытие `90%`; lock, Ruff, mypy, pre-commit,
+diff-check и CLI — `PASS`.
+
+Stage 11 остаётся `IN_PROGRESS`; следующая задача — Macro 5, Technical Debt /
+Config / Test-Support Cleanup.
 
 ## Macro 5 — Technical Debt / Config / Test-Support Cleanup — NOT_STARTED
 

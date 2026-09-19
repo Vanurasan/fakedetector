@@ -21,10 +21,10 @@ from fakedetector.analyzers._models import (
 )
 from fakedetector.analyzers._orchestrator import _with_duration
 from fakedetector.analyzers._transport import (
+    _MAX_ANALYZER_RESULT_BYTES,
     _MAX_RESPONSE_BYTES,
-    _MAX_STAGE5_ANALYZER_RESULT_BYTES,
-    _serialize_stage5_analyzer_result,
-    _Stage5AnalyzerResultSizeError,
+    _AnalyzerResultSizeError,
+    _serialize_analyzer_result,
     _WorkerRequest,
     _WorkerResponseKind,
 )
@@ -230,7 +230,7 @@ def _result_at_stage5_size(
         raw_metrics=raw_metrics,
         candidate_findings=candidate_findings,
     )
-    remaining = size_bytes - len(_serialize_stage5_analyzer_result(base))
+    remaining = size_bytes - len(_serialize_analyzer_result(base))
     assert remaining >= 0
     return base.model_copy(update={"summary": "x" * remaining + summary_suffix})
 
@@ -486,55 +486,55 @@ def test_worker_main_converts_unexpected_internal_failure_to_bounded_response() 
 
 
 def test_stage5_result_exact_payload_and_final_envelope_bound() -> None:
-    result = _result_at_stage5_size(_MAX_STAGE5_ANALYZER_RESULT_BYTES)
+    result = _result_at_stage5_size(_MAX_ANALYZER_RESULT_BYTES)
 
-    result_payload = _serialize_stage5_analyzer_result(result)
+    result_payload = _serialize_analyzer_result(result)
     response = _encode_response(_WorkerResponseKind.RESULT, result=result)
 
-    assert len(result_payload) == _MAX_STAGE5_ANALYZER_RESULT_BYTES == 65_509
+    assert len(result_payload) == _MAX_ANALYZER_RESULT_BYTES == 65_509
     assert len(response) == _MAX_RESPONSE_BYTES == 65_536
     assert _decoded(response)["result"] == json.loads(result_payload)
 
 
 def test_stage5_result_payload_limit_plus_one_is_rejected() -> None:
-    exact = _result_at_stage5_size(_MAX_STAGE5_ANALYZER_RESULT_BYTES)
+    exact = _result_at_stage5_size(_MAX_ANALYZER_RESULT_BYTES)
     oversized = exact.model_copy(update={"summary": exact.summary + "x"})
 
-    with pytest.raises(_Stage5AnalyzerResultSizeError):
-        _serialize_stage5_analyzer_result(oversized)
+    with pytest.raises(_AnalyzerResultSizeError):
+        _serialize_analyzer_result(oversized)
 
 
 def test_stage5_result_bound_counts_multibyte_utf8_and_nested_fields() -> None:
     result = _result_at_stage5_size(
-        _MAX_STAGE5_ANALYZER_RESULT_BYTES,
+        _MAX_ANALYZER_RESULT_BYTES,
         summary_suffix="Ж",
         raw_metrics={"nested": {"values": [1, 2, {"signal": 0.42}]}},
         candidate_findings=[{"type": "contract_probe", "confidence": 0.42}],
     )
 
-    payload = _serialize_stage5_analyzer_result(result)
+    payload = _serialize_analyzer_result(result)
 
-    assert len(payload) == _MAX_STAGE5_ANALYZER_RESULT_BYTES
+    assert len(payload) == _MAX_ANALYZER_RESULT_BYTES
     assert b"\\u0416" not in payload
     assert json.loads(payload)["candidate_findings"] == result.candidate_findings
 
 
 def test_stage5_result_bound_is_checked_after_framework_duration_normalization() -> None:
     target = _result_at_stage5_size(
-        _MAX_STAGE5_ANALYZER_RESULT_BYTES,
+        _MAX_ANALYZER_RESULT_BYTES,
         duration_ms=123_456,
     )
     worker_result = target.model_copy(update={"duration_ms": 0})
 
     normalized = _with_duration(worker_result, 123_456)
 
-    assert len(_serialize_stage5_analyzer_result(normalized)) == (_MAX_STAGE5_ANALYZER_RESULT_BYTES)
+    assert len(_serialize_analyzer_result(normalized)) == (_MAX_ANALYZER_RESULT_BYTES)
 
 
 def test_response_encoder_rejects_oversized_canonical_result_without_fallback() -> None:
     result = _result_with_summary("x" * 70_000)
 
-    with pytest.raises(_Stage5AnalyzerResultSizeError):
+    with pytest.raises(_AnalyzerResultSizeError):
         _encode_response(_WorkerResponseKind.RESULT, result=result)
 
 

@@ -7,10 +7,11 @@ FakeDetector 0.1.0 — локальный CPU-only MVP для предварит
 
 FakeDetector MVP 0.1.0 существует; Stages 1–10 — `DONE / CLOSED`. Текущий этап
 разработки — Stage 11, «Post-MVP Normalization & Hardening» (`IN_PROGRESS`).
-Macro 0, «Roadmap Restructuring», Macro 1, «Confirmed Defect Remediation», и
-Macro 2, «Runtime State Retention», и Macro 3, «Analyzer Registration
-Normalization», — `DONE / owner accepted`; следующая задача — Macro 4, «Product
-Naming & Architecture Normalization». После Macro 2 `TaskRegistry`
+Macro 0, «Roadmap Restructuring», Macro 1, «Confirmed Defect Remediation»,
+Macro 2, «Runtime State Retention», Macro 3, «Analyzer Registration
+Normalization», и Macro 4, «Product Naming & Architecture Normalization», —
+`DONE / owner accepted`; следующая задача — Macro 5, «Technical Debt / Config /
+Test-Support Cleanup». После Macro 2 `TaskRegistry`
 владеет только незавершённой live/recoverable работой, а завершённая история
 читается из `ResultRepository`; успешные сохранённые задачи вытесняются без
 terminal cache, TTL или LRU.
@@ -18,6 +19,10 @@ Macro 3 свёл регистрацию production built-in анализатор
 first-party каталогу. Из него выводятся согласованные представления для runtime,
 worker resolution, полноты и валидации; динамическая загрузка и plugin API не
 добавлены, а алгоритмы, публичные схемы и внешние контракты не изменились.
+Macro 4 нормализовал внутренние имена production-модулей и сервисов по их
+ответственности и закрыл A03: API и WebUI используют общую нейтральную
+HTTP-политику, WebUI больше не зависит от реализации API adapter. Внешние
+контракты и поведение сохранены; финальный независимый аудит — `PASS`.
 Stage 11 не расширяет продукт широкими новыми возможностями: он нормализует и
 укрепляет доказанное MVP-поведение. Подробный план и статусы — в
 [ROADMAP](docs/ROADMAP.md).

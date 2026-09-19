@@ -325,7 +325,7 @@ QUEUED / QUEUED
 `TaskRegistry` остаётся единственной authority lifecycle mutations. Concrete
 preprocessor и analyzer их не выполняют. `Stage4TaskProcessor` сохраняет
 ownership execution claim, primary outcome, terminal settlement, cleanup и
-публикацию `PERSISTENCE`/`FINISHED`. Канонический `Stage5ExecutionService`
+публикацию `PERSISTENCE`/`FINISHED`. Канонический `AnalysisExecutionService`
 реализует существующий порт
 `TaskExecutor.execute(task) -> TaskExecutionOutcome`, не меняя его сигнатуру.
 
@@ -347,7 +347,7 @@ RUNNING / ANALYSIS + опубликованный Stage6TaskData
 `ErrorDetail` и барьера безопасности очистки либо `FAILED` с обязательной безопасной
 основной ошибкой. Рабочий исполнитель после Stage 6 читает независимо
 восстановленные авторитетные `AnalyzerResult[]` и `Finding[]`, передаёт их чистому
-`Stage7AssessmentService` вместе с активным планом анализаторов того же снимка
+`AnalysisAssessmentService` вместе с активным планом анализаторов того же снимка
 конфигурации и публикует `Stage7TaskData` до возврата основного результата
 выполнения. `complete` соответствует `COMPLETED`, а `partial` и `insufficient` —
 `PARTIAL`; `not_assessed` на этом пути является внутренним сбоем, а не пригодным
@@ -418,7 +418,7 @@ terminal cache в памяти не создаётся.
 `config_snapshot_id` равен полному SHA-256 единственной канонической JSON-
 сериализации повторно провалидированного `AppConfig`. Неизменяемый снимок хранит
 канонические байты и связывает контекст и задачу Stage 4, `PreprocessingDispatcher`,
-`AnalyzerRegistry`/`AnalyzerOrchestrator`, `Stage5ExecutionService`, а также локальный для
+`AnalyzerRegistry`/`AnalyzerOrchestrator`, `AnalysisExecutionService`, а также локальный для
 задачи бюджет созданных артефактов и `ResultFinalizationService`. Значение
 `processing.application_version` берётся из той же материализованной копии
 единственного рабочего снимка. Разные экземпляры `AppConfig` с одинаковым содержимым
@@ -453,7 +453,7 @@ Internal application model `AnalysisTask` может агрегировать:
 Каждая неизменяемая запись содержит `analyzer_id`, `media_type` и
 `canonical_json: bytes`, без вложенных изменяемых `AnalyzerResult`. До захвата
 блокировки реестра `append_stage5_analyzer_result()` повторно проверяет каноническую
-модель и получает байты через единый `_serialize_stage5_analyzer_result` с пределом
+модель и получает байты через единый `_serialize_analyzer_result` с пределом
 из §8.5. Под блокировкой проверяются идентичность авторитетной задачи, тип медиа,
 отсутствие повторного ID и состояние `RUNNING / ANALYSIS` после публикации
 `PreparedMedia`; только затем запись добавляется в кортеж.
@@ -1254,7 +1254,7 @@ Enforcement находится на общей artifact capability boundary и �
 каждом analyzer/preprocessor.
 
 Для созданных артефактов Stage 5 одной задачи установлен единый внутренний предел
-количества `_MAX_STAGE5_ARTIFACTS = 256`. Производитель аудио вычисляет
+количества `_MAX_GENERATED_ARTIFACTS = 256`. Производитель аудио вычисляет
 `N = ceil(duration / fragment_duration)` без создания коллекции интервалов и до
 первой регистрации проверяет `1 + N + S <= 256`, где `S` обозначает фактически
 требуемую спектрограмму. Тот же предел защищают `PreparedMedia` и `WorkerRequest`.
@@ -1489,7 +1489,7 @@ Media bytes через IPC не передаются.
 
 Размер конверта ответа ограничен 65 536 байт. Для `kind=result` фактический компактный
 конверт занимает 27 байт, поэтому внутренний предел канонического `AnalyzerResult` при
-выполнении Stage 5 равен `_MAX_STAGE5_ANALYZER_RESULT_BYTES = 65_509` байт UTF-8. Он
+выполнении Stage 5 равен `_MAX_ANALYZER_RESULT_BYTES = 65_509` байт UTF-8. Он
 вычисляется из реального конверта, проверяется после нормализации, выполняемой каркасом,
 до ответа рабочего процесса и повторно до авторитетной публикации. Результат точно на границе
 помещается без повторной JSON-сериализации; превышение становится контролируемой ошибкой
@@ -1515,7 +1515,7 @@ abandoned worker относится к supported normal timeout paths и не о
 ### 8.6. Overall processing budget и continue policy
 
 `limits.processing_timeout_seconds` — общий monotonic Stage 5 processing budget.
-Deadline фиксируется на входе `Stage5ExecutionService.execute(task)` сразу после
+Deadline фиксируется на входе `AnalysisExecutionService.execute(task)` сразу после
 Stage 4 execution claim при `RUNNING / PREPROCESSING`. Каждая bounded operation
 использует `min(operation/analyzer timeout, remaining overall budget)`; wall
 datetime не используется как duration source. Новый monotonic claim timestamp

@@ -1,4 +1,4 @@
-"""Integrated Stage 5 execution behind the existing Stage 4 executor port."""
+"""Analysis execution behind the lifecycle task executor port."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import math
 import time
 from collections.abc import Callable
 
-from fakedetector._stage5_resources import _GeneratedArtifactBudget
+from fakedetector._generated_artifact_budget import _GeneratedArtifactBudget
 from fakedetector.analyzers._errors import AnalyzerInfrastructureError
 from fakedetector.analyzers._orchestrator import AnalyzerOrchestrator
 from fakedetector.config._snapshot import _ConfigSnapshot
@@ -17,13 +17,13 @@ from fakedetector.domain import (
     ErrorDetail,
 )
 from fakedetector.intake.temporary_input import PreparedSourceRef
-from fakedetector.lifecycle._stage6 import (
-    Stage6FindingFormationError,
-    Stage6FindingService,
+from fakedetector.lifecycle._assessment import (
+    AnalysisAssessmentError,
+    AnalysisAssessmentService,
 )
-from fakedetector.lifecycle._stage7 import (
-    Stage7AssessmentError,
-    Stage7AssessmentService,
+from fakedetector.lifecycle._finding_formation import (
+    FindingFormationError,
+    FindingFormationService,
 )
 from fakedetector.lifecycle.execution import TaskRegistry
 from fakedetector.lifecycle.models import (
@@ -36,7 +36,7 @@ from fakedetector.preprocessing._service import (
     PreprocessingRequest,
 )
 
-_SAFE_STAGE7_REASON_CODES = frozenset(
+_SAFE_ASSESSMENT_REASON_CODES = frozenset(
     {
         "invalid_completeness_input",
         "invalid_recommendation_input",
@@ -46,14 +46,14 @@ _SAFE_STAGE7_REASON_CODES = frozenset(
 )
 
 
-class _Stage5DeadlineExceededError(RuntimeError):
+class _AnalysisDeadlineExceededError(RuntimeError):
     """Internal control signal for one exhausted monotonic execution budget."""
 
     def __init__(self) -> None:
         super().__init__("Stage 5 processing deadline was exceeded.")
 
 
-class Stage5ExecutionService:
+class AnalysisExecutionService:
     """Bridge preprocessing and analyzers without owning terminal lifecycle work."""
 
     def __init__(
@@ -63,8 +63,8 @@ class Stage5ExecutionService:
         registry: TaskRegistry,
         preprocessing: PreprocessingDispatcher,
         orchestrator: AnalyzerOrchestrator,
-        finding_service: Stage6FindingService,
-        assessment_service: Stage7AssessmentService,
+        finding_service: FindingFormationService,
+        assessment_service: AnalysisAssessmentService,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._config_snapshot = _ConfigSnapshot.capture(config)
@@ -91,7 +91,7 @@ class Stage5ExecutionService:
         try:
             self._registry.validate_stage5_execution(task)
             if task.context.config_snapshot_id != self._config_snapshot.snapshot_id:
-                return TaskExecutionOutcome.failed(_stage5_failure("configuration_snapshot"))
+                return TaskExecutionOutcome.failed(_execution_failure("configuration_snapshot"))
 
             remaining_timeout_seconds()
             requirements = self._orchestrator.preprocessing_requirements(
@@ -153,7 +153,7 @@ class Stage5ExecutionService:
                 authoritative_findings,
             )
             if completeness.status is CompletenessStatus.NOT_ASSESSED:
-                raise Stage7AssessmentError("unexpected_completeness_status")
+                raise AnalysisAssessmentError("unexpected_completeness_status")
             remaining_timeout_seconds()
             self._registry.publish_stage7_assessment(
                 task,
@@ -161,30 +161,30 @@ class Stage5ExecutionService:
                 risk_assessment,
                 recommendation,
             )
-        except _Stage5DeadlineExceededError:
+        except _AnalysisDeadlineExceededError:
             return TaskExecutionOutcome.failed(_processing_timeout(phase))
         except PreprocessingError as error:
             if error._cleanup_safety_barrier is not None:
                 return TaskExecutionOutcome.failed(
-                    _stage5_failure("preprocessing"),
+                    _execution_failure("preprocessing"),
                     _cleanup_safety_barrier=error._cleanup_safety_barrier,
                 )
             try:
                 remaining_timeout_seconds()
-            except _Stage5DeadlineExceededError:
+            except _AnalysisDeadlineExceededError:
                 return TaskExecutionOutcome.failed(_processing_timeout(phase))
             if error.kind == "resource_limit":
-                return TaskExecutionOutcome.failed(_stage5_resource_limit(error.phase))
-            return TaskExecutionOutcome.failed(_stage5_failure("preprocessing"))
+                return TaskExecutionOutcome.failed(_preprocessing_resource_limit(error.phase))
+            return TaskExecutionOutcome.failed(_execution_failure("preprocessing"))
         except AnalyzerInfrastructureError as error:
             return TaskExecutionOutcome.failed(
-                _stage5_failure("analysis"),
+                _execution_failure("analysis"),
                 _cleanup_safety_barrier=error._cleanup_safety_barrier,
             )
-        except Stage6FindingFormationError:
-            return TaskExecutionOutcome.failed(_stage5_failure("analysis"))
-        except Stage7AssessmentError as error:
-            return TaskExecutionOutcome.failed(_stage7_failure(error.reason_code))
+        except FindingFormationError:
+            return TaskExecutionOutcome.failed(_execution_failure("analysis"))
+        except AnalysisAssessmentError as error:
+            return TaskExecutionOutcome.failed(_assessment_failure(error.reason_code))
         if completeness.status is CompletenessStatus.COMPLETE:
             return TaskExecutionOutcome.completed()
         if completeness.status in {
@@ -211,13 +211,13 @@ class Stage5ExecutionService:
             if not math.isfinite(remaining):
                 raise RuntimeError("Stage 5 monotonic clock is invalid.")
             if remaining <= 0:
-                raise _Stage5DeadlineExceededError()
+                raise _AnalysisDeadlineExceededError()
             return remaining
 
         return remaining_timeout_seconds
 
 
-def _stage5_failure(phase: str) -> ErrorDetail:
+def _execution_failure(phase: str) -> ErrorDetail:
     return ErrorDetail(
         code="internal_error",
         category="internal",
@@ -227,9 +227,9 @@ def _stage5_failure(phase: str) -> ErrorDetail:
     )
 
 
-def _stage7_failure(reason_code: str) -> ErrorDetail:
+def _assessment_failure(reason_code: str) -> ErrorDetail:
     safe_reason_code = (
-        reason_code if reason_code in _SAFE_STAGE7_REASON_CODES else "assessment_failure"
+        reason_code if reason_code in _SAFE_ASSESSMENT_REASON_CODES else "assessment_failure"
     )
     return ErrorDetail(
         code="internal_error",
@@ -250,7 +250,7 @@ def _processing_timeout(phase: str) -> ErrorDetail:
     )
 
 
-def _stage5_resource_limit(limit: str) -> ErrorDetail:
+def _preprocessing_resource_limit(limit: str) -> ErrorDetail:
     return ErrorDetail(
         code="stage5_resource_limit",
         category="resource_limit",

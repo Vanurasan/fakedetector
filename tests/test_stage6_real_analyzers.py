@@ -42,8 +42,8 @@ from fakedetector.analyzers._models import (
 )
 from fakedetector.analyzers._registry import AnalyzerRegistry
 from fakedetector.analyzers._transport import (
-    _MAX_STAGE5_ANALYZER_RESULT_BYTES,
-    _serialize_stage5_analyzer_result,
+    _MAX_ANALYZER_RESULT_BYTES,
+    _serialize_analyzer_result,
     _WorkerArtifact,
     _WorkerRequest,
 )
@@ -61,9 +61,9 @@ from fakedetector.domain import (
     MediaType,
     VideoTechnicalParameters,
 )
-from fakedetector.lifecycle._stage6 import (
-    Stage6FindingFormationError,
-    Stage6FindingService,
+from fakedetector.lifecycle._finding_formation import (
+    FindingFormationError,
+    FindingFormationService,
 )
 
 
@@ -492,7 +492,7 @@ def test_audio_selects_deterministic_top_16_fragments(tmp_path: Path) -> None:
     assert [candidate["evidence_refs"][0] for candidate in result.candidate_findings] == [
         f"fragment_{index:02d}" for index in range(16)
     ]
-    assert len(_serialize_stage5_analyzer_result(result)) <= _MAX_STAGE5_ANALYZER_RESULT_BYTES
+    assert len(_serialize_analyzer_result(result)) <= _MAX_ANALYZER_RESULT_BYTES
 
 
 def test_audio_reads_waveform_in_bounded_chunks(
@@ -962,7 +962,7 @@ def test_converter_builds_owner_approved_content_addressed_id(tmp_path: Path) ->
     _save_image(source, embedded_size=(9, 6))
     result = _image_result(source)
 
-    finding = Stage6FindingService().form_findings((result,))[0]
+    finding = FindingFormationService().form_findings((result,))[0]
 
     identity = {
         "source_analyzer_id": "image_metadata_consistency",
@@ -1002,7 +1002,7 @@ def test_converter_order_ids_and_duplicate_ordinals_are_deterministic(
         update={"candidate_findings": [duplicate_b, duplicate_a]}, deep=True
     )
 
-    service = Stage6FindingService()
+    service = FindingFormationService()
     findings = service.form_findings((duplicated,))
     reversed_findings = service.form_findings((reversed_duplicates,))
 
@@ -1047,7 +1047,7 @@ def test_finding_id_is_independent_of_worker_order_and_unrelated_findings(
         warnings=[],
         errors=[],
     )
-    service = Stage6FindingService()
+    service = FindingFormationService()
     image_only_id = service.form_findings((image_result,))[0].finding_id
 
     forward = service.form_findings((image_result, audio_result))
@@ -1072,7 +1072,7 @@ def test_converter_rejects_malformed_or_unknown_real_candidates_safely(
     source = tmp_path / "mismatch.jpg"
     _save_image(source, embedded_size=(9, 6))
     result = _image_result(source)
-    service = Stage6FindingService()
+    service = FindingFormationService()
 
     for candidate in (
         {"type": "unknown_candidate"},
@@ -1084,7 +1084,7 @@ def test_converter_rejects_malformed_or_unknown_real_candidates_safely(
         },
     ):
         malformed = result.model_copy(update={"candidate_findings": [candidate]}, deep=True)
-        with pytest.raises(Stage6FindingFormationError) as captured:
+        with pytest.raises(FindingFormationError) as captured:
             service.form_findings((malformed,))
         assert captured.value.reason_code == "candidate_validation"
         assert str(captured.value) == "Stage 6 finding formation failed."
@@ -1130,4 +1130,4 @@ def test_converter_ignores_non_completed_results(
             "errors": errors,
         }
     )
-    assert Stage6FindingService().form_findings((changed,)) == ()
+    assert FindingFormationService().form_findings((changed,)) == ()

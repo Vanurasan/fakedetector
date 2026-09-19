@@ -7,7 +7,7 @@ import math
 from dataclasses import dataclass
 from enum import StrEnum
 
-from fakedetector._stage5_resources import _MAX_STAGE5_ARTIFACTS
+from fakedetector._generated_artifact_budget import _MAX_GENERATED_ARTIFACTS
 from fakedetector.domain import AnalyzerResult, MediaType
 
 _MAX_RESPONSE_BYTES = 65_536
@@ -19,12 +19,12 @@ _MAX_WARNINGS = 64
 _MAX_WARNING_CHARS = 512
 _RESULT_ENVELOPE_PREFIX = b'{"kind":"result","result":'
 _RESULT_ENVELOPE_SUFFIX = b"}"
-_MAX_STAGE5_ANALYZER_RESULT_BYTES = _MAX_RESPONSE_BYTES - len(
+_MAX_ANALYZER_RESULT_BYTES = _MAX_RESPONSE_BYTES - len(
     _RESULT_ENVELOPE_PREFIX + _RESULT_ENVELOPE_SUFFIX
 )
 
 
-class _Stage5AnalyzerResultSizeError(ValueError):
+class _AnalyzerResultSizeError(ValueError):
     """Signal a canonical analyzer result outside the Stage 5 execution envelope."""
 
 
@@ -76,7 +76,7 @@ class _WorkerRequest:
             raise ValueError("worker request media type is invalid")
         if not self.source_path or len(self.source_path) > _MAX_PATH_CHARS:
             raise ValueError("worker source path is invalid")
-        if len(artifacts) > _MAX_STAGE5_ARTIFACTS:
+        if len(artifacts) > _MAX_GENERATED_ARTIFACTS:
             raise ValueError("worker request has too many artifacts")
         if len(warnings) > _MAX_WARNINGS or any(
             not isinstance(warning, str) or len(warning) > _MAX_WARNING_CHARS
@@ -96,7 +96,7 @@ class _WorkerRequest:
         object.__setattr__(self, "warnings", warnings)
 
 
-def _serialize_stage5_analyzer_result(result: AnalyzerResult) -> bytes:
+def _serialize_analyzer_result(result: AnalyzerResult) -> bytes:
     """Serialize once with the exact compact JSON form used by worker transport."""
     if not isinstance(result, AnalyzerResult):
         raise TypeError("Stage 5 result must be an AnalyzerResult")
@@ -107,15 +107,15 @@ def _serialize_stage5_analyzer_result(result: AnalyzerResult) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    if len(payload) > _MAX_STAGE5_ANALYZER_RESULT_BYTES:
-        raise _Stage5AnalyzerResultSizeError
+    if len(payload) > _MAX_ANALYZER_RESULT_BYTES:
+        raise _AnalyzerResultSizeError
     return payload
 
 
-def _encode_stage5_result_response(result: AnalyzerResult) -> bytes:
+def _encode_analyzer_result_response(result: AnalyzerResult) -> bytes:
     payload = (
         _RESULT_ENVELOPE_PREFIX
-        + _serialize_stage5_analyzer_result(result)
+        + _serialize_analyzer_result(result)
         + _RESULT_ENVELOPE_SUFFIX
     )
     assert len(payload) <= _MAX_RESPONSE_BYTES

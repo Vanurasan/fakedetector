@@ -1,4 +1,4 @@
-"""Deterministic Stage 6 candidate validation and Finding formation."""
+"""Deterministic candidate validation and Finding formation."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ _DESCRIPTION_BY_TYPE = {
 }
 
 
-class Stage6FindingFormationError(RuntimeError):
+class FindingFormationError(RuntimeError):
     """Safe internal failure without candidate payload or traceback details."""
 
     def __init__(self, reason_code: str) -> None:
@@ -64,7 +64,7 @@ class _NormalizedCandidate:
     full_candidate: bytes
 
 
-class Stage6FindingService:
+class FindingFormationService:
     """Convert authoritative real AnalyzerResult values into canonical findings."""
 
     def form_findings(self, results: Sequence[AnalyzerResult]) -> tuple[Finding, ...]:
@@ -104,7 +104,7 @@ class Stage6FindingService:
             ValidationError,
             ValueError,
         ):
-            raise Stage6FindingFormationError("candidate_validation") from None
+            raise FindingFormationError("candidate_validation") from None
 
         normalized.sort(key=lambda item: (item.base_identity, item.full_candidate))
         findings: list[Finding] = []

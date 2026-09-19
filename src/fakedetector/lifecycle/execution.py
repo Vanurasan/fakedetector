@@ -13,7 +13,7 @@ from typing import Protocol, TypeVar
 from pydantic import ValidationError
 from pydantic_core import PydanticSerializationError
 
-from fakedetector.analyzers._transport import _serialize_stage5_analyzer_result
+from fakedetector.analyzers._transport import _serialize_analyzer_result
 from fakedetector.domain import (
     AnalysisCompleteness,
     AnalysisStatus,
@@ -406,7 +406,7 @@ class TaskRegistry:
             stored_result = _StoredAnalyzerResult(
                 analyzer_id=validated_result.analyzer_id,
                 media_type=validated_result.media_type,
-                canonical_json=_serialize_stage5_analyzer_result(validated_result),
+                canonical_json=_serialize_analyzer_result(validated_result),
             )
         except (PydanticSerializationError, ValidationError, TypeError, ValueError):
             raise LifecycleStateError() from None

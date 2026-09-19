@@ -35,8 +35,8 @@ from fakedetector.analyzers._models import (
 )
 from fakedetector.analyzers._transport import (
     _MAX_RESPONSE_BYTES,
-    _encode_stage5_result_response,
-    _Stage5AnalyzerResultSizeError,
+    _AnalyzerResultSizeError,
+    _encode_analyzer_result_response,
     _WorkerRequest,
     _WorkerResponseKind,
 )
@@ -399,7 +399,7 @@ def _execute_worker(request: _WorkerRequest) -> bytes:
 
     try:
         return _encode_response(_WorkerResponseKind.RESULT, result=result)
-    except _Stage5AnalyzerResultSizeError:
+    except _AnalyzerResultSizeError:
         return _encode_response(_WorkerResponseKind.ANALYZER_ERROR)
     except (PydanticSerializationError, TypeError, ValueError):
         return _encode_response(_WorkerResponseKind.SERIALIZATION_ERROR)
@@ -472,7 +472,7 @@ def _encode_response(
     if kind is _WorkerResponseKind.RESULT:
         if result is None:
             raise ValueError("result response requires an AnalyzerResult")
-        return _encode_stage5_result_response(result)
+        return _encode_analyzer_result_response(result)
     if result is not None:
         raise ValueError("non-result response cannot contain a result")
     envelope: dict[str, object] = {"kind": kind.value}

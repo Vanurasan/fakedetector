@@ -18,9 +18,9 @@ from fakedetector.intake import (
     FileValidator,
     LocalTemporaryInputOwner,
 )
-from fakedetector.lifecycle._stage5 import Stage5ExecutionService
-from fakedetector.lifecycle._stage6 import Stage6FindingService
-from fakedetector.lifecycle._stage7 import Stage7AssessmentService
+from fakedetector.lifecycle._analysis_execution import AnalysisExecutionService
+from fakedetector.lifecycle._assessment import AnalysisAssessmentService
+from fakedetector.lifecycle._finding_formation import FindingFormationService
 from fakedetector.lifecycle.execution import MediaRouter, TaskRegistry
 from fakedetector.lifecycle.receiver import Stage4TaskReceiver
 from fakedetector.lifecycle.scheduler import BoundedLocalScheduler
@@ -55,13 +55,13 @@ def _build_production_runtime(config: AppConfig) -> _ProductionRuntime:
         repository=result_repository,
     )
     analyzer_registry = AnalyzerRegistry(captured_config, _built_in_analyzer_registrations())
-    executor = Stage5ExecutionService(
+    executor = AnalysisExecutionService(
         config=captured_config,
         registry=task_registry,
         preprocessing=PreprocessingDispatcher(captured_config),
         orchestrator=AnalyzerOrchestrator(analyzer_registry),
-        finding_service=Stage6FindingService(),
-        assessment_service=Stage7AssessmentService(captured_config.risk_assessment),
+        finding_service=FindingFormationService(),
+        assessment_service=AnalysisAssessmentService(captured_config.risk_assessment),
     )
     temporary_input_owner = LocalTemporaryInputOwner(
         captured_config.temporary_storage.root_path
