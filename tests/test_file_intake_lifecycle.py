@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import NoReturn
 
 import pytest
+from support.intake import make_config
 
 import fakedetector.core._bounded_process as bounded_process_module
 import fakedetector.intake.temporary_input as temporary_input_module
-from fakedetector.config.models import AppConfig
 from fakedetector.core import AuthoritativeLifecycleClock, Clock
 from fakedetector.core._cleanup_safety import _CleanupSafetyInterruption
 from fakedetector.domain import (
@@ -99,39 +99,6 @@ class ControlledSafetyBarrier:
     def try_confirm_safe(self) -> bool:
         self.calls += 1
         return self.confirmed
-
-
-def make_config(
-    root: Path,
-    *,
-    image_limit: int = 20,
-    audio_limit: int = 50,
-    video_limit: int = 200,
-) -> AppConfig:
-    return AppConfig.model_validate(
-        {
-            "schema_version": "1.0",
-            "server": {},
-            "access_channels": {},
-            "limits": {
-                "max_file_size_mb": {
-                    "image": image_limit,
-                    "audio": audio_limit,
-                    "video": video_limit,
-                }
-            },
-            "allowed_formats": {},
-            "validation": {},
-            "temporary_storage": {"root_path": str(root)},
-            "preprocessing": {},
-            "analyzers": {},
-            "risk_assessment": {},
-            "result": {},
-            "error_handling": {},
-            "logging": {},
-            "external_systems": {},
-        }
-    )
 
 
 def make_service(

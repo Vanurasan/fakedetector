@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -534,3 +536,26 @@ def test_logging_failure_does_not_change_successful_persistence(
 
     assert result.status is AnalysisStatus.REJECTED
     assert repository.saved == [result]
+
+
+@pytest.mark.parametrize(
+    "modules",
+    [
+        ("fakedetector.result_finalization", "fakedetector.lifecycle"),
+        ("fakedetector.lifecycle", "fakedetector.result_finalization"),
+    ],
+)
+def test_finalization_and_lifecycle_import_independently_in_fresh_processes(
+    modules: tuple[str, str],
+) -> None:
+    code = "\n".join(f"import {module}" for module in modules)
+    code += "\nfrom fakedetector.lifecycle import Stage4TaskProcessor, BoundedLocalScheduler"
+    code += "\nfrom fakedetector.result_finalization import AcceptedResultFinalizer"
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr

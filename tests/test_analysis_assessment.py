@@ -1,4 +1,4 @@
-"""Tests for the pure deterministic Stage 7 assessment policy."""
+"""Tests for the pure deterministic analysis assessment policy."""
 
 from __future__ import annotations
 

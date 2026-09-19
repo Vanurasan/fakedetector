@@ -1,4 +1,4 @@
-"""Точка входа приложения."""
+"""Application command-line entry point."""
 
 import argparse
 import logging
@@ -26,7 +26,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Загрузить конфигурацию и запустить приложение."""
+    """Load configuration and start the application."""
     args = _parse_args(argv)
 
     try:

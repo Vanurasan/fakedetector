@@ -347,7 +347,7 @@ class TaskRegistry:
             return task
 
     def validate_stage5_execution(self, task: AnalysisTask) -> None:
-        """Reject a stale or already-mutated task before Stage 5 performs work."""
+        """Reject a stale or already-mutated task before analysis execution performs work."""
         with self._lock:
             authoritative = self._require_stage5_task(task, ProcessingStage.PREPROCESSING)
             if authoritative.stage5_data is not None:

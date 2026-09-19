@@ -310,8 +310,8 @@ registry reservation или route lookup. Переход к `preprocessing` яв
 же задачу; повторный анализ требует нового жизненного цикла задачи по
 каноническим контрактам.
 
-Stage 5 уточняет фактический участок этой state machine без изменения Stage 4
-ownership:
+До оценки риска выполнение анализа проходит следующий участок state machine;
+владение терминальным завершением остаётся у `Stage4TaskProcessor`:
 
 ```text
 QUEUED / QUEUED
@@ -329,8 +329,7 @@ ownership execution claim, primary outcome, terminal settlement, cleanup и
 реализует существующий порт
 `TaskExecutor.execute(task) -> TaskExecutionOutcome`, не меняя его сигнатуру.
 
-Stage 7 Increment 2 добавляет следующий участок жизненного цикла, предназначенный
-только для внутреннего использования:
+Оценка анализа использует следующий внутренний участок жизненного цикла:
 
 ```text
 RUNNING / ANALYSIS + опубликованный Stage6TaskData
@@ -345,7 +344,7 @@ RUNNING / ANALYSIS + опубликованный Stage6TaskData
 `Stage7TaskData`; настоящий внутренний сбой может завершиться `FAILED` без него.
 `TaskExecutionOutcome` допускает `COMPLETED`, пригодный `PARTIAL` без искусственного
 `ErrorDetail` и барьера безопасности очистки либо `FAILED` с обязательной безопасной
-основной ошибкой. Рабочий исполнитель после Stage 6 читает независимо
+основной ошибкой. Рабочий исполнитель после формирования findings читает независимо
 восстановленные авторитетные `AnalyzerResult[]` и `Finding[]`, передаёт их чистому
 `AnalysisAssessmentService` вместе с активным планом анализаторов того же снимка
 конфигурации и публикует `Stage7TaskData` до возврата основного результата
@@ -1235,7 +1234,7 @@ Artifact IDs и physical locations создаются приложением и 
 filesystem artifact cleanup obligation сначала резервируется/регистрируется в
 существующем `WorkspaceArtifactRegistry`, и только затем выполняется physical
 creation/write. Partial или ещё не созданный после сбоя artifact остаётся
-известной cleanup obligation. Отдельная Stage 5 cleanup subsystem не создаётся.
+известной cleanup obligation. Отдельная подсистема очистки предобработки не создаётся.
 
 До резервирования каждый компонент пути, созданного приложением, проверяется
 по правилам Windows независимо от ОС: завершающие пробелы и точки запрещены,
@@ -1253,7 +1252,7 @@ Cleanup применяет ту же проверку и не unlink/rmdir suspi
 Enforcement находится на общей artifact capability boundary и не дублируется в
 каждом analyzer/preprocessor.
 
-Для созданных артефактов Stage 5 одной задачи установлен единый внутренний предел
+Для созданных предобработкой артефактов одной задачи установлен единый внутренний предел
 количества `_MAX_GENERATED_ARTIFACTS = 256`. Производитель аудио вычисляет
 `N = ceil(duration / fragment_duration)` без создания коллекции интервалов и до
 первой регистрации проверяет `1 + N + S <= 256`, где `S` обозначает фактически
@@ -1271,7 +1270,7 @@ Enforcement находится на общей artifact capability boundary и �
 
 ### 7.3. Controlled source access
 
-Stage 5 переиспользует opaque `AcceptedSource`. Stream consumers получают
+Предобработка переиспользует opaque `AcceptedSource`. Stream consumers получают
 controlled read access. Trusted preprocessing/FFmpeg infrastructure может
 использовать узкую callback boundary по смыслу
 `AcceptedSource.with_local_source_path(trusted_operation)`, но physical path не
@@ -1305,7 +1304,7 @@ ownership semantics.
   target timestamp/index; target timestamp не считается factual packet/frame PTS
   без измерения. Video without audio допустимо; audio extraction выполняется
   только при наличии дорожки и необходимости/разрешении representation;
-  рекомендуемое Stage 5 lossless representation извлечённой video audio track —
+  используемое lossless representation извлечённой video audio track —
   FLAC. Это internal artifact representation, а не external/public schema или
   новое config field.
 
@@ -1344,11 +1343,14 @@ ownership semantics.
 - вызывать `ResultRepository`;
 - управлять HTTP-ответом;
 - хранить исходный файл долговременно;
-- создавать Stage 6 `Finding` в рамках Stage 5 framework proof.
+- формировать нормализованные `Finding` вместо `FindingFormationService`.
 
-Stage 5 использует только fake/test analyzers: они не являются forensic
-capabilities, возвращают `score=null` и `candidate_findings=[]`, не включаются в
-default config и доказывают только framework execution paths.
+Production использует закрытый каталог встроенных анализаторов, определённый в
+`PROJECT.md` §6.10. Рабочий процесс разрешает только ключи этого каталога;
+регистрация, типизированные настройки, требования предобработки и проверка
+результатов согласуются с его метаданными. Fake-анализаторы из `tests/support`
+не входят в production-каталог или wheel. Частный тестовый resolver требует
+явного внедрения в тестовую сборку; конфигурация его не включает.
 
 ### 8.2. Логический интерфейс
 
@@ -1369,9 +1371,9 @@ class Analyzer(Protocol):
     ) -> AnalyzerResult: ...
 ```
 
-Синхронность интерфейса является логической. Generic Stage 5 adapter выполняет
+Синхронность интерфейса является логической. Общий адаптер анализаторов выполняет
 каждый analyzer invocation в отдельном spawned child process; matrix
-`execution_mode` на Stage 5 не вводится.
+`execution_mode` не вводится.
 
 `ApplicabilityResult` минимально различает `applicable=true` и
 `applicable=false` с безопасной причиной. При `false` метод `analyze()` не
@@ -1489,7 +1491,7 @@ Media bytes через IPC не передаются.
 
 Размер конверта ответа ограничен 65 536 байт. Для `kind=result` фактический компактный
 конверт занимает 27 байт, поэтому внутренний предел канонического `AnalyzerResult` при
-выполнении Stage 5 равен `_MAX_ANALYZER_RESULT_BYTES = 65_509` байт UTF-8. Он
+выполнении анализатора равен `_MAX_ANALYZER_RESULT_BYTES = 65_509` байт UTF-8. Он
 вычисляется из реального конверта, проверяется после нормализации, выполняемой каркасом,
 до ответа рабочего процесса и повторно до авторитетной публикации. Результат точно на границе
 помещается без повторной JSON-сериализации; превышение становится контролируемой ошибкой
@@ -1514,7 +1516,7 @@ abandoned worker относится к supported normal timeout paths и не о
 
 ### 8.6. Overall processing budget и continue policy
 
-`limits.processing_timeout_seconds` — общий monotonic Stage 5 processing budget.
+`limits.processing_timeout_seconds` — общий monotonic budget выполнения анализа.
 Deadline фиксируется на входе `AnalysisExecutionService.execute(task)` сразу после
 Stage 4 execution claim при `RUNNING / PREPROCESSING`. Каждая bounded operation
 использует `min(operation/analyzer timeout, remaining overall budget)`; wall
@@ -1525,23 +1527,24 @@ Analyzer-specific timeout при доступном overall budget создаё�
 `AnalyzerResult` со `status=AnalyzerStatus.TIMEOUT`, после чего последовательное
 выполнение продолжается по continue policy. Исчерпание общего budget является
 task-level processing failure; оставшиеся enabled analyzers после начала
-`ANALYSIS` могут получить `SKIPPED`, а Stage 5 не рассчитывает completeness или
-risk.
+`ANALYSIS` могут получить `SKIPPED`. Исчерпание общего budget до публикации
+`Stage7TaskData` возвращает `FAILED` без публикации оценки полноты и риска;
+успешная публикация остаётся границей фиксации из §3.1.
 
 В schema `1.0` runtime policy принадлежит
 `error_handling.continue_if_analyzer_fails`. Существующий
 `analyzers.defaults.continue_on_error` — legacy duplicate; пока оба поля есть,
 они обязаны совпадать, иначе startup завершается `invalid_configuration`.
 Отдельные global/default semantics не вводятся. Удаление или deprecation требует
-будущей schema revision. `error_handling.mark_partial_on_analyzer_failure` Stage
-5 не применяет: completeness, `partial` и final status policy принадлежат Stage 7.
+будущей schema revision. `error_handling.mark_partial_on_analyzer_failure` не управляет продолжением
+анализаторов: полнота, `partial` и основной исход определяются оценкой анализа.
 
 ### 8.7. Safe external-process boundary
 
 Reusable bounded subprocess primitive отвечает только за process safety:
 argument list, `shell=False`, disabled stdin, controlled cwd, bounded stdout,
 bounded/discarded stderr, timeout и terminate/kill/reap с safe factual outcome.
-Stage 3 и Stage 5 используют отдельные semantic adapters поверх primitive;
+Первичная проверка и предобработка используют отдельные semantic adapters поверх primitive;
 существующие Stage 3 media rejection и infrastructure semantics не меняются.
 
 FFmpeg/ffprobe получают media input только как абсолютный канонический
@@ -1657,9 +1660,9 @@ stdout читается ограниченными блоками и поток�
 
 Дополнительные виды локализации требуют повышения минорной версии схемы.
 
-### 9.4. Finding policy Stage 6 MVP v1
+### 9.4. Политика формирования признаков MVP v1
 
-Stage 6 преобразует analyzer `candidate_findings` в нормализованные `Finding`.
+`FindingFormationService` преобразует analyzer `candidate_findings` в нормализованные `Finding`.
 Для первоначального профиля v1 действуют следующие нормативные ограничения:
 
 - все первоначальные findings имеют `severity=weak`;
@@ -1671,13 +1674,13 @@ Stage 6 преобразует analyzer `candidate_findings` в нормализ
   versioned deterministic MVP defaults.
 
 Analyzer identity, analyzer version и связь finding с источником сохраняются при
-преобразовании. Значения threshold могут изменяться в Stage 6 только после
+преобразовании. Значения threshold могут изменяться только после
 обоснования deterministic positive/negative/challenge fixtures и фиксации
 изменения. Это уточнение поведения не меняет структуру external schema `1.0`.
 
-### 9.5. Детерминированный `finding_id` Stage 6 v1
+### 9.5. Детерминированный `finding_id` v1
 
-Stage 6 формирует content-addressed идентификатор нормализованного наблюдаемого
+`FindingFormationService` формирует content-addressed идентификатор нормализованного наблюдаемого
 факта:
 
 ```text
@@ -2668,7 +2671,7 @@ multipart parse mutation-запроса. Он начинается после о
 security guards и заканчивается до вызова application intake. Истечение
 возвращает существующую безопасную семантику `400 invalid_multipart` без
 регистрации, ID и result links. Это поле не ограничивает очередь, Stage 3,
-analyzer, preprocessing, общий Stage 5 lifetime или сохранение результата;
+analyzer, preprocessing, общее время выполнения анализа или сохранение результата;
 для них действуют отдельные существующие processing/subprocess limits.
 
 #### `access_channels.webui`
@@ -2748,7 +2751,7 @@ Stage 4 не вводятся.
 
 Поле `image.normalize_for_analysis` сохранено в схеме со значением по умолчанию `true`
 для совместимости.
-Валидная конфигурация Stage 5 требует `true`: `false` отклоняется Pydantic при
+Валидная конфигурация предобработки требует `true`: `false` отклоняется Pydantic при
 проверке конфигурации, до предварительной обработки. Успешная подготовка изображения
 всегда создаёт `normalized_image`, независимо от `image.extract_metadata`.
 
@@ -3442,7 +3445,7 @@ primary `completed`/`partial`/`failed`/`rejected`, не создаёт retry и 
 До соответствующих этапов разработки требуют подтверждения:
 
 1. срок жизни и управление API-токенами после MVP;
-2. точный набор обязательных анализаторов профиля;
+2. будущие расширения зафиксированного рабочего профиля анализаторов;
 3. будущая статистическая калибровка `probability` и следующие версии модели
    `score`;
 4. будущие расширения пустого доверенного рабочего каталога critical-правил

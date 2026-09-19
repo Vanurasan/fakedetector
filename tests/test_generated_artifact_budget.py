@@ -1,4 +1,4 @@
-"""Stage 5 generated-artifact capability and physical-extent bounds."""
+"""Generated-artifact capability and physical-extent bounds."""
 
 from __future__ import annotations
 

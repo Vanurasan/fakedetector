@@ -47,7 +47,7 @@ _ErrorCategory = Literal["validation", "unsupported_media", "resource_limit"]
 
 
 class ValidationSystemError(Exception):
-    """Safe internal failure that Increment 3 will classify as terminal failed."""
+    """Safe internal validation failure classified as terminal failed by intake."""
 
     def __init__(
         self,

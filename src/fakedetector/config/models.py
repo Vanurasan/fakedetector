@@ -205,7 +205,7 @@ class ImagePreprocessingConfig(BaseModel):
     @field_validator("normalize_for_analysis")
     @classmethod
     def require_image_normalization(cls, value: bool) -> bool:
-        """Reject disabling the mandatory Stage 5 image representation."""
+        """Reject disabling the mandatory normalized image representation."""
         if not value:
             raise ValueError("image normalization must be enabled")
         return value
@@ -345,7 +345,7 @@ class RiskAssessmentConfig(BaseModel):
     @field_validator("model_id", "model_version")
     @classmethod
     def require_non_empty_model_identity(cls, value: str) -> str:
-        """Require a meaningful versioned identity for the Stage 7 policy bundle."""
+        """Require a meaningful versioned identity for the assessment policy bundle."""
         if not value.strip():
             raise ValueError("risk model identity values must be non-empty")
         return value

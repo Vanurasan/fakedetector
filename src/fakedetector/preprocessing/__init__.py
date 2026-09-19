@@ -1,1 +1,1 @@
-"""Private Stage 5 preprocessing implementation package."""
+"""Private media preprocessing implementation package."""

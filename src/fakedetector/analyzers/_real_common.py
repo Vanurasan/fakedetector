@@ -1,4 +1,4 @@
-"""Small shared helpers for the Stage 6 real technical analyzers."""
+"""Small shared helpers for the built-in technical analyzers."""
 
 from __future__ import annotations
 

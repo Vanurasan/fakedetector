@@ -1,1 +1,1 @@
-"""Private Stage 5 analyzer execution framework."""
+"""Private analyzer execution framework."""

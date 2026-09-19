@@ -1,4 +1,4 @@
-"""Integrated Stage 4 to Stage 5 execution lifecycle tests."""
+"""Analysis execution, authoritative publication, and terminal cleanup tests."""
 
 from __future__ import annotations
 
@@ -1010,7 +1010,7 @@ def _publish_stage6_state(task: AnalysisTask, registry: TaskRegistry) -> None:
     registry.publish_stage6_findings(task, FindingFormationService().form_findings((result,)))
 
 
-def test_stage5_execution_forms_and_publishes_findings_from_authoritative_results(
+def test_analysis_execution_forms_and_publishes_findings_from_authoritative_results(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "temp"
@@ -1906,7 +1906,7 @@ def test_exhausted_deadline_has_precedence_over_resource_limit(
     _cleanup_task(task)
 
 
-def test_stage5_rejects_a_different_config_snapshot_before_preprocessing(
+def test_analysis_execution_rejects_a_different_config_snapshot_before_preprocessing(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "temp"
@@ -1933,7 +1933,7 @@ def test_stage5_rejects_a_different_config_snapshot_before_preprocessing(
     _cleanup_task(task)
 
 
-def test_equal_distinct_configs_share_one_stage5_snapshot_identity(
+def test_equal_distinct_configs_share_one_execution_snapshot_identity(
     tmp_path: Path,
 ) -> None:
     config = _config(tmp_path / "temp")
@@ -1954,7 +1954,7 @@ def test_equal_distinct_configs_share_one_stage5_snapshot_identity(
     assert service._config_snapshot.snapshot_id == config_snapshot_fingerprint(config)
 
 
-def test_stage5_constructor_rejects_mixed_dispatcher_snapshot(
+def test_execution_constructor_rejects_mixed_dispatcher_snapshot(
     tmp_path: Path,
 ) -> None:
     config = _config(tmp_path / "temp")
@@ -1974,7 +1974,7 @@ def test_stage5_constructor_rejects_mixed_dispatcher_snapshot(
         )
 
 
-def test_stage5_constructor_rejects_mixed_analyzer_snapshot(
+def test_execution_constructor_rejects_mixed_analyzer_snapshot(
     tmp_path: Path,
 ) -> None:
     config = _config(tmp_path / "temp")
@@ -1994,7 +1994,7 @@ def test_stage5_constructor_rejects_mixed_analyzer_snapshot(
         )
 
 
-def test_stage5_constructor_rejects_mixed_stage7_policy(tmp_path: Path) -> None:
+def test_execution_constructor_rejects_mixed_assessment_policy(tmp_path: Path) -> None:
     config = _config(tmp_path / "temp")
     different = config.model_copy(deep=True)
     different.risk_assessment.thresholds.low_max += 1
@@ -2630,7 +2630,7 @@ def test_single_deadline_decreases_between_successful_analyzers(
     assert task.accepted_source.is_released
 
 
-def test_stage5_runs_filesystem_and_analyzer_work_without_registry_lock(
+def test_analysis_execution_runs_filesystem_and_analyzer_work_without_registry_lock(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "temp"
@@ -2668,5 +2668,5 @@ def test_stage5_runs_filesystem_and_analyzer_work_without_registry_lock(
     _cleanup_task(task)
 
 
-def test_stage5_service_does_not_expand_public_lifecycle_facade() -> None:
+def test_analysis_execution_service_does_not_expand_public_lifecycle_facade() -> None:
     assert not hasattr(lifecycle, "AnalysisExecutionService")

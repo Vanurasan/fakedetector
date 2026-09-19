@@ -25,7 +25,7 @@ _MAX_ANALYZER_RESULT_BYTES = _MAX_RESPONSE_BYTES - len(
 
 
 class _AnalyzerResultSizeError(ValueError):
-    """Signal a canonical analyzer result outside the Stage 5 execution envelope."""
+    """Signal a canonical analyzer result outside the analyzer execution envelope."""
 
 
 class _WorkerResponseKind(StrEnum):

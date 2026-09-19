@@ -203,7 +203,7 @@ class AcceptedSource:
 
 @dataclass(frozen=True, slots=True)
 class PreparedSourceRef:
-    """Narrow internal source capability for Stage 5 preprocessing."""
+    """Narrow internal source capability for media preprocessing."""
 
     _accepted_source: AcceptedSource = field(repr=False)
 
@@ -222,7 +222,7 @@ class PreparedSourceRef:
         self,
         trusted_operation: Callable[[Path], _OperationResult],
     ) -> _OperationResult:
-        """Run one trusted Stage 5 operation without retaining its path."""
+        """Run one trusted preprocessing operation without retaining its path."""
         return self._accepted_source.with_local_source_path(trusted_operation)
 
     def _references(self, accepted_source: AcceptedSource) -> bool:

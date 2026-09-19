@@ -1,4 +1,4 @@
-"""FakeDetector — инструмент обнаружения признаков подделки мультимедийных файлов."""
+"""FakeDetector detects signs of multimedia manipulation."""
 
 from importlib.metadata import version
 
