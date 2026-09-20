@@ -340,6 +340,20 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-21
+
+### Изменено
+
+- **[Stage 12/Macro 1/M1-A] Утверждены внутренние forensic contracts.**
+  Приняты owner gates G1–G5; точные условия принадлежат `CONTRACTS.md` §7.5.
+  Существующие requirements расширены закрытыми capabilities и объединением
+  зависимостей активного каталога. Добавлены immutable типизированные facts,
+  opaque numeric descriptors, source/artifact binding, внутренние resource
+  ceilings, EXIF 1–8 mapping и JPEG preflight до native coefficient allocation.
+  Это основание для последующих производителей B–F: извлечение в M1-A не
+  выполняется, новые зависимости не добавлены. Четыре текущих анализатора,
+  public API/domain, риск, полнота и YAML сохраняют прежние контракты.
+
 ### 2026-09-20
 
 ### Решения

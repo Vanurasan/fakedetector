@@ -1318,6 +1318,155 @@ ownership semantics.
 
 ---
 
+### 7.5. Внутренние forensic contracts Macro 1
+
+Решения владельца G1–G5 приняты. Производитель новых представлений остаётся
+в preprocessing; источник, реестр артефактов, общий бюджет и private worker
+transport сохраняют прежнее владение. M1-A реализует только типы, декларации,
+проверки размеров и координат. Извлечение выполняется в последующих M1-B–F.
+Новые требования отсутствуют у четырёх текущих анализаторов версии `1.0.0`.
+Публичные схемы, локализация, риск, полнота и YAML не изменяются.
+
+**Требования.** `PreprocessingRequirements.forensic` — immutable `frozenset`
+закрытого `ForensicCapability`, объединяемый существующим `AnalyzerRegistry`
+только для активного маршрута. Зависимости раскрываются однократно и без дублей:
+
+- image: `original_image`, `image_coordinates → original_image`,
+  `jpeg_structure → original_image`,
+  `jpeg_coefficients → jpeg_structure + image_coordinates`,
+  `residual_raster → image_coordinates`;
+- audio и video: `audio_precision`, `audio_samples → audio_precision`,
+  `audio_spectral → audio_samples`, `stream_timing`,
+  `timing_records → stream_timing`;
+- только video: `dense_video → timing_records`,
+  `av_timeline → timing_records + audio_samples`.
+
+Старые `audio_spectrogram`/`video_audio_track` сохраняют семантику. Неподходящий
+media route отклоняется. Пока производителей нет, dispatcher отклоняет новый
+demand до I/O с внутренним `forensic_producer_unavailable`; декларация не
+обозначает уже доступное извлечение. Профиль выборки и его параметры будут
+определены производителем; объединение capabilities не выбирает их молча.
+
+**Факты и идентичность.** В существующем `metadata["forensic"]` резервируется
+строго валидируемый JSON `ForensicManifest`, передаваемый строкой без изменения
+private transport. Он содержит один SHA-256 исходника, media route и максимум
+16 `ForensicRepresentation`. Каждая запись связывает закрытый вид фактов с
+`RepresentationProvenance`: producer/version и profile/version, каждый до
+64 ASCII-символов без путей. `PreparedMedia.forensic` и `AnalyzerRequest.forensic`
+дают типизированную immutable проекцию; отсутствие ключа означает прежний путь.
+Parent сверяет SHA-256 с `ValidatedFileDescriptor`, worker — с каноническими
+file facts. Числовые descriptor IDs должны присутствовать в переданных artifacts;
+реестр дополнительно подтверждает принадлежность каждого opaque ref задаче.
+Числовые файлы используют `PreparedArtifact.format="forensic_raw"`; ссылка на
+PNG/WAV или другой формат не принимается как raw numeric storage.
+
+Типы включают `OriginalImageFacts`, `JpegHeader`/`JpegComponent`,
+`ImageRasterDescriptor`, `JpegCoefficientsDescriptor`, `AudioPrecisionFacts`,
+`AudioWindowDescriptor`, `SpectralWindowDescriptor`, `StreamTimingFacts`,
+`TimingRecordsDescriptor`, `DenseVideoWindowDescriptor`, `AVTimelineDescriptor`.
+Они не содержат выводов о подделке. Original image facts уникальны; координаты
+растра и SOF коэффициентов согласуются с ними. Sample windows ссылаются на
+precision facts по stream index, spectral windows — на sample artifact ID,
+timing records — на stream/time base, dense/AV — на соответствующие artifacts.
+Такие ссылки не являются путями или разрешением произвольного чтения.
+
+**Числовые данные.** `NumericArtifact` описывает opaque ID, положительную shape
+ранга 1–4 и закрытый dtype: `|u1`, `<i4`, `<i8`, `<f8`, `<c16`. Формат — raw
+C-order, без заголовка, padding, object arrays и pickle; endian задан явно.
+Точная длина выводится из shape/itemsize с проверкой произведения до выделения
+памяти и должна совпасть с файлом. Reader последующего increment обязан
+использовать зарегистрированную read capability и immutable backing buffer:
+одного `frozen=True` или снятого writeable flag у изменяемого владельца недостаточно.
+M1-A не реализует readers и не создаёт числовые массивы/файлы.
+
+Коэффициенты имеют оси `(block_y, block_x, 8, 8)` в native SOF component order,
+без применения EXIF. Растр имеет `(y, x, channel)` и явные ориентированные
+диапазоны. Audio имеет `(sample, channel)`, абсолютный диапазон source samples
+`[start, stop)` и исходный channel order. `<i4` содержит signed codes с младшим
+выравниванием (unsigned 8-bit центрируется относительно нуля), `<f8` сохраняет
+floating samples без gain/clipping. Resample/downmix и незаявленная потеря
+precision запрещены. Source bit depth может быть неизвестна; decoder format
+не доказывает effective bit depth. Неизвестный decoder format допускается только
+как факт, без sample window; floating decoder требует `<f8`, integer — `<i4`
+и не допускает заявленную source bit depth выше 32. Прежний PCM16 остаётся
+отдельным представлением.
+Spectral имеет `(frame, channel, rFFT-bin)`, явные FFT/hop/window/scaling,
+frame range относительно sample window и только полные окна без padding.
+
+Timing использует signed ticks, положительный рациональный `TimeBase` и `None`
+для неизвестных фактов. Внешняя таблица `<i8` имеет столбцы PTS, DTS, duration,
+decode ordinal, validity mask: биты 0–2 означают наличие первых трёх полей,
+отсутствующие значения хранятся нулём. Строки сохраняют decode order; отрицательные,
+повторяющиеся и немонотонные PTS не исправляются. `first_tick`/`last_tick` —
+наблюдаемые endpoints, а не requested seek boundaries или доказательство
+непрерывности. Dense RGB24 имеет `(frame, y, x, 3)` и ссылается на frame records
+того же decode; M1-F обязан подтвердить это происхождение и каждый timestamp.
+AV-таблица содержит audio sample start/stop и video tick start/stop для каждой
+наблюдавшейся непрерывной области. Межоконные пробелы не являются наблюдавшимися
+разрывами; рассуждений о drift/synchronization эти дескрипторы не делают.
+
+**Координаты.** `ImageCoordinates` фиксирует native размеры и EXIF 1–8.
+Для ориентаций 5–8 oriented width/height меняются местами. Координаты обозначают
+границы пикселей `[0,W] × [0,H]`; центр пикселя `(i,j)` равен `(i+0.5,j+0.5)`.
+`normalized_bbox(left, top, right, bottom)` преобразует все четыре угла и
+возвращает `(x,y,width,height)` в существующем нормализованном пространстве,
+без clamp, resize или изменения публичной `Finding` localization. Вырожденные,
+нечисловые и выходящие за источник bbox отклоняются. Отсутствующий EXIF даёт 1;
+невалидный tag требует явной обработки производителем.
+
+**Ресурсы.** Единственный внутренний владелец потолков —
+`preprocessing/_requirements.py`, `ForensicResourcePolicy`. Это начальный hard
+safety envelope, не production sampling defaults и не YAML. Значения можно
+только ужесточать в пределах согласованных комбинаций; типы, положительность,
+сочетания лимитов и переполнение проверяются. Максимальные значения:
+
+| Объект | Потолок и единицы |
+|---|---|
+| Manifest / numeric artifact | 16 384 UTF-8 байта / 64 MiB на один numeric artifact |
+| JPEG | input 32 MiB, 256 markers/scans, 1 MiB marker payload, суммарно `2^22` native padded coefficients |
+| Raster / tiles | `2^22` pixels, 16 tiles до 512×512, halo до 2, временная память residual до 32 MiB |
+| Audio | 3 окна до 10 s, до `2^20` samples вместе по каналам на окно, до 192 kHz / 8 channels |
+| Spectral | FFT до 4096, hop от FFT/4 до FFT, 8192 time/channel frames, batch до 32 |
+| Timing | 3 области, 2 streams, на stream/область 256 packets и 512 frames; всего 4608 records, 1 MiB typed tables, 256 KiB на probe |
+| Dense video | 3 окна, до 32 frames и 2 s каждое; RGB24 до 640×360 без upscale, native до 3840×2160 |
+
+`check_artifacts` ссылается на прежние 256 artifacts и **оставшийся**
+`_GeneratedArtifactBudget`; второго бюджета нет. Count включает старые и новые
+файлы, preflight не резервирует байты, каждая будущая запись всё равно использует
+`open_output`. Общий manifest вместе со старой metadata остаётся в прежних
+32 768 байтах worker request. Новый закрытый payload не допускает arbitrary
+recursive metadata/raw EXIF/raw ffprobe JSON, путей и массивов; ответы worker
+по-прежнему ограничены 65 536 байтами. Числовые данные не входят в response или
+`raw_metrics`. Потолки данных не заменяют remaining timeout и контроль native RSS.
+
+**Preflight JPEG перед M1-B.** `JpegHeader.preflight` работает только с малыми
+типизированными SOF facts, до вызова native decoder: размеры 1–65535, 8-bit
+baseline/progressive, 1–4 уникальных components, sampling factors 1–4,
+до 10 blocks/MCU, без дробных отношений максимального sampling factor.
+Для компонента размеры блоков равны
+`ceil(W*h/(8*max_h)) × ceil(H*v/(8*max_v))`.
+Native оценка округляет оба измерения до полного MCU:
+`ceil(W/(8*max_h))*ceil(H/(8*max_v))*64*sum(h*v)`.
+Ограничение применяется к padded allocation, а не только к выдаваемым planes;
+int32 output bytes и native 16-bit coefficient bytes учитываются отдельно.
+Это не оценка всего RSS: source copy, markers, native overhead и временные
+копии потребуют учёта и измерений в M1-B/G.
+
+M1-B должен реализовать минимальный bounded marker/header parser: проверить SOI,
+длины сегментов, SOF0/SOF2 и component/table IDs, лимиты scans/markers/payload,
+дойти до EOI с учётом byte stuffing/restart markers, отвергать DNL/смену геометрии,
+неподдерживаемые coding modes и неоднозначные переопределения таблиц. Entropy
+decoding собственным кодом не реализуется. Проверяется тот же controlled source,
+который затем передаётся child; размер ограничен также Stage 3 input budget.
+До успешного preflight `pyjpegio` вызывать нельзя. M1-B добавляет точный
+`pyjpegio==0.3.0` в bounded private child, ASCII basename `source` без изменения
+cwd родителя, строгий отказ при native warning/truncation и installed-wheel tests.
+G2 сохраняет NumPy/OpenCV без SciPy; G3 — hybrid precision facts/windows;
+G4 размещает timing/ffprobe в preprocessing и расширяет существующую bounded
+process boundary, а не создаёт отдельную процессную архитектуру.
+
+---
+
 ## 8. Контракт анализатора
 
 ### 8.1. Требования к анализатору

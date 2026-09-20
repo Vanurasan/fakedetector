@@ -41,7 +41,7 @@ from fakedetector.lifecycle.artifacts import WorkspaceArtifactRef, WorkspaceArti
 from fakedetector.preprocessing._errors import PreprocessingError
 from fakedetector.preprocessing._media_tools import _FFmpegPreprocessingTool
 from fakedetector.preprocessing._models import PreparedArtifact, PreparedMedia
-from fakedetector.preprocessing._requirements import PreprocessingRequirements
+from fakedetector.preprocessing._requirements import ForensicCapability, PreprocessingRequirements
 from fakedetector.preprocessing._service import (
     AudioPreprocessor,
     ImagePreprocessor,
@@ -1343,6 +1343,46 @@ def test_dispatcher_rejects_budget_from_a_different_snapshot_before_io(
     assert caught.value.phase == "artifact_budget_snapshot"
     assert case.registry.cleanup_obligations() == ()
     case.cleanup()
+
+
+@pytest.mark.parametrize(
+    "capability,phase",
+    [
+        (ForensicCapability.JPEG_COEFFICIENTS, "forensic_producer_unavailable"),
+        (ForensicCapability.AUDIO_SAMPLES, "forensic_media_type"),
+    ],
+)
+def test_dispatcher_rejects_unimplemented_forensic_demand_before_io(tmp_path, capability, phase):
+    source_path = tmp_path / "not_decodable.png"
+    source_path.write_bytes(b"no decoder should read this")
+    case = _case(
+        tmp_path,
+        source_path,
+        _image_descriptor(
+            width=3,
+            height=2,
+            image_format="PNG",
+            color_mode="RGB",
+        ),
+    )
+    config = AppConfig.model_validate(
+        yaml.safe_load(
+            Path("config/config.example.yaml").read_text(encoding="utf-8"),
+        )
+    )
+    try:
+        with pytest.raises(PreprocessingError) as error:
+            PreprocessingDispatcher(config).prepare(
+                case.request,
+                PreprocessingRequirements(
+                    forensic=frozenset({capability}),
+                ),
+            )
+        assert error.value.phase == phase
+        assert case.registry.cleanup_obligations() == ()
+        assert case.request.artifact_budget.used_bytes == 0
+    finally:
+        case.cleanup()
 
 
 def test_media_process_timeout_is_mapped_without_paths(

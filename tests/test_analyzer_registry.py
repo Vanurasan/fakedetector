@@ -13,12 +13,15 @@ from support.framework_analyzers import (
     _resolve_framework_definition,
 )
 
-from fakedetector.analyzers._catalog import _resolve_worker_definition
+from fakedetector.analyzers._catalog import (
+    _built_in_analyzer_registrations,
+    _resolve_worker_definition,
+)
 from fakedetector.analyzers._errors import AnalyzerConfigurationError
 from fakedetector.analyzers._registry import AnalyzerRegistry
 from fakedetector.config.models import AppConfig
 from fakedetector.domain import MediaType
-from fakedetector.preprocessing._requirements import PreprocessingRequirements
+from fakedetector.preprocessing._requirements import ForensicCapability, PreprocessingRequirements
 
 
 def _config(
@@ -257,6 +260,94 @@ def test_registry_derives_requirements_only_from_enabled_analyzers() -> None:
     assert not audio.video_audio_track
     assert not video.audio_spectrogram
     assert video.video_audio_track
+    assert not image.forensic and not audio.forensic and not video.forensic
+
+
+def test_forensic_demand_is_closed_deduplicated_and_current_catalog_remains_inactive():
+    cap = ForensicCapability
+    request = PreprocessingRequirements(forensic=frozenset({cap.JPEG_COEFFICIENTS}))
+    assert request.forensic == frozenset(
+        {cap.JPEG_COEFFICIENTS, cap.JPEG_STRUCTURE, cap.IMAGE_COORDINATES, cap.ORIGINAL_IMAGE}
+    )
+    assert PreprocessingRequirements.aggregate((request, request)) == request
+    assert PreprocessingRequirements.aggregate(()) == PreprocessingRequirements()
+    av = PreprocessingRequirements(forensic=frozenset({cap.AV_TIMELINE}))
+    assert av.forensic == frozenset(
+        {
+            cap.AV_TIMELINE,
+            cap.TIMING_RECORDS,
+            cap.STREAM_TIMING,
+            cap.AUDIO_SAMPLES,
+            cap.AUDIO_PRECISION,
+        }
+    )
+    av.validate_media(MediaType.VIDEO)
+    with pytest.raises(ValueError):
+        av.validate_media(MediaType.AUDIO)
+    production = _built_in_analyzer_registrations()
+    assert {r.analyzer_id for r in production} == {
+        "image_metadata_consistency",
+        "image_copy_move_correspondence",
+        "audio_pcm_quality",
+        "video_sampled_frame_quality",
+    }
+    config = _config(
+        image=[r.analyzer_id for r in production if MediaType.IMAGE in r.supported_media_types],
+        audio=[r.analyzer_id for r in production if MediaType.AUDIO in r.supported_media_types],
+        video=[r.analyzer_id for r in production if MediaType.VIDEO in r.supported_media_types],
+    )
+    registry = AnalyzerRegistry(config, production)
+    for registration in production:
+        assert registration.analyzer_version == "1.0.0"
+        assert registration.preprocessing_requirements == PreprocessingRequirements()
+    for media_type in MediaType:
+        assert registry.preprocessing_requirements(media_type) == PreprocessingRequirements()
+
+
+def test_registry_aggregates_future_demands_only_for_enabled_definitions():
+    cap = ForensicCapability
+    registrations = tuple(
+        replace(
+            r,
+            preprocessing_requirements=PreprocessingRequirements(
+                forensic=frozenset({cap.JPEG_COEFFICIENTS if index == 0 else cap.RESIDUAL_RASTER}),
+            ),
+        )
+        for index, r in enumerate(_framework_test_registrations()[:2])
+    )
+    definitions = {}
+    for registration in registrations:
+        definitions[registration.worker_key] = replace(
+            _resolve_framework_definition(registration.worker_key),
+            preprocessing_requirements=registration.preprocessing_requirements,
+        )
+    registry = AnalyzerRegistry(
+        _config(image=[registrations[0].analyzer_id]),
+        registrations,
+        _definition_resolver=definitions.get,
+    )
+    assert registry.preprocessing_requirements(MediaType.IMAGE) == (
+        registrations[0].preprocessing_requirements
+    )
+    assert cap.RESIDUAL_RASTER not in registry.preprocessing_requirements(MediaType.IMAGE).forensic
+    bad = replace(
+        registrations[0],
+        preprocessing_requirements=PreprocessingRequirements(
+            forensic=frozenset({cap.AUDIO_SAMPLES}),
+        ),
+    )
+    with pytest.raises(AnalyzerConfigurationError) as error:
+        AnalyzerRegistry(_config(), (bad,), _definition_resolver=definitions.get)
+    assert error.value.phase == "preprocessing_requirements"
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [set(), [ForensicCapability.ORIGINAL_IMAGE], frozenset({"original_image"}), frozenset({1})],
+)
+def test_forensic_requirements_are_typed_and_immutable(invalid):
+    with pytest.raises(TypeError):
+        PreprocessingRequirements(forensic=invalid)
 
 
 def test_disabled_analyzer_does_not_contribute_preprocessing_requirements() -> None:

@@ -489,6 +489,13 @@ class PreprocessingDispatcher:
     ) -> PreparedMedia:
         """Dispatch without extension guessing, analyzer execution, or lifecycle mutation."""
         active_requirements = requirements or PreprocessingRequirements()
+        try:
+            active_requirements.validate_media(request.validated_file.media_type)
+        except ValueError:
+            raise PreprocessingError("invariant", "forensic_media_type") from None
+        if active_requirements.forensic:
+            # M1-A declares contracts only; later increments install the producers.
+            raise PreprocessingError("invariant", "forensic_producer_unavailable")
         if not request.artifact_budget.matches(
             self._config_snapshot,
             request.validated_file.media_type,

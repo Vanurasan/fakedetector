@@ -458,6 +458,21 @@ reap/cleanup матрица остаётся критерием будущей �
   такого decoder. Private ABI библиотек, встроенных в Pillow/OpenCV, не является
   проверенным независимым installed-wheel интерфейсом.
 
+### Проверка арифметики JPEG preflight M1-A — 2026-09-21
+
+Проверены официальные исходники **libjpeg-turbo 3.2.0**:
+[jdinput.c](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/3.2.0/src/jdinput.c)
+вычисляет размеры component blocks через округление отношения размеров и
+sampling factors вверх;
+[jdcoefct.c](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/3.2.0/src/jdcoefct.c)
+резервирует full-image coefficient arrays с округлением обоих измерений до
+sampling-factor blocks. На этом основано разделение выдаваемых и native padded
+коэффициентов в M1-A. Реализована собственная арифметическая оценка и тесты,
+сторонний код не копировался. Это проверка формул, не повторный wheel smoke
+и не доказательство ограничения всего native RSS; вызов `pyjpegio` в M1-A
+отсутствует. Принятый выбор зависимости и ограничения описаны в
+`CONTRACTS.md` §7.5, статус реализации — в `ROADMAP.md`.
+
 ## Общие библиотеки и инструменты
 
 ### Python standard library

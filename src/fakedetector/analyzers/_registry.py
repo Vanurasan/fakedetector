@@ -109,9 +109,7 @@ class AnalyzerRegistry:
 
     def active_analyzer_ids(self, media_type: MediaType) -> tuple[str, ...]:
         """Return the validated completeness plan in deterministic config order."""
-        return tuple(
-            active.registration.analyzer_id for active in self.active_plan(media_type)
-        )
+        return tuple(active.registration.analyzer_id for active in self.active_plan(media_type))
 
     def preprocessing_requirements(
         self,
@@ -119,14 +117,11 @@ class AnalyzerRegistry:
     ) -> PreprocessingRequirements:
         """Aggregate only declarations from analyzers active for one media route."""
         plan = self.active_plan(media_type)
-        return PreprocessingRequirements(
-            audio_spectrogram=any(
-                active.registration.preprocessing_requirements.audio_spectrogram for active in plan
-            ),
-            video_audio_track=any(
-                active.registration.preprocessing_requirements.video_audio_track for active in plan
-            ),
+        requirements = PreprocessingRequirements.aggregate(
+            active.registration.preprocessing_requirements for active in plan
         )
+        requirements.validate_media(media_type)
+        return requirements
 
     @staticmethod
     def _validate_registration(
@@ -160,6 +155,11 @@ class AnalyzerRegistry:
             and MediaType.VIDEO not in registration.supported_media_types
         ):
             raise AnalyzerConfigurationError("preprocessing_requirements")
+        try:
+            for media_type in registration.supported_media_types:
+                requirements.validate_media(media_type)
+        except ValueError:
+            raise AnalyzerConfigurationError("preprocessing_requirements") from None
         candidate_types = registration.candidate_finding_types
         max_candidates = registration.max_candidate_findings
         if (

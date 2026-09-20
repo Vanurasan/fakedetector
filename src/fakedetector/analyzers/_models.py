@@ -23,6 +23,7 @@ from fakedetector.domain import (
     ValidatedFileDescriptor,
     VideoTechnicalParameters,
 )
+from fakedetector.preprocessing._models import ForensicManifest, _forensic_manifest
 from fakedetector.preprocessing._requirements import PreprocessingRequirements
 
 _SAFE_REASON_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -281,9 +282,20 @@ class AnalyzerRequest:
             raise TypeError("artifacts must contain analyzer artifact inputs")
         if any(not isinstance(warning, str) for warning in warnings):
             raise TypeError("warnings must contain strings")
+        manifest = self.forensic
+        if manifest is not None:
+            manifest.validate_binding(
+                self.media_type,
+                {a.artifact_id: a.format for a in artifacts},
+                source_sha256=self.file_facts.sha256,
+            )
         object.__setattr__(self, "artifacts", artifacts)
         object.__setattr__(self, "metadata", _freeze_value(self.metadata))
         object.__setattr__(self, "warnings", warnings)
+
+    @property
+    def forensic(self) -> ForensicManifest | None:
+        return _forensic_manifest(self.metadata)
 
 
 class Analyzer(Protocol):

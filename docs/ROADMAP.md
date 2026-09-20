@@ -2455,8 +2455,9 @@ Macro 1 должен определить необходимые расшире�
 
 Baseline: `a66295ed8a7165d078f714fe4f212675ea8fffdc`, ветка
 `feat/stage12-macro1-forensic-preprocessing-foundations`, исходное рабочее дерево
-чистое. Ниже находятся **предложения и критерии будущих задач**, а не принятые
-контракты. Реализация анализаторов, новая публичная схема и повышение текущих
+чистое. В Pass 1 были сформулированы **предложения и критерии будущих задач**;
+принятые позднее внутренние контракты M1-A находятся в `CONTRACTS.md` §7.5.
+Реализация анализаторов, новая публичная схема и повышение текущих
 лимитов этим проходом не разрешаются. Проверенные сведения о JPEG-кандидатах
 и отдельном installed-wheel smoke находятся в `REFERENCES.md`.
 
@@ -2469,15 +2470,18 @@ metadata-границу; большие числовые данные — зар
 числовые порции внутри существующего analyzer worker из этих представлений;
 постоянно сохранять каждую производную матрицу не требуется.
 
-### Решения владельца перед реализацией — OPEN
+### Решения владельца перед реализацией — RESOLVED
 
-| Gate | Рекомендуемый выбор | Что требует явного решения |
+| Gate | Утверждённый выбор | Статус |
 |---|---|---|
-| G1 — native JPEG | `pyjpegio==0.3.0`, только через ограниченный private preprocessing process; собственный bounded marker/header parser для preflight и безопасных фактов | Допустить новую native runtime dependency после проверок M1-B/G; альтернатива без зависимости не даёт native coefficients без собственной entropy-decoder реализации и меняет объём Macro 1 |
-| G2 — численные зависимости | NumPy и существующий OpenCV; SciPy не добавлять | Подтвердить достаточность первой версии residual/STFT без нового численного пакета |
-| G3 — точность аудио | Гибрид: факты кодека/формата + дополнительные ограниченные окна декодированных samples с сохранённой точностью | Metadata-only недостаточно для quantization/effective-bit-depth; signed-16 WAV сохраняет прежнюю роль |
-| G4 — timing owner | Private typed timing producer/reader внутри preprocessing, использующий общий `run_bounded_process` | Утвердить получение stream/packet/frame facts и ограниченного sideband того же decode; узко расширить subprocess boundary для одновременного bounded stdout/stderr, сохранив reap/cleanup guarantees |
-| G5 — контракты | Менять только внутренние preprocessing/requirements/reader contracts; public API/domain/config schema versions сохранить | Утвердить typed facts/manifests и преобразования координат/времени; `CONTRACTS.md` §7–8 уточняется в M1-A, новые публичные поля не вводятся |
+| G1 — native JPEG | `pyjpegio==0.3.0` в M1-B, bounded private child и preflight | APPROVED; зависимость не добавляется в M1-A |
+| G2 — численные зависимости | NumPy/OpenCV, без SciPy | APPROVED |
+| G3 — точность аудио | Hybrid: source/decoder facts + precision-preserving windows; старый PCM16 сохраняется | APPROVED |
+| G4 — timing owner | Preprocessing с существующей bounded process boundary | APPROVED |
+| G5 — контракты | Только внутренние типы/requirements/readers; public API/domain/YAML без изменений | APPROVED |
+
+Условия решений и реализованные внутренние контракты находятся в
+`CONTRACTS.md` §7.5. Таблица закрывает owner gates и не означает готовность B–F.
 
 Выбор G1 не разрешает прямой вызов native decoder в родительском процессе,
 передачу raw markers анализаторам или приём коэффициентов после предупреждений
@@ -2488,11 +2492,11 @@ metadata-границу; большие числовые данные — зар
 
 ### Последовательность M1-A–M1-H
 
-Все implementation increments пока `NOT_STARTED`; Pass 1 их не реализует.
+M1-A — `DONE`; B–H остаются `NOT_STARTED`. Macro 1 — `IN_PROGRESS`.
 
 | Increment | Зависимости | Проверяемый результат |
 |---|---|---|
-| M1-A — contracts/models/limits | Решения G1–G5 | Типизированные immutable facts, manifest/readers, applicability/coverage, source identity, пределы чисел/размеров; общий demand plan и бюджет до записи; уточнение внутренних контрактов без public schema expansion |
+| M1-A — contracts/models/limits — DONE | Решения G1–G5 | Типизированные immutable facts, manifests и контракты будущих readers, applicability/coverage, source identity, пределы чисел/размеров; общий demand plan и бюджет до записи; уточнение внутренних контрактов без public schema expansion |
 | M1-B — original image/JPEG | A, G1/G4 | Ограниченные исходные факты, EXIF mapping всех 8 ориентаций, thumbnail facts/контролируемый thumbnail, native quantized coefficients и таблицы с component/table IDs; изолированный decoder, общее bounded stderr для строгой обработки warnings, Unicode workspace и wheel smoke |
 | M1-C — residual kernels | A, mapping из B | Небольшие собственные детерминированные residual/filter kernels с явными dtype, границами, halo и областью покрытия; без Noiseprint и копирования чужих ограниченных реализаций |
 | M1-D — audio precision/STFT | A, G2/G3 | Source/decoded sample-format facts, точные sample indices и дополнительные окна; общий framing/window/rFFT/magnitude/power API, без чтения spectrogram PNG и без принудительного downmix/resample |
@@ -2501,11 +2505,30 @@ metadata-границу; большие числовые данные — зар
 | M1-G — integration/hardening | B–F | Совместные count/byte/CPU budgets, безопасная сериализация, timeout/overflow/crash/reap/cleanup matrix, существующие consumers без изменения поведения; sdist → wheel → внешняя runtime-среда без checkout и dev packages |
 | M1-H — independent closure audit | G | Отдельный независимый read-only аудит, отсутствие незакрытых findings, проверка критериев Macro 1 и решение о закрытии |
 
-Точный следующий шаг — отдельная задача **M1-A**, а не реализация первого
-анализатора. В A сразу задаются общие contracts/limits для B–F, чтобы последующие
-increments не переопределяли transport и ownership каждый отдельно. Численные
-профили ниже являются стартовыми ограничениями для проверки в A/G, не production
-defaults и не новыми YAML-полями.
+Точный следующий implementation increment — отдельная задача
+**M1-B: original image/JPEG**. A задаёт общие contracts/limits для B–F;
+точные реализованные ограничения принадлежат `CONTRACTS.md` §7.5. Предложения
+Pass 1 ниже сохраняются как критерии дальнейшей проверки A/G, не production
+sampling defaults и не новые YAML-поля.
+
+### M1-A — internal contracts, demand plan, resource policy — DONE
+
+Baseline: `5c8bf5d909478268eb91112fb90f286f09f4e4eb`, ветка
+`feat/stage12-macro1-forensic-preprocessing-foundations`, рабочее дерево
+перед реализацией чистое. Расширены существующие requirements/registry,
+добавлены строгие immutable facts и bounded numeric descriptors, source/artifact
+binding в текущей metadata-границе, EXIF edge/bbox mapping и арифметический JPEG
+preflight с MCU-padding. Новые producers не реализованы; текущий каталог их
+не запрашивает. Dependencies, public contracts и YAML не менялись.
+
+Проверено 2026-09-21: focused tests (`test_stage5_internal_models.py`,
+`test_analyzer_registry.py`, `test_preprocessing.py`) — **219 passed**.
+Окончательный `uv run poe check` — **PASS**: pre-commit, mypy (65 source files),
+pytest **2068 collected / 2051 passed / 17 skipped**, покрытие **90%**, CLI smoke.
+Проверены итоговый diff, scope, отсутствие ненужных compatibility paths и новых
+public exports; `git diff --check` — PASS. Release certification и пересборка
+Graphify не запускались. Git mutations не выполнялись. M1-A завершён;
+Stage 12 и Macro 1 остаются `IN_PROGRESS`, owner blockers отсутствуют.
 
 ### Критерии ресурсов и достоверности для A/G
 
@@ -2565,7 +2588,7 @@ defaults и не новыми YAML-полями.
 
 ### Критерии закрытия Macro 1
 
-- [ ] Решения G1–G5 рассмотрены и записаны в соответствующих источниках истины.
+- [x] Решения G1–G5 рассмотрены и записаны в соответствующих источниках истины.
 - [ ] A–G выполнены; first-wave consumers имеют конкретные входные представления,
   но сами новые анализаторы в Macro 1 не реализованы.
 - [ ] EXIF 1–8, non-square image, component subsampling/padding и преобразование
