@@ -1322,8 +1322,9 @@ ownership semantics.
 
 Решения владельца G1–G5 приняты. Производитель новых представлений остаётся
 в preprocessing; источник, реестр артефактов, общий бюджет и private worker
-transport сохраняют прежнее владение. M1-A реализует только типы, декларации,
-проверки размеров и координат. Извлечение выполняется в последующих M1-B–F.
+transport сохраняют прежнее владение. M1-A реализует типы, декларации,
+проверки размеров и координат; M1-B — original image/JPEG producer и numeric reader.
+Остальное извлечение относится к последующим M1-C–F.
 Новые требования отсутствуют у четырёх текущих анализаторов версии `1.0.0`.
 Публичные схемы, локализация, риск, полнота и YAML не изменяются.
 
@@ -1342,9 +1343,9 @@ transport сохраняют прежнее владение. M1-A реализ�
   `av_timeline → timing_records + audio_samples`.
 
 Старые `audio_spectrogram`/`video_audio_track` сохраняют семантику. Неподходящий
-media route отклоняется. Пока производителей нет, dispatcher отклоняет новый
-demand до I/O с внутренним `forensic_producer_unavailable`; декларация не
-обозначает уже доступное извлечение. Профиль выборки и его параметры будут
+media route отклоняется. Dispatcher принимает original image/coordinates/JPEG
+demand, остальные ещё не реализованные producers отклоняет до I/O с внутренним
+`forensic_producer_unavailable`. Профиль выборки и его параметры будут
 определены производителем; объединение capabilities не выбирает их молча.
 
 **Факты и идентичность.** В существующем `metadata["forensic"]` резервируется
@@ -1374,10 +1375,11 @@ timing records — на stream/time base, dense/AV — на соответств
 ранга 1–4 и закрытый dtype: `|u1`, `<i4`, `<i8`, `<f8`, `<c16`. Формат — raw
 C-order, без заголовка, padding, object arrays и pickle; endian задан явно.
 Точная длина выводится из shape/itemsize с проверкой произведения до выделения
-памяти и должна совпасть с файлом. Reader последующего increment обязан
-использовать зарегистрированную read capability и immutable backing buffer:
+памяти и должна совпасть с файлом. `AnalyzerRequest.read_numeric` сверяет
+descriptor с source-bound manifest, проверяет длину через read-only capability
+до чтения и повторно после ограниченного чтения. Массив имеет immutable `bytes`
+backing buffer; включить запись через `setflags` невозможно:
 одного `frozen=True` или снятого writeable flag у изменяемого владельца недостаточно.
-M1-A не реализует readers и не создаёт числовые массивы/файлы.
 
 Коэффициенты имеют оси `(block_y, block_x, 8, 8)` в native SOF component order,
 без применения EXIF. Растр имеет `(y, x, channel)` и явные ориентированные
@@ -1439,7 +1441,7 @@ recursive metadata/raw EXIF/raw ffprobe JSON, путей и массивов; о
 по-прежнему ограничены 65 536 байтами. Числовые данные не входят в response или
 `raw_metrics`. Потолки данных не заменяют remaining timeout и контроль native RSS.
 
-**Preflight JPEG перед M1-B.** `JpegHeader.preflight` работает только с малыми
+**Preflight JPEG.** `JpegHeader.preflight` работает только с малыми
 типизированными SOF facts, до вызова native decoder: размеры 1–65535, 8-bit
 baseline/progressive, 1–4 уникальных components, sampling factors 1–4,
 до 10 blocks/MCU, без дробных отношений максимального sampling factor.
@@ -1450,17 +1452,58 @@ Native оценка округляет оба измерения до полно
 Ограничение применяется к padded allocation, а не только к выдаваемым planes;
 int32 output bytes и native 16-bit coefficient bytes учитываются отдельно.
 Это не оценка всего RSS: source copy, markers, native overhead и временные
-копии потребуют учёта и измерений в M1-B/G.
+копии измерены отдельно в M1-B; совместный бюджет concurrency остаётся в M1-G.
 
-M1-B должен реализовать минимальный bounded marker/header parser: проверить SOI,
+M1-B реализует минимальный bounded marker/header parser: проверяет SOI,
 длины сегментов, SOF0/SOF2 и component/table IDs, лимиты scans/markers/payload,
-дойти до EOI с учётом byte stuffing/restart markers, отвергать DNL/смену геометрии,
+доходит до EOI с учётом byte stuffing/restart markers, отвергает DNL/смену геометрии,
 неподдерживаемые coding modes и неоднозначные переопределения таблиц. Entropy
 decoding собственным кодом не реализуется. Проверяется тот же controlled source,
 который затем передаётся child; размер ограничен также Stage 3 input budget.
-До успешного preflight `pyjpegio` вызывать нельзя. M1-B добавляет точный
-`pyjpegio==0.3.0` в bounded private child, ASCII basename `source` без изменения
-cwd родителя, строгий отказ при native warning/truncation и installed-wheel tests.
+До успешного preflight `pyjpegio` вызывать нельзя. В runtime установлен точный
+`pyjpegio==0.3.0`. DQT IDs могут быть разреженными; до четырёх таблиц по 64
+положительных значения хранятся в natural 8×8 row-major порядке с precision
+8/16. SOF0 допускает только 8-bit DQT. Повторный SOF, повторный DQT ID, DQT после
+начала scans, неподдерживаемый SOF, missing EOI и любые trailing bytes отвергаются.
+DHT допускает штатную progressive-переустановку; SOS проверяет selectors,
+спектральные диапазоны и последовательность initial/refinement scans. APP/COM
+не интерпретируются parser и ограничены общим marker payload budget.
+
+`OriginalImageFacts` фиксирует фактические source mode, native dimensions,
+нормализованные dimensions, выбранный source frame (включая APNG default image),
+валидный EXIF orientation и факт применения преобразования. Отсутствующий EXIF
+означает identity mapping; невалидный/непрочитанный — `orientation=None`, без
+доказанного преобразования. Такой mapping не позволяет вычислять bbox.
+Преобразования 1–8 действуют над pixel edges, центры — `(i+0.5,j+0.5)`.
+Нормализованный PNG сохраняет прежний Pillow pipeline; JPEG coefficients остаются
+в native coordinates. Non-JPEG даёт original facts с `jpeg=None`, без child.
+Producer/profile версии original facts — `fakedetector/1`, `original_image/1`;
+коэффициентов — `pyjpegio/0.3.0`, `jpeg_coefficients/1`. SHA-256 перечитываемого
+controlled source проверяется в parent и повторно в child.
+
+Private child работает с ASCII basename `source` в существующем controlled cwd,
+без aliases и изменения cwd родителя. На Windows запускается реальный CPython
+`sys._base_executable`, с `__PYVENV_LAUNCHER__=sys.executable` для сохранения venv:
+PID, которым владеет runner, должен быть PID декодера, а не venv redirector.
+`-I`, `shell=False`, `stdin=DEVNULL`; из окружения сохраняются только
+`SystemRoot/WINDIR/TEMP/TMP`, явно задаётся `OPENBLAS_NUM_THREADS=1`.
+`run_bounded_process` одновременно дренирует stdout/stderr по ≤4096 байт,
+использует минимум из 30 s и remaining budget, подтверждает reap и сохраняет
+cleanup safety barrier при неразрешённом владении. Ответ protocol v1 содержит
+только version, `status="clean"`, source SHA-256; принимается точная форма.
+Native stderr при успешном exit означает `jpeg_native_warning` и отказ;
+ненулевой exit/crash — `jpeg_native_error`, timeout — `jpeg_native_timeout`,
+overflow — `jpeg_native_output`, неверный ответ — `jpeg_native_protocol`.
+Raw stderr и exception text не сохраняются; warnings не становятся Findings.
+
+До запуска child регистрируются `jpeg_component_N.raw`, каждый полностью
+заполняется через общий `open_output`: весь физический объём учтён заранее.
+Child проверяет существующие ordinary files и их точную длину, затем перезаписывает
+только фиксированные mmap extents. Для каждой plane проверяются geometry,
+integer dtype и полный диапазон int32 перед преобразованием; запись идёт по
+одному block row без полной транспонированной копии. Parent повторно сверяет
+длины. Частично записанные файлы остаются под прежним lifecycle cleanup.
+Только явный `jpeg_coefficients` demand включает child; текущий каталог не изменён.
 G2 сохраняет NumPy/OpenCV без SciPy; G3 — hybrid precision facts/windows;
 G4 размещает timing/ffprobe в preprocessing и расширяет существующую bounded
 process boundary, а не создаёт отдельную процессную архитектуру.

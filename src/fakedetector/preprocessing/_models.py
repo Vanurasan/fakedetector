@@ -68,15 +68,19 @@ class ImageCoordinates(_BoundedValue):
 
     native_width: Annotated[int, Field(gt=0, le=65_535)]
     native_height: Annotated[int, Field(gt=0, le=65_535)]
-    orientation: Annotated[int, Field(ge=1, le=8)] = 1
+    orientation: Annotated[int, Field(ge=1, le=8)] | None = 1
 
     @property
     def oriented_size(self) -> tuple[int, int]:
+        if self.orientation is None:
+            raise ValueError("orientation mapping is unknown")
         if self.orientation >= 5:
             return self.native_height, self.native_width
         return self.native_width, self.native_height
 
     def transform_edge(self, x: float, y: float) -> tuple[float, float]:
+        if self.orientation is None:
+            raise ValueError("orientation mapping is unknown")
         if any(type(value) not in (int, float) or not math.isfinite(value) for value in (x, y)):
             raise ValueError("coordinates must be finite numbers")
         width, height = self.native_width, self.native_height
@@ -220,7 +224,7 @@ class JpegAllocation(_BoundedValue):
 class NumericArtifact(_BoundedValue):
     """Opaque C-order raw numeric storage, never an ndarray or a filesystem path.
 
-    A future reader must resolve this ID through its registered read capability,
+    Readers resolve this ID through a registered read capability,
     verify exact byte length before allocation, and expose an immutable backing
     buffer (not merely ndarray.flags.writeable=False on a writable owner).
     Explicit little endian dtypes make host-native endian/object/pickle invalid.
@@ -248,12 +252,34 @@ class NumericArtifact(_BoundedValue):
             raise ValueError("numeric artifact byte length does not match its descriptor")
 
 
+class JpegQuantizationTable(_BoundedValue):
+    table_id: Annotated[int, Field(ge=0, le=3)]
+    precision_bits: Literal[8, 16]
+    # Natural row-major 8x8 order, not serialized zigzag order.
+    values: Annotated[
+        tuple[Annotated[int, Field(ge=1, le=65535)], ...], Field(min_length=64, max_length=64)
+    ]
+
+    @model_validator(mode="after")
+    def precision(self) -> Self:
+        if self.precision_bits == 8 and max(self.values) > 255:
+            raise ValueError("quantization table value exceeds its precision")
+        return self
+
+
 class OriginalImageFacts(_BoundedValue):
     kind: Literal["original_image"] = "original_image"
     format: _Token
     coordinates: ImageCoordinates
     source_frame: _NonnegativeIndex = 0
     jpeg: JpegHeader | None = None
+    source_mode: (
+        Annotated[str, Field(min_length=1, max_length=32, pattern=r"^[a-zA-Z0-9;]+$")] | None
+    ) = None
+    exif_orientation: Annotated[int, Field(ge=1, le=8)] | None = None
+    normalized_size: tuple[_PositiveIndex, _PositiveIndex] | None = None
+    orientation_applied: bool = False
+    quantization_tables: Annotated[tuple[JpegQuantizationTable, ...], Field(max_length=4)] = ()
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
@@ -263,6 +289,32 @@ class OriginalImageFacts(_BoundedValue):
             or self.jpeg.height != self.coordinates.native_height
         ):
             raise ValueError("JPEG facts disagree with native image identity")
+        if (
+            self.exif_orientation is not None
+            and self.exif_orientation != self.coordinates.orientation
+        ):
+            raise ValueError("EXIF orientation disagrees with mapping")
+        if (
+            self.normalized_size is not None
+            and self.coordinates.orientation is not None
+            and (
+                self.normalized_size != self.coordinates.oriented_size
+                or self.orientation_applied != (self.coordinates.orientation != 1)
+            )
+        ):
+            raise ValueError("observed normalization disagrees with mapping")
+        if self.coordinates.orientation is None and self.orientation_applied:
+            raise ValueError("unknown orientation cannot claim a proven transform")
+        table_ids = {table.table_id for table in self.quantization_tables}
+        if (
+            len(table_ids) != len(self.quantization_tables)
+            or self.quantization_tables
+            and (
+                self.jpeg is None
+                or any(c.quantization_table_id not in table_ids for c in self.jpeg.components)
+            )
+        ):
+            raise ValueError("quantization tables do not match JPEG component selectors")
         return self
 
 
@@ -293,6 +345,7 @@ class JpegCoefficientsDescriptor(_BoundedValue):
     kind: Literal["jpeg_coefficients"] = "jpeg_coefficients"
     header: JpegHeader
     planes: Annotated[tuple[NumericArtifact, ...], Field(min_length=1, max_length=4)]
+    decode_quality: Literal["clean"] = "clean"
 
     @model_validator(mode="after")
     def layout(self) -> Self:

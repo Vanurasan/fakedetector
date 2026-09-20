@@ -2492,12 +2492,12 @@ metadata-границу; большие числовые данные — зар
 
 ### Последовательность M1-A–M1-H
 
-M1-A — `DONE`; B–H остаются `NOT_STARTED`. Macro 1 — `IN_PROGRESS`.
+M1-A и M1-B — `DONE`; C–H остаются `NOT_STARTED`. Macro 1 — `IN_PROGRESS`.
 
 | Increment | Зависимости | Проверяемый результат |
 |---|---|---|
 | M1-A — contracts/models/limits — DONE | Решения G1–G5 | Типизированные immutable facts, manifests и контракты будущих readers, applicability/coverage, source identity, пределы чисел/размеров; общий demand plan и бюджет до записи; уточнение внутренних контрактов без public schema expansion |
-| M1-B — original image/JPEG | A, G1/G4 | Ограниченные исходные факты, EXIF mapping всех 8 ориентаций, thumbnail facts/контролируемый thumbnail, native quantized coefficients и таблицы с component/table IDs; изолированный decoder, общее bounded stderr для строгой обработки warnings, Unicode workspace и wheel smoke |
+| M1-B — original image/JPEG — DONE | A, G1/G4 | Ограниченные исходные факты, EXIF mapping всех 8 ориентаций, native quantized coefficients и таблицы с component/table IDs; изолированный decoder, общее bounded stderr для строгой обработки warnings, Unicode workspace и installed-wheel smoke |
 | M1-C — residual kernels | A, mapping из B | Небольшие собственные детерминированные residual/filter kernels с явными dtype, границами, halo и областью покрытия; без Noiseprint и копирования чужих ограниченных реализаций |
 | M1-D — audio precision/STFT | A, G2/G3 | Source/decoded sample-format facts, точные sample indices и дополнительные окна; общий framing/window/rFFT/magnitude/power API, без чтения spectrogram PNG и без принудительного downmix/resample |
 | M1-E — bounded timing | A/B, G4 | Типизированные stream/packet/frame facts, signed PTS/DTS и rational time base; bounded ffprobe и переиспользование общей sideband-границы из B для timing; без raw JSON в analyzer inputs |
@@ -2506,7 +2506,7 @@ M1-A — `DONE`; B–H остаются `NOT_STARTED`. Macro 1 — `IN_PROGRESS`
 | M1-H — independent closure audit | G | Отдельный независимый read-only аудит, отсутствие незакрытых findings, проверка критериев Macro 1 и решение о закрытии |
 
 Точный следующий implementation increment — отдельная задача
-**M1-B: original image/JPEG**. A задаёт общие contracts/limits для B–F;
+**M1-C: residual kernels**. A задаёт общие contracts/limits для B–F;
 точные реализованные ограничения принадлежат `CONTRACTS.md` §7.5. Предложения
 Pass 1 ниже сохраняются как критерии дальнейшей проверки A/G, не production
 sampling defaults и не новые YAML-поля.
@@ -2529,6 +2529,42 @@ pytest **2068 collected / 2051 passed / 17 skipped**, покрытие **90%**, 
 public exports; `git diff --check` — PASS. Release certification и пересборка
 Graphify не запускались. Git mutations не выполнялись. M1-A завершён;
 Stage 12 и Macro 1 остаются `IN_PROGRESS`, owner blockers отсутствуют.
+
+### M1-B — original image/JPEG — DONE
+
+Baseline: `50d2fb77624193a99c9ab821582e39546d54bc44`, ветка
+`feat/stage12-macro1-forensic-preprocessing-foundations`, начальное дерево чистое.
+Выполнен утверждённый объём M1-B: original facts/EXIF, структурный JPEG preflight,
+native coefficients по явному demand, bounded child, raw artifacts и immutable
+reader. Thumbnail extraction/comparison и forensic conclusions не входят в это
+задание и не реализованы. Текущие четыре analyzers и public contracts сохранены.
+Точный внутренний контракт — `CONTRACTS.md` §7.5; provenance и измерения памяти —
+`REFERENCES.md`, интеграция M1-B.
+
+Проверено 2026-09-21:
+
+- focused preprocessing/models/process/registry — **348 passed**;
+- дополнительные 12 interruption/recovery cases — **PASS**; Windows stdlib
+  process probes запускают реальный interpreter, исключая venv redirector;
+- `uv run poe check` — **PASS**: pre-commit, mypy (65 source files), pytest
+  **2137 collected / 2120 passed / 17 skipped**, покрытие **90%**, CLI smoke;
+- `uv run python scripts/verify_release_package.py` — **PASS**: проверенный
+  inventory/hash sdist → wheel, внешний CPython 3.12.10 venv, 26 runtime
+  distributions точно соответствуют lock-derived constraints, dev packages
+  отсутствуют, imports из site-packages, checkout отсутствует в sys.path;
+- установленный wheel: progressive RGB 17×17, malformed missing EOI,
+  over-limit SOF, Unicode workspace и cleanup — **PASS**;
+- preflight spy подтверждает отсутствие native вызова при structural/resource
+  rejection; 2047/2048/2049×2048 grayscale проверяют границу policy;
+- safe warning/error/crash/timeout/protocol/overflow, partial artifact cleanup,
+  source/artifact binding и запрет writable numeric buffer — **PASS**.
+
+Измеренный peak working set дочернего процесса для трёх fixtures — около 66–75 MiB; это не
+hard RAM quota. В M1-G остаются общий RSS/concurrency и native allocation risks,
+а также strict clean committed-tree certification: эта проверка честно выполнена
+на изменённом working tree (`source_tree_clean=false`). Provenance guards не
+ослаблены. Git mutations и пересборка Graphify не выполнялись. Owner blockers
+отсутствуют; Stage 12 и Macro 1 остаются `IN_PROGRESS`. M1-C не начат.
 
 ### Критерии ресурсов и достоверности для A/G
 
@@ -2591,10 +2627,10 @@ Stage 12 и Macro 1 остаются `IN_PROGRESS`, owner blockers отсутс�
 - [x] Решения G1–G5 рассмотрены и записаны в соответствующих источниках истины.
 - [ ] A–G выполнены; first-wave consumers имеют конкретные входные представления,
   но сами новые анализаторы в Macro 1 не реализованы.
-- [ ] EXIF 1–8, non-square image, component subsampling/padding и преобразование
+- [x] EXIF 1–8, non-square image, component subsampling/padding и преобразование
   native bbox в normalized coordinates проверены; native JPEG DCT не вычисляется
   из PNG и не меняет координатную систему молча.
-- [ ] Проверены baseline/progressive/grayscale JPEG, non-contiguous quant table
+- [x] Проверены baseline/progressive/grayscale JPEG, non-contiguous quant table
   IDs, malformed/truncated/oversized input, native warnings/crash/timeout и
   Unicode workspace. Source markers не попадают в logs/results.
 - [ ] Проверены integer PCM 8/16/24/32, float samples, silence/impulse/tone,

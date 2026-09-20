@@ -321,6 +321,7 @@ class _DeferredProcess:
     def __init__(self) -> None:
         self.safe = False
         self.stdout = _DeferredStdout()
+        self.stderr = None
         self.terminate_calls = 0
         self.kill_calls = 0
         self.wait_timeouts: list[float | None] = []
@@ -2102,8 +2103,12 @@ def test_real_interrupted_child_preserves_settlement_ownership_and_recovery(
         monkeypatch.setattr(bounded_process_module, "_read_stdout_chunk", interrupt)
 
         def run_probe(_arguments, **kwargs):
+            # Own the sleeping interpreter itself, not the Windows venv redirector.
+            executable = (
+                vars(sys)["_base_executable"] if sys.platform == "win32" else sys.executable
+            )
             return bounded_process_module.run_bounded_process(
-                [sys.executable, "-c", "import time; time.sleep(30)"],
+                [executable, "-I", "-c", "import time; time.sleep(30)"],
                 **kwargs,
             )
 

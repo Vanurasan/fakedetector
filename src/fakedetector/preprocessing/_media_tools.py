@@ -1,10 +1,16 @@
-"""Bounded FFmpeg operations used only by trusted preprocessing code."""
+"""Bounded media tools and structural JPEG preflight for trusted preprocessing."""
 
 from __future__ import annotations
 
+import hashlib
+import importlib
+import json
 import math
+import mmap
 import os
+import sys
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic
 from typing import BinaryIO
@@ -21,6 +27,8 @@ from fakedetector.core._bounded_process import (
     run_bounded_process,
 )
 from fakedetector.preprocessing._errors import PreprocessingError
+from fakedetector.preprocessing._models import JpegComponent, JpegHeader, JpegQuantizationTable
+from fakedetector.preprocessing._requirements import _FORENSIC_POLICY
 
 _MAX_FLAC_PROGRESS_BYTES = 16 * 1024
 _RIFF_UINT32_MAX = (1 << 32) - 1
@@ -415,3 +423,401 @@ def _rewrite_existing(stream: BinaryIO, offset: int, data: bytes) -> None:
     stream.seek(offset)
     if stream.write(data) != len(data):
         raise _GeneratedArtifactWriteError
+
+
+@dataclass(frozen=True, slots=True)
+class _JpegStructure:
+    header: JpegHeader
+    tables: tuple[JpegQuantizationTable, ...]
+
+
+@dataclass(slots=True)
+class _JpegParser:
+    """Bounded marker parser; entropy is skipped, never decoded or repaired."""
+
+    data: bytes
+    header: JpegHeader | None = None
+    tables: dict[int, JpegQuantizationTable] = field(default_factory=dict)
+    huffman: set[tuple[int, int]] = field(default_factory=set)
+    progression: dict[tuple[int, int], int] = field(default_factory=dict)
+    marker_count: int = 0
+    payload_bytes: int = 0
+    scans: int = 0
+    restart_interval: int = 0
+
+    def marker(self) -> None:
+        self.marker_count += 1
+        if self.marker_count > _FORENSIC_POLICY.jpeg_markers:
+            raise PreprocessingError("resource_limit", "jpeg_structure_limit")
+
+    def parse(self) -> _JpegStructure:
+        if len(self.data) > _FORENSIC_POLICY.jpeg_input_bytes:
+            raise PreprocessingError("resource_limit", "jpeg_input_limit")
+        if not self.data.startswith(b"\xff\xd8"):
+            raise ValueError("signature")
+        self.marker()  # SOI is included in the total marker budget.
+        position = 2
+        while position < len(self.data):
+            self.marker()
+            if self.data[position] != 255:
+                raise ValueError("marker")
+            while position < len(self.data) and self.data[position] == 255:
+                position += 1
+            if position >= len(self.data):
+                raise ValueError("marker exhaustion")
+            marker = self.data[position]
+            position += 1
+            if marker == 0xD9:
+                if (
+                    position != len(self.data)
+                    or self.header is None
+                    or not self.scans
+                    or any(
+                        (c.component_id, 0) not in self.progression for c in self.header.components
+                    )
+                ):
+                    raise ValueError("incomplete image or trailing bytes")
+                return _JpegStructure(
+                    self.header, tuple(self.tables[k] for k in sorted(self.tables))
+                )
+            if (
+                marker not in {0xC0, 0xC2, 0xDB, 0xC4, 0xDD, 0xDA, 0xFE}
+                and not 0xE0 <= marker <= 0xEF
+            ):
+                raise ValueError("unsupported marker")
+            if position + 2 > len(self.data):
+                raise ValueError("length exhaustion")
+            length = int.from_bytes(self.data[position : position + 2], "big")
+            if length < 2 or position + length > len(self.data):
+                raise ValueError("segment length")
+            self.payload_bytes += length
+            if self.payload_bytes > _FORENSIC_POLICY.jpeg_marker_bytes:
+                raise PreprocessingError("resource_limit", "jpeg_structure_limit")
+            payload = self.data[position + 2 : position + length]
+            position += length
+            if marker in {0xC0, 0xC2}:
+                self.sof(payload, marker)
+            elif marker == 0xDB:
+                self.dqt(payload)
+            elif marker == 0xC4:
+                self.dht(payload)
+            elif marker == 0xDD:
+                if len(payload) != 2:
+                    raise ValueError("restart interval")
+                self.restart_interval = int.from_bytes(payload, "big")
+            elif marker == 0xDA:
+                self.sos(payload)
+                position = self.entropy_end(position)
+        raise ValueError("missing EOI")
+
+    def sof(self, payload: bytes, marker: int) -> None:
+        if self.header is not None or len(payload) < 6 or len(payload) != 6 + 3 * payload[5]:
+            raise ValueError("SOF definition")
+        if payload[0] != 8:
+            raise ValueError("unsupported sample precision")
+        self.header = JpegHeader(
+            width=int.from_bytes(payload[3:5], "big"),
+            height=int.from_bytes(payload[1:3], "big"),
+            precision_bits=8,
+            coding="baseline" if marker == 0xC0 else "progressive",
+            components=tuple(
+                JpegComponent(
+                    component_id=payload[i],
+                    horizontal_sampling=payload[i + 1] >> 4,
+                    vertical_sampling=payload[i + 1] & 15,
+                    quantization_table_id=payload[i + 2],
+                )
+                for i in range(6, len(payload), 3)
+            ),
+        )
+        try:
+            self.header.preflight(len(self.data))
+        except ValueError:
+            raise PreprocessingError("resource_limit", "jpeg_preflight") from None
+
+    def dqt(self, payload: bytes) -> None:
+        if not payload or self.scans:
+            raise ValueError("late or empty DQT")
+        position = 0
+        # Derive the JPEG zigzag positions rather than copying a decoder table.
+        zigzag: list[tuple[int, int]] = []
+        for diagonal in range(15):
+            rows = range(max(0, diagonal - 7), min(7, diagonal) + 1)
+            zigzag.extend(
+                (r, diagonal - r) for r in (reversed(rows) if diagonal % 2 == 0 else rows)
+            )
+        while position < len(payload):
+            precision, table_id = payload[position] >> 4, payload[position] & 15
+            position += 1
+            size = 64 * (precision + 1)
+            if (
+                precision > 1
+                or table_id > 3
+                or table_id in self.tables
+                or position + size > len(payload)
+            ):
+                raise ValueError("DQT definition")
+            values = [0] * 64
+            for index, (row, column) in enumerate(zigzag):
+                offset = position + index * (precision + 1)
+                values[row * 8 + column] = int.from_bytes(
+                    payload[offset : offset + precision + 1], "big"
+                )
+            self.tables[table_id] = JpegQuantizationTable(
+                table_id=table_id, precision_bits=8 if precision == 0 else 16, values=tuple(values)
+            )
+            position += size
+
+    def dht(self, payload: bytes) -> None:
+        position = 0
+        if not payload:
+            raise ValueError("empty DHT")
+        while position < len(payload):
+            if position + 17 > len(payload):
+                raise ValueError("DHT length")
+            table_class, table_id = payload[position] >> 4, payload[position] & 15
+            counts = payload[position + 1 : position + 17]
+            symbols = sum(counts)
+            slots = 1
+            for count in counts:
+                slots = slots * 2 - count
+                if slots < 0:
+                    raise ValueError("oversubscribed Huffman table")
+            if (
+                table_class > 1
+                or table_id > 3
+                or not 1 <= symbols <= 256
+                or position + 17 + symbols > len(payload)
+            ):
+                raise ValueError("DHT definition")
+            self.huffman.add((table_class, table_id))
+            position += 17 + symbols
+
+    def sos(self, payload: bytes) -> None:
+        if (
+            self.header is None
+            or len(payload) < 6
+            or not 1 <= payload[0] <= 4
+            or len(payload) != 4 + 2 * payload[0]
+        ):
+            raise ValueError("SOS length or ordering")
+        components = {c.component_id: c for c in self.header.components}
+        ids = payload[1:-3:2]
+        ss, se, approximation = payload[-3:]
+        ah, al = approximation >> 4, approximation & 15
+        if len(set(ids)) != len(ids) or any(c not in components for c in ids):
+            raise ValueError("SOS components")
+        if self.header.coding == "baseline":
+            if (ss, se, ah, al) != (0, 63, 0, 0) or any(
+                t.precision_bits != 8 for t in self.tables.values()
+            ):
+                raise ValueError("baseline scan")
+        elif (
+            not 0 <= ss <= se <= 63
+            or (ss == 0 and se != 0)
+            or (ss > 0 and len(ids) != 1)
+            or ah > 13
+            or al > 13
+            or (ah != 0 and ah != al + 1)
+        ):
+            raise ValueError("progressive scan")
+        for component_id, selector in zip(ids, payload[2:-3:2], strict=True):
+            if (
+                components[component_id].quantization_table_id not in self.tables
+                or selector >> 4 > 3
+                or selector & 15 > 3
+            ):
+                raise ValueError("missing quantization or invalid Huffman selector")
+            if (ss == 0 and ah == 0 and (0, selector >> 4) not in self.huffman) or (
+                se > 0 and (1, selector & 15) not in self.huffman
+            ):
+                raise ValueError("missing Huffman table")
+            for coefficient in range(ss, se + 1):
+                key = (component_id, coefficient)
+                if (ah == 0 and key in self.progression) or (
+                    ah and self.progression.get(key) != ah
+                ):
+                    raise ValueError("inconsistent scan progression")
+                self.progression[key] = al
+        self.scans += 1
+
+    def entropy_end(self, position: int) -> int:
+        restart = 0
+        while position < len(self.data):
+            position = self.data.find(b"\xff", position)
+            if position < 0:
+                break
+            start = position
+            position += 1
+            while position < len(self.data) and self.data[position] == 255:
+                position += 1
+            if position >= len(self.data):
+                break
+            marker = self.data[position]
+            if marker == 0:
+                position += 1
+            elif 0xD0 <= marker <= 0xD7:
+                self.marker()
+                if not self.restart_interval or marker != 0xD0 + restart:
+                    raise ValueError("restart ordering")
+                restart = (restart + 1) % 8
+                position += 1
+            else:
+                return start
+        raise ValueError("entropy exhaustion")
+
+
+def _parse_jpeg(data: bytes) -> _JpegStructure:
+    try:
+        return _JpegParser(data).parse()
+    except ValueError:
+        raise PreprocessingError("decode", "jpeg_structure") from None
+
+
+_JPEG_PROCESS_BYTES = 4096
+_JPEG_PROCESS_SECONDS = 30.0
+
+
+def _decode_jpeg_coefficients(
+    source: Path, source_sha256: str, *, timeout_seconds: float | None
+) -> None:
+    """Only the child imports jpegio. Files have already been registered and charged."""
+    if source.name != "source":
+        raise PreprocessingError("invariant", "jpeg_source_name")
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in {"SYSTEMROOT", "WINDIR", "TEMP", "TMP"}
+    }
+    # Coefficient projection needs no BLAS workers; bound NumPy's native pool.
+    environment["OPENBLAS_NUM_THREADS"] = "1"
+    executable = sys.executable
+    if os.name == "nt":
+        # The Windows venv executable is a redirector that spawns another process.
+        # Launch CPython itself so terminate/kill/reap own the actual decoder.
+        executable = vars(sys)["_base_executable"]
+        if not isinstance(executable, str) or not Path(executable).is_absolute():
+            raise PreprocessingError("invariant", "jpeg_interpreter")
+        environment["__PYVENV_LAUNCHER__"] = sys.executable
+    try:
+        result = run_bounded_process(
+            [
+                executable,
+                "-I",
+                "-c",
+                "from fakedetector.preprocessing._media_tools import _jpeg_child_main; "
+                "_jpeg_child_main()",
+                "--jpeg-child-v1",
+                source_sha256,
+            ],
+            cwd=source.parent,
+            timeout_seconds=min(_JPEG_PROCESS_SECONDS, timeout_seconds or _JPEG_PROCESS_SECONDS),
+            stdout_limit_bytes=_JPEG_PROCESS_BYTES,
+            stderr_limit_bytes=_JPEG_PROCESS_BYTES,
+            environment=environment,
+        )
+    except ProcessOutputLimitError:
+        raise PreprocessingError("resource_limit", "jpeg_native_output") from None
+    except ProcessTimeoutError:
+        raise PreprocessingError("media_tool", "jpeg_native_timeout") from None
+    except ProcessInfrastructureError as error:
+        raise PreprocessingError(
+            "infrastructure",
+            "jpeg_native_process",
+            _cleanup_safety_barrier=error._cleanup_safety_barrier,
+        ) from None
+    if result.return_code != 0:
+        raise PreprocessingError("decode", "jpeg_native_error")
+    if result.stderr:
+        raise PreprocessingError("decode", "jpeg_native_warning")
+    expected = json.dumps(
+        {"version": 1, "status": "clean", "source_sha256": source_sha256}, separators=(",", ":")
+    ).encode("ascii")
+    if result.stdout != expected or result.stderr != b"":
+        raise PreprocessingError("infrastructure", "jpeg_native_protocol")
+
+
+def _jpeg_child(source_sha256: str) -> None:
+    """Closed child entry: bounded source, preflight again, fixed-size mapped outputs."""
+    from fakedetector._filesystem import require_regular_file
+
+    source = Path("source")
+    require_regular_file(source)
+    with source.open("rb") as stream:
+        data = stream.read(_FORENSIC_POLICY.jpeg_input_bytes + 1)
+    structure = _parse_jpeg(data)
+    if hashlib.sha256(data).hexdigest() != source_sha256:
+        raise ValueError("source identity")
+    allocation = structure.header.preflight(len(data))
+    del data
+    targets = tuple(
+        Path(f"jpeg_component_{index}.raw") for index in range(len(allocation.block_shapes))
+    )
+    for target, shape in zip(targets, allocation.block_shapes, strict=True):
+        require_regular_file(target)
+        if target.stat().st_size != shape[0] * shape[1] * 64 * 4:
+            raise ValueError("output extent")
+    jpegio = importlib.import_module("jpegio")
+    decoded = jpegio.read("source")
+    if (
+        decoded is None
+        or len(decoded.coef_arrays) != len(targets)
+        or len(decoded.comp_info) != len(targets)
+    ):
+        raise ValueError("native components")
+    for component, actual in zip(structure.header.components, decoded.comp_info, strict=True):
+        if (
+            actual.component_id,
+            actual.h_samp_factor,
+            actual.v_samp_factor,
+            actual.quant_tbl_no,
+        ) != (
+            component.component_id,
+            component.horizontal_sampling,
+            component.vertical_sampling,
+            component.quantization_table_id,
+        ):
+            raise ValueError("native component mismatch")
+    if len(decoded.quant_tables) != len(structure.tables):
+        raise ValueError("native quantization count")
+    # pyjpegio exposes a compact list in ascending JPEG table-slot order;
+    # component selectors retain the original (possibly sparse) table IDs.
+    for table, native_table in zip(structure.tables, decoded.quant_tables, strict=True):
+        if native_table.shape != (8, 8) or tuple(int(v) for v in native_table.flat) != table.values:
+            raise ValueError("native quantization mismatch")
+    for target, shape, plane in zip(
+        targets, allocation.block_shapes, decoded.coef_arrays, strict=True
+    ):
+        rows, columns = shape
+        if (
+            plane.shape != (rows * 8, columns * 8)
+            or plane.dtype.kind not in {"i", "u"}
+            or int(plane.min()) < -(1 << 31)
+            or int(plane.max()) >= 1 << 31
+        ):
+            raise ValueError("native coefficient layout or range")
+        with (
+            target.open("r+b") as output,
+            mmap.mmap(output.fileno(), rows * columns * 256, access=mmap.ACCESS_WRITE) as mapped,
+        ):
+            for row in range(rows):
+                blocks = plane[row * 8 : (row + 1) * 8].reshape(8, columns, 8).transpose(1, 0, 2)
+                mapped[row * columns * 256 : (row + 1) * columns * 256] = blocks.astype(
+                    "<i4", copy=False
+                ).tobytes(order="C")
+            mapped.flush()
+    sys.stdout.write(
+        json.dumps(
+            {"version": 1, "status": "clean", "source_sha256": source_sha256}, separators=(",", ":")
+        )
+    )
+
+
+def _jpeg_child_main() -> None:
+    if len(sys.argv) != 3 or sys.argv[1] != "--jpeg-child-v1":
+        sys.exit(2)
+    try:
+        _jpeg_child(sys.argv[2])
+    except Exception:
+        # Do not emit native objects, paths, exception text, or a traceback.
+        sys.exit(2)

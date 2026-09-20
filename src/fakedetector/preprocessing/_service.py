@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import warnings
 from collections.abc import Callable
@@ -38,12 +39,27 @@ from fakedetector.lifecycle.artifacts import (
     WorkspaceArtifactRegistry,
 )
 from fakedetector.preprocessing._errors import PreprocessingError
-from fakedetector.preprocessing._media_tools import _FFmpegPreprocessingTool
+from fakedetector.preprocessing._media_tools import (
+    _decode_jpeg_coefficients,
+    _FFmpegPreprocessingTool,
+    _parse_jpeg,
+)
 from fakedetector.preprocessing._models import (
+    ForensicManifest,
+    ForensicRepresentation,
+    ImageCoordinates,
+    JpegCoefficientsDescriptor,
+    NumericArtifact,
+    OriginalImageFacts,
     PreparedArtifact,
     PreparedMedia,
+    RepresentationProvenance,
 )
-from fakedetector.preprocessing._requirements import PreprocessingRequirements
+from fakedetector.preprocessing._requirements import (
+    _FORENSIC_POLICY,
+    ForensicCapability,
+    PreprocessingRequirements,
+)
 
 _MULTI_FRAME_WARNING = (
     "Normalized image represents only the first displayed frame and does not cover "
@@ -112,8 +128,12 @@ class ImagePreprocessor:
         *,
         remaining_timeout_seconds: Callable[[], float] | None = None,
     ) -> PreparedMedia:
-        del requirements
         parameters = _parameters(request, ImageTechnicalParameters, self.media_type)
+        original = None
+        if requirements.forensic:
+            _check_remaining(remaining_timeout_seconds)
+            original = _original_image_facts(request)
+            _check_remaining(remaining_timeout_seconds)
         normalized: Image.Image | None = None
         artifacts: list[PreparedArtifact] = []
         try:
@@ -161,6 +181,48 @@ class ImagePreprocessor:
             "normalized": normalized_facts,
             "frame_scope": "first_frame",
         }
+        if original is not None:
+            original = OriginalImageFacts.model_validate(
+                {
+                    **original.model_dump(),
+                    "normalized_size": (normalized_facts["width"], normalized_facts["height"]),
+                    "orientation_applied": original.coordinates.orientation not in (None, 1),
+                }
+            )
+            representations = [
+                ForensicRepresentation(
+                    provenance=RepresentationProvenance(
+                        producer="fakedetector",
+                        producer_version="1",
+                        profile="original_image",
+                        profile_version="1",
+                    ),
+                    facts=original,
+                )
+            ]
+            if (
+                original.jpeg is not None
+                and ForensicCapability.JPEG_COEFFICIENTS in requirements.forensic
+            ):
+                planes = _prepare_jpeg_planes(
+                    request, original, artifacts, remaining_timeout_seconds
+                )
+                representations.append(
+                    ForensicRepresentation(
+                        provenance=RepresentationProvenance(
+                            producer="pyjpegio",
+                            producer_version="0.3.0",
+                            profile="jpeg_coefficients",
+                            profile_version="1",
+                        ),
+                        facts=JpegCoefficientsDescriptor(header=original.jpeg, planes=planes),
+                    )
+                )
+            metadata["forensic"] = ForensicManifest(
+                source_sha256=request.validated_file.sha256,
+                media_type=self.media_type,
+                representations=tuple(representations),
+            ).to_metadata()
         frame_count = parameters.frame_count or 1
         image_warnings = (_MULTI_FRAME_WARNING,) if frame_count > 1 else ()
         return _prepared_media(request, self.media_type, artifacts, metadata, image_warnings)
@@ -493,8 +555,12 @@ class PreprocessingDispatcher:
             active_requirements.validate_media(request.validated_file.media_type)
         except ValueError:
             raise PreprocessingError("invariant", "forensic_media_type") from None
-        if active_requirements.forensic:
-            # M1-A declares contracts only; later increments install the producers.
+        if active_requirements.forensic - {
+            ForensicCapability.ORIGINAL_IMAGE,
+            ForensicCapability.IMAGE_COORDINATES,
+            ForensicCapability.JPEG_STRUCTURE,
+            ForensicCapability.JPEG_COEFFICIENTS,
+        }:
             raise PreprocessingError("invariant", "forensic_producer_unavailable")
         if not request.artifact_budget.matches(
             self._config_snapshot,
@@ -546,6 +612,132 @@ def _operation_timeout(
 
 def _check_remaining(remaining_timeout_seconds: Callable[[], float] | None) -> None:
     _operation_timeout(remaining_timeout_seconds)
+
+
+def _original_image_facts(request: PreprocessingRequest) -> OriginalImageFacts:
+    """Observe the controlled source without copying arbitrary metadata into facts."""
+    try:
+        with request.source_file_ref.open_for_read() as stream:
+            signature = stream.read(2)
+            stream.seek(0)
+            structure = None
+            if signature == b"\xff\xd8":
+                data = stream.read(_FORENSIC_POLICY.jpeg_input_bytes + 1)
+                structure = _parse_jpeg(data)
+                digest = hashlib.sha256(data).hexdigest()
+                del data
+            else:
+                hasher = hashlib.sha256()
+                while chunk := stream.read(65536):
+                    hasher.update(chunk)
+                digest = hasher.hexdigest()
+            if digest != request.validated_file.sha256:
+                raise PreprocessingError("invariant", "forensic_source_identity")
+            stream.seek(0)
+            with Image.open(stream) as image:
+                frame = 1 if image.format == "PNG" and getattr(image, "default_image", False) else 0
+                image.seek(frame)
+                orientation: int | None = 1
+                valid_exif: int | None = None
+                try:
+                    with warnings.catch_warnings(record=True) as observed:
+                        warnings.simplefilter("always")
+                        value = image.getexif().get(274)
+                    if observed or (
+                        value is not None and (type(value) is not int or not 1 <= value <= 8)
+                    ):
+                        orientation = None
+                    elif type(value) is int:
+                        orientation = valid_exif = value
+                except (OSError, ValueError, SyntaxError):
+                    orientation = None
+                return OriginalImageFacts(
+                    format=(image.format or "unknown").lower(),
+                    source_mode=image.mode,
+                    source_frame=frame,
+                    exif_orientation=valid_exif,
+                    coordinates=ImageCoordinates(
+                        native_width=image.width,
+                        native_height=image.height,
+                        orientation=orientation,
+                    ),
+                    jpeg=structure.header if structure else None,
+                    quantization_tables=structure.tables if structure else (),
+                )
+    except IntakeSystemError:
+        raise PreprocessingError("source_read", "image_source") from None
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
+        raise PreprocessingError("decode", "image_original") from None
+
+
+def _prepare_jpeg_planes(
+    request: PreprocessingRequest,
+    original: OriginalImageFacts,
+    artifacts: list[PreparedArtifact],
+    remaining_timeout_seconds: Callable[[], float] | None,
+) -> tuple[NumericArtifact, ...]:
+    assert original.jpeg is not None
+    allocation = original.jpeg.preflight(request.validated_file.size_bytes)
+    planes = tuple(
+        NumericArtifact(artifact_id=f"jpeg_component_{i}", shape=(*shape, 8, 8), dtype="<i4")
+        for i, shape in enumerate(allocation.block_shapes)
+    )
+    try:
+        _FORENSIC_POLICY.check_artifacts(
+            request.artifact_budget,
+            total_count=len(artifacts) + len(planes),
+            additional_bytes=allocation.output_bytes,
+        )
+        for plane in planes:
+            reference = _register(
+                request.artifact_registry, plane.artifact_id, f"{plane.artifact_id}.raw"
+            )
+
+            def reserve(target: Path, size: int = plane.nbytes) -> None:
+                # The child can overwrite only this existing mmap extent. Charge all
+                # physical bytes through the shared budget before native execution.
+                with request.artifact_budget.open_output(target) as output:
+                    while size:
+                        count = min(size, 65536)
+                        output.write(bytes(count))
+                        size -= count
+
+            _with_artifact_path(request.artifact_registry, reference, reserve)
+            artifacts.append(
+                PreparedArtifact(
+                    artifact_id=plane.artifact_id,
+                    artifact_type="jpeg_coefficients",
+                    artifact_ref=reference,
+                    format="forensic_raw",
+                )
+            )
+        _check_remaining(remaining_timeout_seconds)
+        request.source_file_ref.with_local_source_path(
+            lambda source: _decode_jpeg_coefficients(
+                source,
+                request.validated_file.sha256,
+                timeout_seconds=_operation_timeout(remaining_timeout_seconds),
+            )
+        )
+        for plane, artifact in zip(planes, artifacts[-len(planes) :], strict=True):
+
+            def validate_extent(target: Path, descriptor: NumericArtifact = plane) -> None:
+                descriptor.validate_byte_length(target.stat().st_size)
+
+            _with_artifact_path(
+                request.artifact_registry,
+                artifact.artifact_ref,
+                validate_extent,
+            )
+    except _GeneratedArtifactLimitError:
+        raise PreprocessingError("resource_limit", "jpeg_artifact_preflight") from None
+    except (OSError, _GeneratedArtifactWriteError):
+        raise PreprocessingError("artifact_write", "jpeg_coefficients") from None
+    except ValueError:
+        raise PreprocessingError("invariant", "jpeg_artifact_extent") from None
+    except IntakeSystemError:
+        raise PreprocessingError("source_read", "jpeg_source") from None
+    return planes
 
 
 def _decode_normalized_image(source_ref: PreparedSourceRef) -> Image.Image:

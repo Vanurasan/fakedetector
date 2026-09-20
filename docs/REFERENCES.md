@@ -367,10 +367,11 @@ Apache-совместимую зависимость. Для конкретно�
 
 ## Исследование JPEG-зависимостей Macro 1 — 2026-09-20
 
-Категория: `RUNTIME_LIBRARY`, пока **исследовательские кандидаты, не допуск
-в runtime проекта**. Решение владельца и последовательность реализации находятся
-в `ROADMAP.md`, Macro 1 G1. `pyproject.toml`, `uv.lock` и проектная `.venv`
-в этом проходе не менялись. Модели, веса и datasets не использовались.
+Категория: `RUNTIME_LIBRARY`. Ниже сохранены результаты исследовательского
+Pass 1 от 2026-09-20; тогда зависимости проекта не менялись. По принятому G1
+в M1-B от 2026-09-21 интегрирован только `pyjpegio==0.3.0`, см. запись ниже.
+Решение владельца и последовательность реализации находятся в `ROADMAP.md`.
+Модели, веса и datasets не использовались.
 
 ### pyjpegio 0.3.0
 
@@ -472,6 +473,51 @@ sampling-factor blocks. На этом основано разделение вы
 и не доказательство ограничения всего native RSS; вызов `pyjpegio` в M1-A
 отсутствует. Принятый выбор зависимости и ограничения описаны в
 `CONTRACTS.md` §7.5, статус реализации — в `ROADMAP.md`.
+
+### Интеграция pyjpegio 0.3.0 в M1-B — 2026-09-21
+
+`uv add pyjpegio==0.3.0` добавил точный runtime pin и штатно обновил `uv.lock`.
+Windows CPython 3.12 использует тот же wheel и SHA-256, что исследованы выше;
+Apache-2.0 wrapper и bundled libjpeg-turbo 3.2.0 notices не изменились.
+При распространении wheel/сборки зависимости необходимо сохранять `LICENSE`,
+`NOTICE`, libjpeg-turbo `LICENSE.md` и `README.ijg`; разрешение коммерческого
+использования не отменяет обязанностей при redistribution. FakeDetector не
+копирует исходники wrapper/codec и не выдаёт библиотеку за forensic method.
+
+Граница адаптации — собственный bounded marker parser, resource preflight,
+изолированный child и typed raw coefficient artifacts. Реализованный контракт
+находится в `CONTRACTS.md` §7.5. По установленному `_backend/jstruct.cpp`
+подтверждено: `quant_tables` — компактный список в порядке возрастания slot IDs,
+а selectors компонентов сохраняют исходные IDs; fixture с IDs 0/3 проходит.
+Missing EOI отвергается до native decode; warning при повреждённой entropy
+приводит к отказу без сохранения raw stderr.
+
+Для Windows child проверен механизм CPython 3.12.10
+[getpath.py](https://github.com/python/cpython/blob/v3.12.10/Modules/getpath.py):
+реальный interpreter с явно заданным `__PYVENV_LAUNCHER__` сохраняет venv,
+обходя дополнительный процесс redirector. PID проверен относительно Popen;
+код CPython не копировался. NumPy native pool ограничен одним OpenBLAS thread.
+Это частная граница поддерживаемого CPython 3.12, не обещание совместимости
+с произвольными Python launchers.
+
+Наблюдение Windows `GetProcessMemoryInfo(PeakWorkingSetSize)` после reap
+реального decoder PID, один запуск каждого generated fixture:
+
+| JPEG | MCU-padded coefficients | Raw int32 bytes | Peak working set, bytes |
+|---|---:|---:|---:|
+| RGB 17×17 baseline 4:2:0 | 1536 | 4352 | 69 025 792 |
+| RGB 1664×1664 progressive 4:2:0 | 4 153 344 | 16 613 376 | 72 519 680 |
+| Grayscale 2048×2048 baseline | 4 194 304 | 16 777 216 | 78 290 944 |
+
+Peak pagefile/commit counters: 59 215 872 / 59 105 280 / 59 338 752 байт
+соответственно. Это наблюдения полной среды child, включая imports; они не
+являются верхней границей для любых данных. При обычном NumPy thread pool
+наблюдалось около 0.8 GB commit, что обосновывает явный лимит threads.
+Ограничение коэффициентов и output не является process-wide hard RAM sandbox;
+Windows Job Object RAM quota не реализована. Риск native allocations/дефектов,
+общего RSS с parent и нескольких одновременных задач перенесён в M1-G.
+Installed-wheel проверка M1-B встроена в `scripts/verify_release_package.py`;
+strict clean-tree certification остаётся отдельной проверкой M1-G.
 
 ## Общие библиотеки и инструменты
 

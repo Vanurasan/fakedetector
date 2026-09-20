@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +26,8 @@ ProcessInfrastructurePhase = Literal[
     "stdout_read",
     "stdout_write",
     "stdout_close",
+    "stderr_read",
+    "stderr_close",
     "wait",
     "termination",
 ]
@@ -55,10 +57,10 @@ class ProcessTimeoutError(Exception):
 
 
 class ProcessOutputLimitError(Exception):
-    """Report bounded stdout overflow only after the child has been reaped."""
+    """Report bounded output overflow only after the child has been reaped."""
 
     def __init__(self) -> None:
-        super().__init__("Subprocess stdout exceeded its limit.")
+        super().__init__("Subprocess output exceeded its limit.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +69,7 @@ class ProcessResult:
 
     return_code: int
     stdout: bytes | None
+    stderr: bytes | None = None
 
 
 class _ProcessTerminationBarrier:
@@ -118,8 +121,10 @@ def run_bounded_process(
     timeout_seconds: float,
     stdout_limit_bytes: int | None = None,
     stdout_sink: IO[bytes] | None = None,
+    stderr_limit_bytes: int | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> ProcessResult:
-    """Run trusted argv with discarded, captured, or streamed bounded stdout."""
+    """Run trusted argv with bounded stdout and optional concurrently drained stderr."""
     argv = _validated_argv(arguments)
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be greater than zero")
@@ -127,11 +132,17 @@ def run_bounded_process(
         raise ValueError("stdout_limit_bytes must not be negative")
     if stdout_sink is not None and stdout_limit_bytes is None:
         raise ValueError("stdout sink requires an explicit byte limit")
+    if stderr_limit_bytes is not None and (
+        type(stderr_limit_bytes) is not int or stderr_limit_bytes < 0 or stdout_limit_bytes is None
+    ):
+        raise ValueError("stderr capture requires nonnegative limits for both output streams")
 
     process = _start_process(
         argv,
         cwd=cwd,
         capture_stdout=stdout_limit_bytes is not None,
+        capture_stderr=stderr_limit_bytes is not None,
+        environment=environment,
     )
     execution_error: BaseException | None = None
     try:
@@ -143,18 +154,25 @@ def run_bounded_process(
                 timeout_seconds=timeout_seconds,
                 stdout_limit_bytes=stdout_limit_bytes,
                 stdout_sink=stdout_sink,
+                stderr_limit_bytes=stderr_limit_bytes,
             )
     except BaseException as error:
         execution_error = _stop_after_execution_failure(process, error)
 
     close_error: BaseException | None = None
-    if process.stdout is not None:
+    for stream, phase in ((process.stdout, "stdout_close"), (process.stderr, "stderr_close")):
+        if stream is None:
+            continue
         try:
-            process.stdout.close()
+            stream.close()
         except OSError:
-            close_error = ProcessInfrastructureError("stdout_close")
+            if close_error is None:
+                close_error = ProcessInfrastructureError(
+                    "stdout_close" if phase == "stdout_close" else "stderr_close"
+                )
         except BaseException as error:
-            close_error = error
+            if close_error is None or not isinstance(error, Exception):
+                close_error = error
 
     # Preserve interruption and R2 termination/read/write precedence over close failures.
     if execution_error is not None and not isinstance(execution_error, Exception):
@@ -173,6 +191,7 @@ def run_bounded_process(
         "termination",
         "stdout_read",
         "stdout_write",
+        "stderr_read",
     }:
         raise execution_error
     if close_error is not None:
@@ -198,6 +217,8 @@ def _start_process(
     *,
     cwd: Path,
     capture_stdout: bool,
+    capture_stderr: bool,
+    environment: Mapping[str, str] | None,
 ) -> subprocess.Popen[bytes]:
     try:
         return subprocess.Popen(
@@ -205,8 +226,9 @@ def _start_process(
             shell=False,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE if capture_stderr else subprocess.DEVNULL,
             cwd=cwd,
+            env=environment,
         )
     except OSError:
         raise ProcessInfrastructureError("start") from None
@@ -232,6 +254,7 @@ def _wait_with_bounded_capture(
     timeout_seconds: float,
     stdout_limit_bytes: int,
     stdout_sink: IO[bytes] | None,
+    stderr_limit_bytes: int | None = None,
 ) -> ProcessResult:
     stdout_pipe = process.stdout
     assert stdout_pipe is not None
@@ -241,13 +264,26 @@ def _wait_with_bounded_capture(
         captured=bytearray() if stdout_sink is None else None,
     )
     _make_stdout_nonblocking(stdout_pipe)
+    stderr_target = None
+    if stderr_limit_bytes is not None:
+        assert process.stderr is not None
+        stderr_target = _BoundedStdoutTarget(stderr_limit_bytes, None, bytearray())
+        try:
+            _make_stdout_nonblocking(process.stderr)
+        except ProcessInfrastructureError:
+            raise ProcessInfrastructureError("stderr_read") from None
     return_code = _capture_until_complete(
         process,
         stdout_pipe,
         output=output,
         timeout_seconds=timeout_seconds,
+        stderr_output=stderr_target,
     )
-    return ProcessResult(return_code=return_code, stdout=output.result())
+    return ProcessResult(
+        return_code=return_code,
+        stdout=output.result(),
+        stderr=stderr_target.result() if stderr_target is not None else None,
+    )
 
 
 @dataclass(slots=True)
@@ -293,10 +329,12 @@ def _capture_until_complete(
     *,
     output: _BoundedStdoutTarget,
     timeout_seconds: float,
+    stderr_output: _BoundedStdoutTarget | None = None,
 ) -> int:
     execution_deadline = _monotonic() + timeout_seconds
     stdout_deadline: float | None = None
     stdout_eof = False
+    stderr_eof = stderr_output is None
 
     while True:
         if not stdout_eof:
@@ -304,16 +342,24 @@ def _capture_until_complete(
                 stdout_pipe,
                 output=output,
             )
+        if not stderr_eof:
+            assert process.stderr is not None and stderr_output is not None
+            try:
+                stderr_eof = _read_available_stdout(process.stderr, output=stderr_output)
+            except ProcessInfrastructureError:
+                raise ProcessInfrastructureError("stderr_read") from None
 
         return_code = _poll_process(process)
         now = _monotonic()
         if return_code is not None:
-            if stdout_eof:
+            if stdout_eof and stderr_eof:
                 return _confirm_reaped(process)
             if stdout_deadline is None:
                 stdout_deadline = now + _STDOUT_EOF_WAIT_SECONDS
             elif now >= stdout_deadline:
-                raise ProcessInfrastructureError("stdout_read") from None
+                raise ProcessInfrastructureError(
+                    "stdout_read" if not stdout_eof else "stderr_read"
+                ) from None
         elif now >= execution_deadline:
             raise ProcessTimeoutError() from None
 

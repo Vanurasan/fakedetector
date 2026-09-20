@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from io import UnsupportedOperation
 from pathlib import Path, PurePath
 from types import MappingProxyType
-from typing import BinaryIO, ClassVar, Protocol, Self, cast
+from typing import TYPE_CHECKING, BinaryIO, ClassVar, Protocol, Self, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -23,10 +23,14 @@ from fakedetector.domain import (
     ValidatedFileDescriptor,
     VideoTechnicalParameters,
 )
-from fakedetector.preprocessing._models import ForensicManifest, _forensic_manifest
+from fakedetector.preprocessing._models import ForensicManifest, NumericArtifact, _forensic_manifest
 from fakedetector.preprocessing._requirements import PreprocessingRequirements
 
 _SAFE_REASON_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
 
 
 class _UnderlyingBinaryStream(Protocol):
@@ -296,6 +300,25 @@ class AnalyzerRequest:
     @property
     def forensic(self) -> ForensicManifest | None:
         return _forensic_manifest(self.metadata)
+
+    def read_numeric(self, descriptor: NumericArtifact) -> NDArray[np.generic]:
+        """Resolve only a manifest-bound artifact; bytes provide immutable storage."""
+        import numpy as np
+
+        manifest = self.forensic
+        if manifest is None or descriptor not in tuple(
+            item
+            for representation in manifest.representations
+            for item in representation.numeric_artifacts()
+        ):
+            raise ValueError("numeric descriptor is not bound to this request")
+        artifact = next(a for a in self.artifacts if a.artifact_id == descriptor.artifact_id)
+        with artifact.content.open_for_read() as stream:
+            descriptor.validate_byte_length(stream.seek(0, 2))
+            stream.seek(0)
+            data = stream.read(descriptor.nbytes + 1)
+        descriptor.validate_byte_length(len(data))
+        return np.frombuffer(data, dtype=descriptor.dtype).reshape(descriptor.shape)
 
 
 class Analyzer(Protocol):

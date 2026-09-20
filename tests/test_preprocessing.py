@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import shutil
 import subprocess
 import wave
@@ -39,8 +41,13 @@ from fakedetector.intake.temporary_input import (
 )
 from fakedetector.lifecycle.artifacts import WorkspaceArtifactRef, WorkspaceArtifactRegistry
 from fakedetector.preprocessing._errors import PreprocessingError
-from fakedetector.preprocessing._media_tools import _FFmpegPreprocessingTool
-from fakedetector.preprocessing._models import PreparedArtifact, PreparedMedia
+from fakedetector.preprocessing._media_tools import _FFmpegPreprocessingTool, _parse_jpeg
+from fakedetector.preprocessing._models import (
+    JpegCoefficientsDescriptor,
+    OriginalImageFacts,
+    PreparedArtifact,
+    PreparedMedia,
+)
 from fakedetector.preprocessing._requirements import ForensicCapability, PreprocessingRequirements
 from fakedetector.preprocessing._service import (
     AudioPreprocessor,
@@ -1348,7 +1355,7 @@ def test_dispatcher_rejects_budget_from_a_different_snapshot_before_io(
 @pytest.mark.parametrize(
     "capability,phase",
     [
-        (ForensicCapability.JPEG_COEFFICIENTS, "forensic_producer_unavailable"),
+        (ForensicCapability.RESIDUAL_RASTER, "forensic_producer_unavailable"),
         (ForensicCapability.AUDIO_SAMPLES, "forensic_media_type"),
     ],
 )
@@ -1559,3 +1566,505 @@ def _run_ffmpeg(arguments: list[str]) -> None:
         stderr=subprocess.DEVNULL,
         timeout=15,
     )
+
+
+def _jpeg_bytes(
+    *,
+    mode: str = "RGB",
+    size: tuple[int, int] = (17, 17),
+    progressive: bool = False,
+    subsampling: int = 2,
+) -> bytes:
+    output = io.BytesIO()
+    with Image.new(mode, size, 80 if mode == "L" else (40, 80, 120)) as image:
+        image.save(output, "JPEG", progressive=progressive, subsampling=subsampling)
+    return output.getvalue()
+
+
+def _forensic_case(tmp_path: Path, data: bytes) -> PreparedCase:
+    source = tmp_path / "изображение.jpg"
+    source.write_bytes(data)
+    descriptor = _image_descriptor(width=17, height=17, image_format="JPEG", color_mode="RGB")
+    descriptor = descriptor.model_copy(
+        update={"sha256": hashlib.sha256(data).hexdigest(), "size_bytes": len(data)}
+    )
+    return _case(tmp_path, source, descriptor)
+
+
+_JPEG_DEMAND = PreprocessingRequirements(forensic=frozenset({ForensicCapability.JPEG_COEFFICIENTS}))
+
+
+@pytest.mark.parametrize(
+    "mode,progressive,subsampling",
+    [
+        ("RGB", False, 0),
+        ("RGB", False, 1),
+        ("RGB", False, 2),
+        ("RGB", True, 2),
+        ("L", False, 0),
+        ("L", True, 0),
+    ],
+)
+def test_jpeg_native_representation(
+    tmp_path: Path, mode: str, progressive: bool, subsampling: int
+) -> None:
+    data = _jpeg_bytes(mode=mode, progressive=progressive, subsampling=subsampling)
+    structure = _parse_jpeg(data)
+    case = _forensic_case(tmp_path, data)
+    try:
+        prepared = ImagePreprocessor(ImagePreprocessingConfig()).prepare(case.request, _JPEG_DEMAND)
+        manifest = prepared.forensic
+        assert manifest is not None
+        original = manifest.representations[0].facts
+        coefficients = manifest.representations[1].facts
+        assert isinstance(original, OriginalImageFacts)
+        assert isinstance(coefficients, JpegCoefficientsDescriptor)
+        assert original.jpeg == structure.header
+        assert original.quantization_tables == structure.tables
+        assert original.normalized_size == (17, 17)
+        assert coefficients.decode_quality == "clean"
+        for plane, artifact in zip(coefficients.planes, prepared.artifacts[1:], strict=True):
+            raw = case.registry.with_local_artifact_path(artifact.artifact_ref, Path.read_bytes)
+            assert len(raw) == plane.nbytes
+            import numpy as np
+
+            values = np.frombuffer(raw, dtype="<i4").reshape(plane.shape)
+            assert np.count_nonzero(values[:, :, 0, 0]) > 0
+            assert np.count_nonzero(values[:, :, 1:, :]) == 0
+        assert not _contains_path(prepared.metadata)
+    finally:
+        case.cleanup()
+
+
+def _segment(marker: int, payload: bytes) -> bytes:
+    return bytes((255, marker)) + (len(payload) + 2).to_bytes(2, "big") + payload
+
+
+def test_jpeg_sparse_quantization_selectors(tmp_path):
+    data = _jpeg_bytes()
+    position = data.index(b"\xff\xdb", data.index(b"\xff\xdb") + 2)
+    data = data[: position + 4] + b"\x03" + data[position + 5 :]
+    data = _replace_segment(data, 0xC0, lambda p: p[:11] + b"\x03" + p[12:14] + b"\x03")
+    structure = _parse_jpeg(data)
+    assert tuple(t.table_id for t in structure.tables) == (0, 3)
+    case = _forensic_case(tmp_path, data)
+    try:
+        prepared = ImagePreprocessor(ImagePreprocessingConfig()).prepare(case.request, _JPEG_DEMAND)
+        assert len(prepared.artifacts) == 4
+    finally:
+        case.cleanup()
+
+
+def _replace_segment(data: bytes, marker: int, transform: Callable[[bytes], bytes]) -> bytes:
+    start = data.index(bytes((255, marker)))
+    length = int.from_bytes(data[start + 2 : start + 4], "big")
+    return (
+        data[:start]
+        + _segment(marker, transform(data[start + 4 : start + 2 + length]))
+        + data[start + 2 + length :]
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation,kind",
+    [
+        (lambda d: d[:1], "decode"),
+        (lambda d: d[:-2], "decode"),
+        (lambda d: d + b"trailing", "decode"),
+        (lambda d: b"\xff\xd8\xff\xdb\x00", "decode"),
+        (lambda d: b"\xff\xd8\xff\xdb\x00\x01", "decode"),
+        (lambda d: _replace_segment(d, 0xC0, lambda p: p[:-1]), "decode"),
+        (lambda d: _replace_segment(d, 0xDB, lambda p: p[:-1]), "decode"),
+        (lambda d: _replace_segment(d, 0xDB, lambda p: bytes((2,)) + p[1:]) + b"x", "decode"),
+        (lambda d: _replace_segment(d, 0xDB, lambda p: p[:1] + bytes(64)), "decode"),
+        (lambda d: _replace_segment(d, 0xC0, lambda p: p[:7] + b"\x00" + p[8:]), "decode"),
+        (lambda d: _replace_segment(d, 0xC0, lambda p: p[:9] + p[6:7] + p[10:]), "decode"),
+        (lambda d: _replace_segment(d, 0xC0, lambda p: b"\x0c" + p[1:]), "decode"),
+        (
+            lambda d: _replace_segment(d, 0xC0, lambda p: p[:1] + b"\xff\xff\xff\xff" + p[5:]),
+            "resource_limit",
+        ),
+        (lambda d: d[:2] + _segment(0xFE, b"") * 256 + d[2:], "resource_limit"),
+        (lambda d: d[:2] + _segment(0xE1, bytes(65530)) * 17 + d[2:], "resource_limit"),
+        (lambda d: d[:2] + _segment(0xDB, bytes((0,)) + bytes((1,)) * 64) + d[2:], "decode"),
+    ],
+)
+def test_jpeg_malformed_preflight_never_invokes_child(tmp_path, monkeypatch, mutation, kind):
+    invoked = []
+    monkeypatch.setattr(
+        "fakedetector.preprocessing._service._decode_jpeg_coefficients",
+        lambda *a, **k: invoked.append(True),
+    )
+    case = _forensic_case(tmp_path, mutation(_jpeg_bytes()))
+    try:
+        with pytest.raises(PreprocessingError) as error:
+            ImagePreprocessor(ImagePreprocessingConfig()).prepare(case.request, _JPEG_DEMAND)
+        assert error.value.kind == kind
+        assert not invoked
+        assert case.registry.cleanup_obligations() == ()
+    finally:
+        case.cleanup()
+
+
+@pytest.mark.parametrize("width,accepted", [(2047, True), (2048, True), (2049, False)])
+def test_jpeg_native_coefficient_policy_boundary(tmp_path, monkeypatch, width, accepted):
+    data = _jpeg_bytes(mode="L", size=(width, 2048))
+    if not accepted:
+        invoked = []
+        monkeypatch.setattr(
+            "fakedetector.preprocessing._service._decode_jpeg_coefficients",
+            lambda *a, **k: invoked.append(True),
+        )
+        case = _forensic_case(tmp_path, data)
+        try:
+            with pytest.raises(PreprocessingError) as error:
+                ImagePreprocessor(ImagePreprocessingConfig()).prepare(case.request, _JPEG_DEMAND)
+            assert error.value.phase == "jpeg_preflight"
+            assert not invoked
+        finally:
+            case.cleanup()
+        return
+    estimate = _parse_jpeg(data).header.preflight(len(data))
+    assert estimate.native_coefficients == 1 << 22
+    case = _forensic_case(tmp_path, data)
+    try:
+        prepared = ImagePreprocessor(ImagePreprocessingConfig()).prepare(case.request, _JPEG_DEMAND)
+        assert prepared.forensic.representations[1].facts.planes[0].nbytes == 16 << 20
+    finally:
+        case.cleanup()
+
+
+@pytest.mark.parametrize("orientation", [None, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+def test_original_image_orientation_and_nonjpeg_demand(tmp_path, monkeypatch, orientation):
+    invoked = []
+    monkeypatch.setattr(
+        "fakedetector.preprocessing._service._decode_jpeg_coefficients",
+        lambda *a, **k: invoked.append(True),
+    )
+    buffer = io.BytesIO()
+    with Image.new("RGB", (3, 2)) as image:
+        image.putdata(
+            [(255, 0, 0), (0, 255, 0), (0, 0, 255), (5, 10, 15), (20, 25, 30), (35, 40, 45)]
+        )
+        exif = Image.Exif()
+        if orientation is not None:
+            exif[274] = orientation
+        image.save(buffer, "PNG", exif=exif)
+    case = _forensic_case(tmp_path, buffer.getvalue())
+    try:
+        prepared = ImagePreprocessor(ImagePreprocessingConfig()).prepare(case.request, _JPEG_DEMAND)
+        facts = prepared.forensic.representations[0].facts
+        assert facts.jpeg is None
+        assert not invoked and len(prepared.artifacts) == 1
+        expected_orientation = (
+            1 if orientation is None else orientation if 1 <= orientation <= 8 else None
+        )
+        assert facts.coordinates.orientation == expected_orientation
+        assert facts.exif_orientation == (orientation if orientation in range(1, 9) else None)
+        assert facts.orientation_applied == (orientation in range(2, 9))
+        assert facts.normalized_size == ((2, 3) if orientation in range(5, 9) else (3, 2))
+        with Image.open(io.BytesIO(buffer.getvalue())) as source:
+            from PIL import ImageOps
+
+            expected = ImageOps.exif_transpose(source).convert("RGB")
+            raw = case.registry.with_local_artifact_path(
+                prepared.artifacts[0].artifact_ref, Path.read_bytes
+            )
+            with Image.open(io.BytesIO(raw)) as normalized:
+                assert normalized.tobytes() == expected.tobytes()
+        if expected_orientation is None:
+            with pytest.raises(ValueError, match="unknown"):
+                facts.coordinates.normalized_bbox(0, 0, 3, 2)
+        else:
+            assert facts.coordinates.normalized_bbox(0, 0, 3, 2) == (0, 0, 1, 1)
+    finally:
+        case.cleanup()
+
+
+@pytest.mark.parametrize(
+    "failure,kind,phase",
+    [
+        (ProcessResult(0, b"{}", b"native private path warning"), "decode", "jpeg_native_warning"),
+        (ProcessResult(2, b"", b"private error"), "decode", "jpeg_native_error"),
+        (ProcessResult(-11, b"", b""), "decode", "jpeg_native_error"),
+        (ProcessResult(0, b"{}", b""), "infrastructure", "jpeg_native_protocol"),
+        (ProcessTimeoutError(), "media_tool", "jpeg_native_timeout"),
+    ],
+)
+def test_jpeg_native_failures_are_safe_and_owned(tmp_path, monkeypatch, failure, kind, phase):
+    def failed_child(*args, **kwargs):
+        assert kwargs["stdout_limit_bytes"] == kwargs["stderr_limit_bytes"] == 4096
+        assert set(kwargs["environment"]) <= {
+            "SystemRoot",
+            "SYSTEMROOT",
+            "WINDIR",
+            "windir",
+            "TEMP",
+            "TMP",
+            "__PYVENV_LAUNCHER__",
+            "OPENBLAS_NUM_THREADS",
+        }
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
+
+    monkeypatch.setattr("fakedetector.preprocessing._media_tools.run_bounded_process", failed_child)
+    case = _forensic_case(tmp_path, _jpeg_bytes())
+    try:
+        with pytest.raises(PreprocessingError) as error:
+            ImagePreprocessor(ImagePreprocessingConfig()).prepare(case.request, _JPEG_DEMAND)
+        assert (error.value.kind, error.value.phase) == (kind, phase)
+        assert "private" not in str(error.value)
+        assert len(case.registry.cleanup_obligations()) == 4
+    finally:
+        case.cleanup()
+    assert not (tmp_path / "temp" / case.request.analysis_id).exists()
+
+
+def test_jpeg_unicode_workspace(tmp_path):
+    unicode_root = tmp_path / "кириллица 雪"
+    unicode_root.mkdir()
+    case = _forensic_case(unicode_root, _jpeg_bytes())
+    before = Path.cwd()
+    try:
+        prepared = ImagePreprocessor(ImagePreprocessingConfig()).prepare(case.request, _JPEG_DEMAND)
+        assert len(prepared.artifacts) == 4
+        assert Path.cwd() == before
+    finally:
+        case.cleanup()
+
+
+def test_default_demand_never_invokes_jpeg_child(tmp_path, monkeypatch):
+    invoked = []
+    monkeypatch.setattr(
+        "fakedetector.preprocessing._service._decode_jpeg_coefficients",
+        lambda *a, **k: invoked.append(True),
+    )
+    case = _forensic_case(tmp_path, _jpeg_bytes())
+    try:
+        prepared = ImagePreprocessor(ImagePreprocessingConfig()).prepare(
+            case.request, PreprocessingRequirements()
+        )
+        assert prepared.forensic is None and len(prepared.artifacts) == 1 and not invoked
+    finally:
+        case.cleanup()
+
+
+@pytest.mark.parametrize(
+    "script,phase",
+    [
+        ("import os; os._exit(7)", "jpeg_native_error"),
+        ("import os; os.write(1,b'x'*8192)", "jpeg_native_output"),
+        ("import os; os.write(2,b'x'*8192)", "jpeg_native_output"),
+        ("import time; time.sleep(10)", "jpeg_native_timeout"),
+    ],
+)
+def test_jpeg_real_child_crash_overflow_timeout_cleanup(tmp_path, monkeypatch, script, phase):
+    from fakedetector.core._bounded_process import run_bounded_process
+
+    def replacement(arguments, **kwargs):
+        kwargs["timeout_seconds"] = 0.2 if phase == "jpeg_native_timeout" else 5
+        return run_bounded_process([arguments[0], "-I", "-c", script], **kwargs)
+
+    monkeypatch.setattr("fakedetector.preprocessing._media_tools.run_bounded_process", replacement)
+    case = _forensic_case(tmp_path, _jpeg_bytes())
+    try:
+        with pytest.raises(PreprocessingError) as error:
+            ImagePreprocessor(ImagePreprocessingConfig()).prepare(case.request, _JPEG_DEMAND)
+        assert error.value.phase == phase
+        assert len(case.registry.cleanup_obligations()) == 4
+    finally:
+        case.cleanup()
+    assert not (tmp_path / "temp" / case.request.analysis_id).exists()
+
+
+def test_jpeg_corrupt_entropy_native_warning_is_rejected(tmp_path):
+    from fakedetector.preprocessing._models import ImageCoordinates
+    from fakedetector.preprocessing._service import _prepare_jpeg_planes
+
+    data = _jpeg_bytes()
+    sos = data.index(b"\xff\xda")
+    entropy = sos + 2 + int.from_bytes(data[sos + 2 : sos + 4], "big")
+    data = data[:entropy] + b"\x00\xff\xd9"
+    structure = _parse_jpeg(data)  # Structurally valid; entropy is the decoder's job.
+    case = _forensic_case(tmp_path, data)
+    try:
+        original = OriginalImageFacts(
+            format="jpeg",
+            jpeg=structure.header,
+            coordinates=ImageCoordinates(native_width=17, native_height=17),
+        )
+        with pytest.raises(PreprocessingError) as error:
+            _prepare_jpeg_planes(case.request, original, [], None)
+        assert error.value.phase == "jpeg_native_warning"
+        assert len(case.registry.cleanup_obligations()) == 3
+    finally:
+        case.cleanup()
+
+
+def test_jpeg_budget_rejection_precedes_native_child(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    invoked = []
+    monkeypatch.setattr(
+        "fakedetector.preprocessing._service._decode_jpeg_coefficients",
+        lambda *a, **k: invoked.append(True),
+    )
+    case = _forensic_case(tmp_path, _jpeg_bytes(mode="L", size=(1024, 1024)))
+    request = replace(
+        case.request, artifact_budget=_artifact_budget(MediaType.IMAGE, max_size_mb=1)
+    )
+    try:
+        with pytest.raises(PreprocessingError) as error:
+            ImagePreprocessor(ImagePreprocessingConfig()).prepare(request, _JPEG_DEMAND)
+        assert error.value.phase == "jpeg_artifact_preflight"
+        assert not invoked and len(case.registry.cleanup_obligations()) == 1
+    finally:
+        case.cleanup()
+
+
+def test_jpeg_runner_owns_actual_decoder_pid_and_venv(tmp_path, monkeypatch):
+    import json
+    import sys
+
+    import fakedetector.core._bounded_process as process_module
+    from fakedetector.preprocessing._media_tools import _decode_jpeg_coefficients
+
+    processes = []
+    real_popen = subprocess.Popen
+
+    def record(*args, **kwargs):
+        child = real_popen(*args, **kwargs)
+        processes.append(child)
+        return child
+
+    monkeypatch.setattr(process_module.subprocess, "Popen", record)
+
+    def probe(arguments, **kwargs):
+        result = process_module.run_bounded_process(
+            [
+                arguments[0],
+                "-I",
+                "-c",
+                "import os,sys,json,jpegio; "
+                "print(json.dumps([os.getpid(),sys.prefix,jpegio.__file__]))",
+            ],
+            **kwargs,
+        )
+        pid, prefix, origin = json.loads(result.stdout)
+        assert pid == processes[0].pid
+        assert Path(prefix) == Path(sys.prefix)
+        assert Path(origin).is_relative_to(Path(sys.prefix))
+        assert processes[0].poll() == 0
+        return ProcessResult(
+            0, b'{"version":1,"status":"clean","source_sha256":"' + b"0" * 64 + b'"}', b""
+        )
+
+    monkeypatch.setattr("fakedetector.preprocessing._media_tools.run_bounded_process", probe)
+    _decode_jpeg_coefficients(tmp_path / "source", "0" * 64, timeout_seconds=5)
+
+
+@pytest.mark.parametrize(
+    "variant", ["valid", "wide_integer", "overflow", "float", "shape", "component", "table"]
+)
+def test_jpeg_child_numeric_layout_and_lossless_cast(tmp_path, monkeypatch, capsys, variant):
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    import fakedetector.preprocessing._media_tools as media
+
+    data = _jpeg_bytes(mode="L")
+    (tmp_path / "source").write_bytes(data)
+    target = tmp_path / "jpeg_component_0.raw"
+    target.write_bytes(bytes(3 * 3 * 256))
+    structure = _parse_jpeg(data)
+    plane = np.arange(
+        24 * 24, dtype=np.int64 if variant in {"wide_integer", "overflow"} else np.int32
+    ).reshape(24, 24)
+    if variant == "overflow":
+        plane[-1, -1] = 1 << 32
+    elif variant == "float":
+        plane = plane.astype(float)
+    elif variant == "shape":
+        plane = plane[:-1]
+    component = structure.header.components[0]
+    native = SimpleNamespace(
+        coef_arrays=[plane],
+        comp_info=[
+            SimpleNamespace(
+                component_id=component.component_id,
+                h_samp_factor=0 if variant == "component" else component.horizontal_sampling,
+                v_samp_factor=component.vertical_sampling,
+                quant_tbl_no=0,
+            )
+        ],
+        quant_tables=[np.array(structure.tables[0].values).reshape(8, 8)],
+    )
+    if variant == "table":
+        native.quant_tables[0][0, 0] += 1
+    monkeypatch.setattr(media, "Path", lambda name: tmp_path / name)
+    monkeypatch.setattr(
+        media.importlib, "import_module", lambda name: SimpleNamespace(read=lambda source: native)
+    )
+    if variant not in {"valid", "wide_integer"}:
+        with pytest.raises(ValueError):
+            media._jpeg_child(hashlib.sha256(data).hexdigest())
+        assert target.read_bytes() == bytes(3 * 3 * 256)
+        return
+    media._jpeg_child(hashlib.sha256(data).hexdigest())
+    actual = np.frombuffer(target.read_bytes(), dtype="<i4").reshape(3, 3, 8, 8)
+    for y in range(3):
+        for x in range(3):
+            np.testing.assert_array_equal(actual[y, x], plane[y * 8 : y * 8 + 8, x * 8 : x * 8 + 8])
+    response = capsys.readouterr().out
+    assert len(response) < 200 and "clean" in response and "coef_arrays" not in response
+
+
+def test_jpeg_unresolved_ownership_preserves_cleanup_barrier(tmp_path, monkeypatch):
+    from fakedetector.core._bounded_process import ProcessInfrastructureError
+    from fakedetector.preprocessing._media_tools import _decode_jpeg_coefficients
+
+    class Barrier:
+        def try_confirm_safe(self):
+            return False
+
+    barrier = Barrier()
+
+    def unresolved(*args, **kwargs):
+        raise ProcessInfrastructureError("termination", _cleanup_safety_barrier=barrier)
+
+    monkeypatch.setattr("fakedetector.preprocessing._media_tools.run_bounded_process", unresolved)
+    with pytest.raises(PreprocessingError) as error:
+        _decode_jpeg_coefficients(tmp_path / "source", "0" * 64, timeout_seconds=1)
+    assert error.value.kind == "infrastructure"
+    assert error.value._cleanup_safety_barrier is barrier
+    assert not barrier.try_confirm_safe()
+
+
+def test_jpeg_partial_artifact_failure_is_registered_and_cleaned(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    from fakedetector._generated_artifact_budget import _GeneratedArtifactWriteError
+
+    real_output = _GeneratedArtifactBudget.open_output
+
+    @contextmanager
+    def interrupted(budget, target):
+        with real_output(budget, target) as output:
+            if target.suffix == ".raw":
+                output.write(b"partial")
+                raise _GeneratedArtifactWriteError
+            yield output
+
+    monkeypatch.setattr(_GeneratedArtifactBudget, "open_output", interrupted)
+    case = _forensic_case(tmp_path, _jpeg_bytes())
+    try:
+        with pytest.raises(PreprocessingError) as error:
+            ImagePreprocessor(ImagePreprocessingConfig()).prepare(case.request, _JPEG_DEMAND)
+        assert error.value.kind == "artifact_write"
+        assert len(case.registry.cleanup_obligations()) == 2
+        assert case.request.artifact_budget.used_bytes > 7
+    finally:
+        case.cleanup()
+    assert not (tmp_path / "temp" / case.request.analysis_id).exists()

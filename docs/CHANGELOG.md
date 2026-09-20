@@ -344,6 +344,18 @@ YYYY-MM-DD
 
 ### Изменено
 
+- **[Stage 12/Macro 1/M1-B] Реализованы original image/JPEG representations по demand.**
+  Добавлен точный runtime pin `pyjpegio==0.3.0`: native coefficients читаются
+  только в bounded private child после собственного структурного preflight.
+  Общий process runner поддерживает одновременный bounded stderr; warnings
+  отклоняются без raw output в результатах. Original facts связаны с SHA-256,
+  EXIF mapping и исходными component/table IDs; int32 artifacts используют
+  прежний registry/budget/cleanup и immutable numeric reader. Причина — дать
+  будущим анализаторам исходные JPEG наблюдения без пересчёта DCT из PNG.
+  Installed-wheel smoke расширен на этот путь. Текущие анализаторы, PNG,
+  public API/domain/config и риск-семантика не изменены; контракт — §7.5
+  `CONTRACTS.md`, provenance и ограничения RSS — `REFERENCES.md`.
+
 - **[Stage 12/Macro 1/M1-A] Утверждены внутренние forensic contracts.**
   Приняты owner gates G1–G5; точные условия принадлежат `CONTRACTS.md` §7.5.
   Существующие requirements расширены закрытыми capabilities и объединением

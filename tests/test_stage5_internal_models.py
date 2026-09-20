@@ -716,6 +716,64 @@ def test_forensic_facts_bind_to_prepared_media_parent_and_worker(tmp_path):
         cleanup_prepared(accepted, registry)
 
 
+@pytest.mark.parametrize("length_delta", [-1, 0, 1])
+def test_numeric_reader_binds_identity_extent_and_immutable_backing(tmp_path, length_delta):
+    from fakedetector.analyzers._models import (
+        AnalyzerArtifactInput,
+        AnalyzerRequest,
+        _AnalyzerFileFacts,
+        _ReadOnlyAnalyzerInput,
+    )
+
+    class EmptySettings(BaseModel):
+        pass
+
+    header = _jpeg_header(width=8, height=8, sampling=((1, 1),))
+    plane = _numeric("coefficients", (1, 1, 8, 8))
+    manifest = _manifest(
+        OriginalImageFacts(
+            format="jpeg",
+            coordinates=ImageCoordinates(native_width=8, native_height=8),
+            jpeg=header,
+        ),
+        JpegCoefficientsDescriptor(header=header, planes=(plane,)),
+    )
+    path = tmp_path / "coefficients.raw"
+    path.write_bytes(bytes(plane.nbytes + length_delta))
+    request = AnalyzerRequest(
+        analysis_id="reader",
+        media_type=MediaType.IMAGE,
+        file_facts=_AnalyzerFileFacts.from_validated_file(image_descriptor("reader")),
+        source=_ReadOnlyAnalyzerInput(tmp_path / "unused"),
+        settings=EmptySettings(),
+        timeout_seconds=1,
+        metadata={"forensic": manifest.to_metadata()},
+        artifacts=(
+            AnalyzerArtifactInput(
+                artifact_id="coefficients",
+                artifact_type="jpeg_coefficients",
+                content=_ReadOnlyAnalyzerInput(path),
+                format="forensic_raw",
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="not bound"):
+        request.read_numeric(_numeric("unrelated", plane.shape))
+    with pytest.raises(ValueError, match="not bound"):
+        request.read_numeric(_numeric("coefficients", (1, 2, 8, 8)))
+    if length_delta:
+        with pytest.raises(ValueError, match="byte length"):
+            request.read_numeric(plane)
+    else:
+        array = request.read_numeric(plane)
+        assert array.shape == plane.shape and array.dtype.str == "<i4"
+        assert not array.flags.writeable
+        with pytest.raises(ValueError):
+            array.setflags(write=True)
+        with pytest.raises(ValueError):
+            array[0, 0, 0, 0] = 1
+
+
 def make_accepted_source(root: Path, analysis_id: str) -> AcceptedSource:
     owner = LocalTemporaryInputOwner(root)
     owned_source = owner.create(analysis_id)
