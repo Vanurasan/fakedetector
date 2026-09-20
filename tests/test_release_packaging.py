@@ -122,6 +122,12 @@ def test_sdist_wheel_metadata_entry_point_and_resources(
         cwd=tmp_path,
     )
     [sdist] = artifacts.glob(f"{artifact_name}-*.tar.gz")
+    license_bytes = (_ROOT / "LICENSE").read_bytes()
+    with tarfile.open(sdist, "r:gz") as archive:
+        license_stream = archive.extractfile(f"{artifact_name}-{expected_version}/LICENSE")
+        assert license_stream is not None
+        with license_stream:
+            assert license_stream.read() == license_bytes
     verifier._verify_sdist_provenance(sdist, repository=_ROOT)
     _run(
         "uv",
@@ -155,6 +161,9 @@ def test_sdist_wheel_metadata_entry_point_and_resources(
             name for name in names if name.endswith(".dist-info/entry_points.txt")
         )
         metadata = BytesParser().parsebytes(archive.read(metadata_name))
+        assert archive.read(
+            f"{artifact_name}-{expected_version}.dist-info/licenses/LICENSE"
+        ) == license_bytes
         entry_points = configparser.ConfigParser()
         entry_points.read_string(archive.read(entry_points_name).decode("utf-8"))
 
@@ -162,6 +171,8 @@ def test_sdist_wheel_metadata_entry_point_and_resources(
     assert wheel.name == f"{artifact_name}-{expected_version}-py3-none-any.whl"
     assert metadata["Name"] == project_name
     assert metadata["Version"] == expected_version
+    assert metadata["License-Expression"] == "Apache-2.0"
+    assert metadata.get_all("License-File") == ["LICENSE"]
     assert entry_points["console_scripts"]["fakedetector"] == "fakedetector.main:main"
     assert names >= _RESOURCES
 

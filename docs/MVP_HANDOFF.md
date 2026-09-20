@@ -17,6 +17,7 @@ recipient-facing inventory:
 ```text
 fakedetector-0.1.0-py3-none-any.whl
 runtime-constraints.txt
+LICENSE
 config.example.yaml
 .env.example
 generate_release_demo_media.py
@@ -25,6 +26,8 @@ CHANGELOG.md
 release-manifest.json
 ```
 
+`LICENSE` содержит Apache License 2.0 для собственного кода FakeDetector;
+лицензии отдельно устанавливаемых зависимостей и внешних executables сохраняются.
 `CHANGELOG.md` является копией канонического repository
 `docs/CHANGELOG.md`. Manifest связывает её и остальные recipient-facing файлы с
 HEAD SHA и состоянием working tree на момент начала сборки, а также с SHA-256

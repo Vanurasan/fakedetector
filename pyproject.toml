@@ -3,6 +3,8 @@ name = "fakedetector"
 version = "0.1.0"
 description = "Инструмент обнаружения признаков искусственного создания или модификации мультимедийных файлов"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.115.0",
