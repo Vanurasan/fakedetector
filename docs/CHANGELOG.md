@@ -344,6 +344,16 @@ YYYY-MM-DD
 
 ### Изменено
 
+- **[Stage 12/Macro 1/M1-D] Реализованы source-precision audio windows и numeric STFT.**
+  Hybrid facts отделяют stream declarations от наблюдений того же bounded decode;
+  фактическое покрытие подтверждается PTS/sample counts, integer codes сохраняются
+  в int32, floating samples — в float64 без clipping. Framing без padding и
+  periodic Hann/rFFT/magnitude/power используют существующий NumPy и общий
+  artifact/process budget. Причина — предоставить будущим анализаторам точные
+  числовые представления без изменения PCM16 consumers. Публичные контракты,
+  зависимости, текущие четыре анализатора и риск-семантика не изменены;
+  внутренние определения и ограничения принадлежат §7.5 `CONTRACTS.md`.
+
 - **[Stage 12/Macro 1/M1-B] Реализованы original image/JPEG representations по demand.**
   Добавлен точный runtime pin `pyjpegio==0.3.0`: native coefficients читаются
   только в bounded private child после собственного структурного preflight.

@@ -8,12 +8,13 @@ import json
 import math
 import mmap
 import os
+import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic
-from typing import BinaryIO
+from typing import BinaryIO, Literal, cast
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
@@ -27,11 +28,18 @@ from fakedetector._generated_artifact_budget import (
 from fakedetector.core._bounded_process import (
     ProcessInfrastructureError,
     ProcessOutputLimitError,
+    ProcessResult,
     ProcessTimeoutError,
     run_bounded_process,
 )
 from fakedetector.preprocessing._errors import PreprocessingError
-from fakedetector.preprocessing._models import JpegComponent, JpegHeader, JpegQuantizationTable
+from fakedetector.preprocessing._models import (
+    AudioPrecisionFacts,
+    IndexRange,
+    JpegComponent,
+    JpegHeader,
+    JpegQuantizationTable,
+)
 from fakedetector.preprocessing._requirements import (
     _FORENSIC_POLICY,
     ForensicResourcePolicy,
@@ -482,6 +490,29 @@ class _FFmpegPreprocessingTool:
             raise ValueError("timeout_seconds must be greater than zero")
         self._executable = executable
         self._timeout_seconds = timeout_seconds
+
+    def audio_precision(
+        self, source: Path, *, timeout_seconds: float | None
+    ) -> AudioPrecisionFacts:
+        return probe_audio(
+            source, executable="ffprobe", timeout=self._effective_timeout(timeout_seconds)
+        )
+
+    def precision_window(
+        self,
+        source: Path,
+        facts: AudioPrecisionFacts,
+        requested: IndexRange,
+        *,
+        timeout_seconds: float | None,
+    ) -> DecodedAudioWindow:
+        return decode_audio_window(
+            source,
+            facts,
+            requested,
+            executable=self._executable,
+            timeout=self._effective_timeout(timeout_seconds),
+        )
 
     def normalized_audio(
         self,
@@ -1256,3 +1287,389 @@ def _jpeg_child_main() -> None:
     except Exception:
         # Do not emit native objects, paths, exception text, or a traceback.
         sys.exit(2)
+
+
+_FORMATS = {"u8": 8, "s16": 16, "s32": 32, "flt": 32, "dbl": 64}
+_FRAME = re.compile(
+    rb"(?m)^\[Parsed_ashowinfo_\d+ @ [0-9a-fA-Fx]+\] "
+    rb"n:(\d+) pts:(-?\d+) pts_time:\S+ fmt:(\w+) channels:(\d+) "
+    rb"chlayout:([^\r\n]{1,64}?) rate:(\d+) nb_samples:(\d+) checksum:"
+)
+
+
+def select_audio_windows(
+    total_samples: int,
+    rate: int,
+    channels: int,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> tuple[IndexRange, ...]:
+    """Beginning/center/end; merge overlaps only while the merged extent fits policy.
+
+    Overlapping candidates whose union exceeds the ceiling are clipped at the
+    previous stop. This retains coverage without duplicate samples or larger windows.
+    """
+    policy.check_audio(1, channels, rate)
+    if type(total_samples) is not int or not 1 <= total_samples < 1 << 63:
+        raise ValueError("invalid declared audio duration")
+    size = min(
+        total_samples, policy.audio_window_seconds * rate, policy.audio_window_samples // channels
+    )
+    starts: tuple[int, ...] = (0, (total_samples - size) // 2, total_samples - size)
+    if policy.audio_windows == 1:
+        starts = (0,)
+    elif policy.audio_windows == 2:
+        starts = (0, total_samples - size)
+    result: list[IndexRange] = []
+    for start in sorted(set(starts)):
+        stop = start + size
+        if result and start <= result[-1].stop:
+            if stop - result[-1].start <= size:
+                result[-1] = IndexRange(start=result[-1].start, stop=stop)
+                continue
+            start = result[-1].stop
+        if stop > start:
+            result.append(IndexRange(start=start, stop=stop))
+    return tuple(result)
+
+
+def _process(
+    arguments: list[str], source: Path, timeout: float, limit: int, phase: str
+) -> ProcessResult:
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise PreprocessingError("invariant", "execution_budget")
+    try:
+        result = run_bounded_process(
+            arguments,
+            cwd=source.parent,
+            timeout_seconds=min(timeout, 30.0),
+            stdout_limit_bytes=limit,
+            stderr_limit_bytes=_FORENSIC_POLICY.timing_probe_bytes,
+        )
+    except ProcessOutputLimitError:
+        raise PreprocessingError("resource_limit", f"{phase}_overflow") from None
+    except ProcessTimeoutError:
+        raise PreprocessingError("media_tool", f"{phase}_timeout") from None
+    except ProcessInfrastructureError as error:
+        raise PreprocessingError(
+            "infrastructure",
+            f"{phase}_process",
+            _cleanup_safety_barrier=error._cleanup_safety_barrier,
+        ) from None
+    if result.return_code != 0 or result.stdout is None:
+        # Only the decoder's explicit invalid-data diagnostic establishes malformed
+        # media; other failures retain the unknown decoder-failure classification.
+        if b"Invalid data found when processing input" in (result.stderr or b""):
+            raise PreprocessingError("decode", f"{phase}_malformed_media")
+        raise PreprocessingError("decode", f"{phase}_decoder")
+    return result
+
+
+def probe_audio(source: Path, *, executable: str, timeout: float) -> AudioPrecisionFacts:
+    result = _process(
+        [
+            executable,
+            "-v",
+            "error",
+            "-protocol_whitelist",
+            "file",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=index,codec_name,sample_fmt,sample_rate,channels,channel_layout,"
+            "bits_per_sample,bits_per_raw_sample,duration,start_time",
+            "-of",
+            "json",
+            str(source.absolute()),
+        ],
+        source,
+        min(timeout, 15.0),
+        _FORENSIC_POLICY.timing_probe_bytes,
+        "audio_precision_probe",
+    )
+    try:
+        payload = json.loads(result.stdout or b"")
+        if not isinstance(payload, dict) or not isinstance(payload.get("streams"), list):
+            raise ValueError
+        stream = payload["streams"][0]
+        if len(payload["streams"]) != 1 or not isinstance(stream, dict):
+            raise ValueError
+        bits = int(stream.get("bits_per_sample", 0)) or None
+        raw_bits = int(stream.get("bits_per_raw_sample", 0)) or None
+        return AudioPrecisionFacts(
+            stream_index=int(stream["index"]),
+            codec=stream["codec_name"],
+            source_bits=raw_bits or bits,
+            decoder_format="unknown",
+            sample_rate=int(stream["sample_rate"]),
+            channels=int(stream["channels"]),
+            declared_bits_per_sample=bits,
+            declared_bits_per_raw_sample=raw_bits,
+            declared_sample_format=stream.get("sample_fmt"),
+            declared_channel_layout=stream.get("channel_layout"),
+            declared_duration_seconds=_optional_seconds(stream.get("duration")),
+            declared_start_seconds=_optional_seconds(stream.get("start_time")),
+        )
+    except (ValueError, TypeError, KeyError, IndexError):
+        raise PreprocessingError("decode", "audio_precision_malformed") from None
+
+
+def _optional_seconds(value: object) -> float | None:
+    if value is None or value == "N/A":
+        return None
+    if not isinstance(value, str):
+        raise ValueError
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError
+    return result
+
+
+@dataclass(frozen=True, slots=True)
+class DecodedAudioWindow:
+    facts: AudioPrecisionFacts
+    first_pts: int
+    values: NDArray[np.generic]
+
+
+def decode_audio_window(
+    source: Path,
+    facts: AudioPrecisionFacts,
+    requested: IndexRange,
+    *,
+    executable: str,
+    timeout: float,
+) -> DecodedAudioWindow:
+    try:
+        _FORENSIC_POLICY.check_audio(requested.count, facts.channels, facts.sample_rate)
+    except ValueError:
+        raise PreprocessingError("resource_limit", "audio_precision_preflight") from None
+    declared = facts.declared_sample_format or "unknown"
+    base = declared.removesuffix("p")
+    if base not in _FORMATS or base in ("u8", "s16", "s32") and (facts.source_bits or 0) > 32:
+        raise PreprocessingError("decode", "audio_precision_unsupported_format")
+    integer = base in ("u8", "s16", "s32")
+    encoding = "s32le" if integer else "f64le"
+    dtype = "<i4" if integer else "<f8"
+    rate = facts.sample_rate
+    result = _process(
+        [
+            executable,
+            "-hide_banner",
+            "-nostats",
+            "-v",
+            "info",
+            "-nostdin",
+            "-xerror",
+            "-err_detect",
+            "explode",
+            "-copyts",
+            "-protocol_whitelist",
+            "file",
+            "-ss",
+            format(requested.start / rate, ".12f"),
+            "-t",
+            format(requested.count / rate, ".12f"),
+            "-i",
+            str(source.absolute()),
+            "-map",
+            f"0:{facts.stream_index}",
+            "-vn",
+            "-sn",
+            "-dn",
+            "-af",
+            f"asettb=1/{rate},atrim=end_sample={requested.count},ashowinfo",
+            "-dither_method",
+            "none",
+            "-c:a",
+            f"pcm_{encoding}",
+            "-f",
+            encoding,
+            "pipe:1",
+        ],
+        source,
+        timeout,
+        requested.count * facts.channels * np.dtype(dtype).itemsize,
+        "audio_precision_window",
+    )
+    output = result.stdout or b""
+    records = _FRAME.findall(result.stderr or b"")
+    if not records or not output:
+        raise PreprocessingError("decode", "audio_precision_empty_window")
+    try:
+        first_pts = int(records[0][1])
+        expected_pts = first_pts
+        layout = records[0][4].decode("ascii")
+        count = 0
+        for ordinal, (
+            number,
+            pts,
+            fmt,
+            channels,
+            channel_layout,
+            sample_rate,
+            samples,
+        ) in enumerate(records):
+            if (
+                int(number) != ordinal
+                or int(pts) != expected_pts
+                or fmt.decode("ascii") != declared
+                or int(channels) != facts.channels
+                or int(sample_rate) != rate
+                or channel_layout.decode("ascii") != layout
+                or int(samples) <= 0
+            ):
+                raise ValueError
+            count += int(samples)
+            expected_pts += int(samples)
+        if (
+            count > requested.count
+            or len(output) != count * facts.channels * np.dtype(dtype).itemsize
+        ):
+            raise ValueError
+        values = np.frombuffer(output, dtype=dtype).reshape(count, facts.channels)
+        if not np.isfinite(values).all():
+            raise ValueError
+        shift = 0
+        if integer:
+            precision = _FORMATS[base]
+            if base == "s32" and facts.declared_bits_per_raw_sample is not None:
+                precision = facts.declared_bits_per_raw_sample
+            shift = 32 - precision
+            if shift < 0 or shift > 24 or np.any(values.astype(np.int64) % (1 << shift)):
+                raise ValueError
+            values = np.frombuffer((values >> shift).astype("<i4").tobytes(), dtype="<i4").reshape(
+                count, facts.channels
+            )
+        updated = facts.model_dump()
+        updated.update(
+            decoder_format=base,
+            decoded_planar=declared.endswith("p"),
+            decoder_storage_bits=_FORMATS[base],
+            decoded_sample_rate=rate,
+            decoded_channels=facts.channels,
+            integer_right_shift=shift,
+            decoded_channel_layout=layout,
+        )
+        observed = AudioPrecisionFacts.model_validate(updated)
+    except (ValueError, UnicodeError, TypeError):
+        raise PreprocessingError("decode", "audio_precision_observation_mismatch") from None
+    return DecodedAudioWindow(observed, first_pts, cast(NDArray[np.generic], values))
+
+
+def _freeze(values: NDArray[np.generic]) -> NDArray[np.generic]:
+    return np.frombuffer(values.tobytes(order="C"), dtype=values.dtype).reshape(values.shape)
+
+
+def validate_samples(
+    samples: NDArray[np.generic], rate: int, policy: ForensicResourcePolicy = _FORENSIC_POLICY
+) -> None:
+    if (
+        not isinstance(samples, np.ndarray)
+        or samples.ndim != 2
+        or samples.dtype.str not in ("<i4", "<f8")
+        or not samples.flags.c_contiguous
+        or not _has_immutable_backing(samples)
+    ):
+        raise ValueError("audio requires immutable little-endian sample/channel storage")
+    policy.check_audio(samples.shape[0], samples.shape[1], rate)
+    if not np.isfinite(samples).all():
+        raise ValueError("audio samples must be finite")
+
+
+@dataclass(frozen=True, slots=True)
+class AudioFrames:
+    """Read-only strided (frame, channel, sample) view with window-relative coverage."""
+
+    values: NDArray[np.generic]
+    hop: int
+    covered_samples: int
+    dropped_tail_samples: int
+
+
+def frame_audio(
+    samples: NDArray[np.generic],
+    *,
+    sample_rate: int,
+    frame_length: int,
+    hop: int,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> AudioFrames:
+    validate_samples(samples, sample_rate, policy)
+    policy.check_spectral(frame_length, hop, 1, 1)
+    count = max(0, 1 + (samples.shape[0] - frame_length) // hop)
+    if count:
+        policy.check_spectral(frame_length, hop, count * samples.shape[1], 1)
+        values = np.lib.stride_tricks.sliding_window_view(samples, frame_length, axis=0)[::hop]
+        covered = (count - 1) * hop + frame_length
+    else:
+        values = np.frombuffer(b"", dtype=samples.dtype).reshape(0, samples.shape[1], frame_length)
+        covered = 0
+    return AudioFrames(values, hop, covered, samples.shape[0] - covered)
+
+
+def periodic_hann(length: int) -> NDArray[np.generic]:
+    """w[k] = (1 - cos(2*pi*k/N))/2, k=0..N-1; N=1 gives [0]."""
+    if type(length) is not int or not 1 <= length <= _FORENSIC_POLICY.fft_size:
+        raise ValueError("Hann length exceeds policy")
+    return _freeze((0.5 - 0.5 * np.cos(2 * np.pi * np.arange(length) / length)).astype("<f8"))
+
+
+def frequency_bins(sample_rate: int, n_fft: int) -> NDArray[np.generic]:
+    _FORENSIC_POLICY.check_audio(1, 1, sample_rate)
+    _FORENSIC_POLICY.check_spectral(n_fft, n_fft, 1, 1)
+    return _freeze(np.arange(n_fft // 2 + 1, dtype="<f8") * (sample_rate / n_fft))
+
+
+@dataclass(frozen=True, slots=True)
+class SpectralBatch:
+    """Frame ordinals; sample start = window start + ordinal * hop."""
+
+    first_frame: int
+    values: NDArray[np.generic]
+
+
+def stft_batches(
+    samples: NDArray[np.generic],
+    *,
+    sample_rate: int,
+    n_fft: int,
+    hop: int,
+    scaling: Literal["complex", "magnitude", "power"] = "magnitude",
+    window: Literal["hann", "rectangular"] = "hann",
+    batch_size: int = 32,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> Iterator[SpectralBatch]:
+    """Unnormalized rFFT, independent channels, increasing nonnegative bins.
+
+    Power is abs(rFFT)**2, never PSD. No centering, padding, amplitude correction
+    or one-sided doubling. At most one float64/complex128 batch is materialized.
+    """
+    frames = frame_audio(
+        samples, sample_rate=sample_rate, frame_length=n_fft, hop=hop, policy=policy
+    )
+    policy.check_spectral(n_fft, hop, max(1, frames.values.shape[0] * samples.shape[1]), 1)
+    if type(batch_size) is not int or not 1 <= batch_size <= policy.spectral_batch:
+        raise ValueError("spectral batch exceeds policy")
+    if scaling not in ("complex", "magnitude", "power") or window not in ("hann", "rectangular"):
+        raise ValueError("unknown spectral definition")
+    # Includes input conversion, multiply, promoted FFT/workspace, output + immutable copy.
+    workspace = batch_size * samples.shape[1] * (n_fft * 16 + (n_fft // 2 + 1) * 64)
+    if workspace > policy.residual_workspace_bytes:
+        raise ValueError("spectral workspace exceeds policy")
+    weights = periodic_hann(n_fft) if window == "hann" else np.ones(n_fft, dtype="<f8")
+
+    def batches() -> Iterator[SpectralBatch]:
+        for start in range(0, frames.values.shape[0], batch_size):
+            values = frames.values[start : start + batch_size].astype("<f8") * weights
+            with np.errstate(over="ignore", invalid="ignore"):
+                spectrum = np.fft.rfft(values, n=n_fft, axis=-1, norm="backward")
+                output = spectrum if scaling == "complex" else np.abs(spectrum)
+                if scaling == "power":
+                    output = np.square(output)
+            if not np.isfinite(output).all():
+                raise ValueError("nonfinite spectral output")
+            yield SpectralBatch(
+                start, _freeze(output.astype("<c16" if scaling == "complex" else "<f8"))
+            )
+
+    return batches()

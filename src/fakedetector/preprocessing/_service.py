@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import math
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, cast
 
+import numpy as np
+from numpy.typing import NDArray
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from fakedetector._generated_artifact_budget import (
@@ -40,20 +42,26 @@ from fakedetector.lifecycle.artifacts import (
 )
 from fakedetector.preprocessing._errors import PreprocessingError
 from fakedetector.preprocessing._media_tools import (
+    DecodedAudioWindow,
     _decode_jpeg_coefficients,
     _FFmpegPreprocessingTool,
     _parse_jpeg,
+    select_audio_windows,
+    stft_batches,
 )
 from fakedetector.preprocessing._models import (
+    AudioWindowDescriptor,
     ForensicManifest,
     ForensicRepresentation,
     ImageCoordinates,
+    IndexRange,
     JpegCoefficientsDescriptor,
     NumericArtifact,
     OriginalImageFacts,
     PreparedArtifact,
     PreparedMedia,
     RepresentationProvenance,
+    SpectralWindowDescriptor,
 )
 from fakedetector.preprocessing._requirements import (
     _FORENSIC_POLICY,
@@ -383,6 +391,15 @@ class AudioPreprocessor:
         if self._config.extract_metadata:
             metadata["source_codec"] = parameters.codec
             metadata["source_bitrate_bps"] = parameters.bitrate_bps
+        if requirements.forensic:
+            metadata["forensic"] = _prepare_audio_forensic(
+                request,
+                requirements,
+                self._media_tool,
+                artifacts,
+                parameters.duration_seconds,
+                remaining_timeout_seconds,
+            ).to_metadata()
         return _prepared_media(request, self.media_type, artifacts, metadata)
 
 
@@ -514,6 +531,15 @@ class VideoPreprocessor:
             if truncated
             else ()
         )
+        if requirements.forensic:
+            metadata["forensic"] = _prepare_audio_forensic(
+                request,
+                requirements,
+                self._media_tool,
+                artifacts,
+                parameters.duration_seconds,
+                remaining_timeout_seconds,
+            ).to_metadata()
         return _prepared_media(request, self.media_type, artifacts, metadata, video_warnings)
 
 
@@ -560,6 +586,9 @@ class PreprocessingDispatcher:
             ForensicCapability.IMAGE_COORDINATES,
             ForensicCapability.JPEG_STRUCTURE,
             ForensicCapability.JPEG_COEFFICIENTS,
+            ForensicCapability.AUDIO_PRECISION,
+            ForensicCapability.AUDIO_SAMPLES,
+            ForensicCapability.AUDIO_SPECTRAL,
         }:
             raise PreprocessingError("invariant", "forensic_producer_unavailable")
         if not request.artifact_budget.matches(
@@ -612,6 +641,185 @@ def _operation_timeout(
 
 def _check_remaining(remaining_timeout_seconds: Callable[[], float] | None) -> None:
     _operation_timeout(remaining_timeout_seconds)
+
+
+def _prepare_audio_forensic(
+    request: PreprocessingRequest,
+    requirements: PreprocessingRequirements,
+    tool: _FFmpegPreprocessingTool,
+    artifacts: list[PreparedArtifact],
+    duration: float,
+    remaining: Callable[[], float] | None,
+) -> ForensicManifest:
+    provenance = RepresentationProvenance(
+        producer="ffmpeg_audio",
+        producer_version="1",
+        profile="precision_windows",
+        profile_version="1",
+    )
+    spectral_provenance = RepresentationProvenance(
+        producer="numpy_stft", producer_version="1", profile="hann4096_hop1024", profile_version="1"
+    )
+    representations: list[ForensicRepresentation] = []
+    try:
+        with request.source_file_ref.open_for_read() as stream:
+            hasher = hashlib.sha256()
+            while chunk := stream.read(65536):
+                _check_remaining(remaining)
+                hasher.update(chunk)
+        if hasher.hexdigest() != request.validated_file.sha256:
+            raise PreprocessingError("invariant", "forensic_source_identity")
+        facts = request.source_file_ref.with_local_source_path(
+            lambda source: tool.audio_precision(
+                source, timeout_seconds=_operation_timeout(remaining)
+            )
+        )
+        windows = select_audio_windows(
+            max(1, math.ceil((facts.declared_duration_seconds or duration) * facts.sample_rate)),
+            facts.sample_rate,
+            facts.channels,
+        )
+        samples_demand = ForensicCapability.AUDIO_SAMPLES in requirements.forensic
+        spectral_demand = ForensicCapability.AUDIO_SPECTRAL in requirements.forensic
+        if not samples_demand:
+            windows = (IndexRange(start=0, stop=1),)
+        # Worst-case float64 samples and magnitude spectra; one shared artifact budget.
+        sample_bytes = sum(w.count * facts.channels * 8 for w in windows) if samples_demand else 0
+        frame_counts = [max(0, 1 + (w.count - 4096) // 1024) for w in windows]
+        spectral_bytes = sum(frame_counts) * facts.channels * 2049 * 8 if spectral_demand else 0
+        if (
+            spectral_demand
+            and sum(frame_counts) * facts.channels > _FORENSIC_POLICY.spectral_frames
+        ):
+            raise ValueError("aggregate spectral frames exceed policy")
+        _FORENSIC_POLICY.check_artifacts(
+            request.artifact_budget,
+            total_count=len(artifacts)
+            + (len(windows) if samples_demand else 0)
+            + (sum(count > 0 for count in frame_counts) if spectral_demand else 0),
+            additional_bytes=sample_bytes + spectral_bytes,
+        )
+        origin = 0
+        observed_facts = None
+        previous_stop = 0
+        for ordinal, window in enumerate(windows):
+
+            def decode(source: Path, selected: IndexRange = window) -> DecodedAudioWindow:
+                return tool.precision_window(
+                    source, facts, selected, timeout_seconds=_operation_timeout(remaining)
+                )
+
+            decoded = request.source_file_ref.with_local_source_path(decode)
+            if ordinal == 0:
+                origin = decoded.first_pts
+                observed_facts = decoded.facts
+                representations.append(
+                    ForensicRepresentation(provenance=provenance, facts=observed_facts)
+                )
+            elif decoded.facts != observed_facts:
+                raise PreprocessingError("decode", "audio_precision_changed_format")
+            if not samples_demand:
+                break
+            start = decoded.first_pts - origin
+            if start < previous_stop:
+                raise PreprocessingError("decode", "audio_precision_overlapping_coverage")
+            previous_stop = start + decoded.values.shape[0]
+            descriptor = NumericArtifact(
+                artifact_id=f"audio_samples_{ordinal}",
+                shape=decoded.values.shape,
+                dtype="<i4" if decoded.values.dtype.kind == "i" else "<f8",
+            )
+            _write_audio_numeric(request, artifacts, descriptor, (decoded.values,), remaining)
+            representations.append(
+                ForensicRepresentation(
+                    provenance=provenance,
+                    facts=AudioWindowDescriptor(
+                        stream_index=facts.stream_index,
+                        samples=IndexRange(start=start, stop=previous_stop),
+                        requested_samples=window,
+                        first_sample_pts=decoded.first_pts,
+                        data=descriptor,
+                    ),
+                )
+            )
+            frames = max(0, 1 + (decoded.values.shape[0] - 4096) // 1024)
+            if spectral_demand and frames:
+                spectral = NumericArtifact(
+                    artifact_id=f"audio_spectral_{ordinal}",
+                    shape=(frames, facts.channels, 2049),
+                    dtype="<f8",
+                )
+                batches = stft_batches(
+                    decoded.values,
+                    sample_rate=facts.sample_rate,
+                    n_fft=4096,
+                    hop=1024,
+                    batch_size=16,
+                )
+                _write_audio_numeric(
+                    request, artifacts, spectral, (b.values for b in batches), remaining
+                )
+                representations.append(
+                    ForensicRepresentation(
+                        provenance=spectral_provenance,
+                        facts=SpectralWindowDescriptor(
+                            samples_artifact_id=descriptor.artifact_id,
+                            frames=IndexRange(start=0, stop=frames),
+                            n_fft=4096,
+                            hop=1024,
+                            window="hann",
+                            scaling="magnitude",
+                            data=spectral,
+                        ),
+                    )
+                )
+        return ForensicManifest(
+            source_sha256=request.validated_file.sha256,
+            media_type=request.validated_file.media_type,
+            representations=tuple(representations),
+        )
+    except IntakeSystemError:
+        raise PreprocessingError("source_read", "audio_precision_source") from None
+    except _GeneratedArtifactLimitError:
+        raise PreprocessingError("resource_limit", "audio_precision_artifacts") from None
+    except _GeneratedArtifactWriteError:
+        raise PreprocessingError("artifact_write", "audio_precision_artifacts") from None
+    except ValueError:
+        raise PreprocessingError("resource_limit", "audio_precision_preflight") from None
+
+
+def _write_audio_numeric(
+    request: PreprocessingRequest,
+    artifacts: list[PreparedArtifact],
+    descriptor: NumericArtifact,
+    batches: Iterable[NDArray[np.generic]],
+    remaining: Callable[[], float] | None,
+) -> None:
+    reference = _register(
+        request.artifact_registry, descriptor.artifact_id, f"{descriptor.artifact_id}.raw"
+    )
+
+    def write(target: Path) -> None:
+        size = 0
+        with request.artifact_budget.open_output(target) as output:
+            for batch in batches:
+                _check_remaining(remaining)
+                size += batch.nbytes
+                if size > descriptor.nbytes:
+                    raise PreprocessingError("invariant", "audio_numeric_extent")
+                output.write(batch.tobytes(order="C"))
+        if size != descriptor.nbytes:
+            raise PreprocessingError("invariant", "audio_numeric_extent")
+
+    _with_artifact_path(request.artifact_registry, reference, write)
+    artifacts.append(
+        PreparedArtifact(
+            artifact_id=descriptor.artifact_id,
+            artifact_type="audio_numeric",
+            artifact_ref=reference,
+            format="forensic_raw",
+        )
+    )
 
 
 def _original_image_facts(request: PreprocessingRequest) -> OriginalImageFacts:

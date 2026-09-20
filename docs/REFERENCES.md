@@ -585,6 +585,25 @@ wheel фиксируют составное лицензионное выраж�
 соответствующий версии `LICENSE.txt` остаётся полным источником применимых
 уведомлений.
 
+### Audio numeric foundations M1-D — 2026-09-21
+
+Собственные audio helpers в `_media_tools.py` и профиль preprocessing —
+`FIRST_PARTY_CODE`, Apache-2.0 проекта. Новые внешние исходники не копировались.
+Используются существующие NumPy 2.5.2 и внешние FFmpeg/ffprobe, указанные
+выше; состав зависимостей и способ поставки не меняются. Дополнительно используется
+NumPy rFFT, без SciPy/librosa/soundfile. Метод — обычные framing, periodic Hann и
+DFT; forensic detector, PSD или статистическая калибровка не заявляются.
+
+Первичные определения интерфейсов:
+[NumPy rFFT](https://numpy.org/doc/stable/reference/generated/numpy.fft.rfft.html),
+[FFmpeg ashowinfo](https://ffmpeg.org/ffmpeg-filters.html#ashowinfo),
+[FFmpeg atrim](https://ffmpeg.org/ffmpeg-filters.html#atrim),
+[FFmpeg seek/copyts](https://ffmpeg.org/ffmpeg.html).
+Документация используется для семантики вызова, а не как источник копируемого
+кода. Точная локальная числовая семантика закреплена только в `CONTRACTS.md` §7.5.
+Тестовые данные создаются собственными deterministic PCM codes/тонами и локальным
+FFmpeg; внешние recordings, datasets, models и weights не применяются.
+
 ## Происхождение политики оценки Stage 7
 
 - Политика: `score_model_v1@0.1.0`, включая полноту, корреляцию, `score`,

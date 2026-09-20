@@ -318,7 +318,10 @@ class AnalyzerRequest:
             stream.seek(0)
             data = stream.read(descriptor.nbytes + 1)
         descriptor.validate_byte_length(len(data))
-        return np.frombuffer(data, dtype=descriptor.dtype).reshape(descriptor.shape)
+        values = np.frombuffer(data, dtype=descriptor.dtype).reshape(descriptor.shape)
+        if values.dtype.kind in "fc" and not np.isfinite(values).all():
+            raise ValueError("numeric artifact contains nonfinite values")
+        return values
 
 
 class Analyzer(Protocol):

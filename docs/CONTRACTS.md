@@ -1324,8 +1324,8 @@ ownership semantics.
 в preprocessing; источник, реестр артефактов, общий бюджет и private worker
 transport сохраняют прежнее владение. M1-A реализует типы, декларации,
 проверки размеров и координат; M1-B — original image/JPEG producer и numeric reader;
-M1-C — общие bounded deterministic image residual kernels. Остальное извлечение
-относится к последующим M1-D–F.
+M1-C — общие bounded deterministic image residual kernels; M1-D — source-precision
+audio windows и numeric framing/STFT. Timing/dense извлечение относится к M1-E–F.
 Новые требования отсутствуют у четырёх текущих анализаторов версии `1.0.0`.
 Публичные схемы, локализация, риск, полнота и YAML не изменяются.
 
@@ -1345,9 +1345,9 @@ M1-C — общие bounded deterministic image residual kernels. Остальн
 
 Старые `audio_spectrogram`/`video_audio_track` сохраняют семантику. Неподходящий
 media route отклоняется. Dispatcher принимает original image/coordinates/JPEG
-demand, остальные ещё не реализованные producers отклоняет до I/O с внутренним
-`forensic_producer_unavailable`. Профиль выборки и его параметры будут
-определены производителем; объединение capabilities не выбирает их молча.
+и audio precision/samples/spectral demand; остальные producers отклоняет до I/O с внутренним
+`forensic_producer_unavailable`. Профили реализованных производителей определены
+ниже; объединение capabilities не меняет их параметры.
 
 **Факты и идентичность.** В существующем `metadata["forensic"]` резервируется
 строго валидируемый JSON `ForensicManifest`, передаваемый строкой без изменения
@@ -1484,6 +1484,94 @@ RGB/RGBA вместе с immutable copy; smoothing — две core planes, resid
 операции выполняются только над выбранными tiles, а память исходного целого
 uint8 RGB/RGBA raster учитывается отдельно. Arrays не передаются через worker
 response, metadata или `raw_metrics`.
+
+**Source-precision audio (M1-D).** Производитель `ffmpeg_audio/1`, профиль
+`precision_windows/1`, работает только по demand для первого audio stream в
+audio/video source. Старые PCM16, fragments и rendered spectrogram не меняются.
+Source SHA-256 повторно проверяется потоково. Bounded ffprobe запрашивает только
+allowlist stream fields; raw JSON, теги и stderr не входят в manifest.
+`codec`, `sample_rate`, `channels`, `declared_sample_format`,
+`declared_channel_layout`, `declared_bits_per_sample`,
+`declared_bits_per_raw_sample`, duration/start — заявления stream/container.
+`source_bits` сохраняет declared raw bits, иначе declared bits; это не effective
+bit depth. Нулевое/отсутствующее число bits означает неизвестное значение.
+`decoder_format`, `decoder_storage_bits`, `decoded_planar`,
+`decoded_sample_rate`, `decoded_channels`, `decoded_channel_layout` наблюдаются
+через `ashowinfo` в том же decode, до преобразования в raw output. Format,
+rate/channels и layout обязаны оставаться постоянными; rate/channels должны
+совпадать с probe. Неизвестный/s64 формат не создаёт precision windows.
+
+Decode выполняется bounded input seek/duration, `asettb=1/sample_rate`
+(только единицы timestamps), `atrim=end_sample=N`, `dither_method=none`, без
+resample/downmix/gain/dither/padding. Packed и planar `u8/s16/s32/flt/dbl`
+преобразуются в interleaved raw `<i4` или `<f8`. Integer FFmpeg output s32
+выравнивается вправо: сдвиг 24 для u8 (центрирование относительно 128), 16 для
+s16; для s32 — `32 - declared_bits_per_raw_sample`, если поле известно,
+иначе 0. Перед сдвигом проверяется, что все удаляемые биты нулевые; потеря
+точности запрещена. `integer_right_shift` записывает преобразование, а
+`decoder_storage_bits` остаётся шириной декодера (PCM24 обычно s32).
+Float32 расширяется точно до float64; float64 не сужается, значения вне
+`[-1,1]` сохраняются, NaN/Inf отклоняются.
+
+Начальный профиль выбирает начало, середину и конец по declared duration,
+ограничивая каждое окно `min(10*rate, floor(2^20/channels))` samples/channel.
+Совпадающие/перекрывающиеся кандидаты объединяются, если union помещается в
+предел окна; иначе уже покрытый prefix отбрасывается. Не больше трёх окон.
+Seek/duration — только запрос: `requested_samples` хранится отдельно.
+`samples` — фактический диапазон на sample timeline относительно первого
+наблюдавшегося decoded sample начала stream. `first_sample_pts` сохраняет
+наблюдавшийся signed PTS в единицах `1/sample_rate`; исходное время равно
+`first_sample_pts/sample_rate`. Все frame PTS внутри окна должны образовывать
+непрерывную последовательность; их sample counts должны точно совпасть с
+raw byte length. Отличающийся start/короткий output не подменяется requested
+coverage; пустой output отклоняется. Пробелы между окнами не являются
+наблюдавшимися разрывами аудио. Разные форматы между окнами отклоняются.
+Facts-only demand декодирует один sample и не создаёт numeric artifact.
+Samples обязаны сохранять provenance identity соответствующих precision facts.
+
+**Numeric framing/STFT (M1-D).** Числовой слой `_media_tools.py` принимает только
+immutable bytes-backed C-order `(sample, channel)` `<i4`/`<f8`, проверяет policy
+и finite values до вычисления. Framing возвращает read-only strided view
+`(frame, channel, sample)` без копирования перекрывающихся окон. Frame j начинается
+в `j*hop`; число полных frames равно `max(0, 1+floor((N-n_fft)/hop))`.
+Coverage заканчивается на `(frames-1)*hop+n_fft` либо 0 при отсутствии frames;
+`dropped_tail_samples` явно сохраняет остаток. Padding/centering отсутствуют.
+
+`hann` означает только periodic Hann: `w[k]=(1-cos(2*pi*k/N))/2`,
+`k=0..N-1`. Первый коэффициент 0, последний обычно не 0; для N=1 результат
+`[0]`, для N=2 — `[0,1]`. Rectangular window отдельно означает единичные веса.
+NumPy rFFT использует `norm="backward"`: forward transform без нормирования,
+bin k соответствует `k*sample_rate/n_fft`, k=0..floor(n_fft/2).
+Каналы независимы, frame time — начало frame, без half-window offset.
+Complex output `<c16`; magnitude `abs(FFT)` и power `abs(FFT)**2` имеют `<f8`.
+Нет doubling, amplitude correction или bandwidth normalization; power не PSD.
+Результаты конечны и имеют immutable bytes backing. Descriptor spectral data
+имеет оси `(frame, channel, bin)`, frame ordinals относительно sample artifact.
+
+Demand `audio_spectral` применяет профиль `numpy_stft/1`,
+`hann4096_hop1024/1`: magnitude, n_fft=4096, hop=1024, batch=16.
+Окно короче 4096 samples не создаёт spectral artifact: sample coverage остаётся
+доступной, полных spectral frames нет. Kernels допускают другие bounded FFT/hop,
+window/scaling, но demand не вводит конфигурационных полей. Ни full-file STFT,
+ни матрицы в worker JSON не создаются. Совокупный размер raw artifacts заранее
+проверяется против оставшегося общего бюджета (float64 worst case для samples),
+каждая запись идёт через register-before-write и `open_output`.
+Framing/rFFT проверяют `n_fft<=4096`, `ceil(n_fft/4)<=hop<=n_fft`,
+8192 time/channel frames и batch<=32. Оценка временной памяти пакета:
+`batch*channels*(16*n_fft+64*(floor(n_fft/2)+1))`, не больше существующего
+32 MiB workspace ceiling policy; учтены float64/complex128 и immutable copies.
+
+FFmpeg/ffprobe используют прежний `run_bounded_process`: allowlisted argv без
+shell, stdout до точного объёма окна, stderr/probe до 256 KiB, timeout
+`min(remaining, configured, 30s)` для decode и 15s для probe; overflow/timeout
+возвращаются только после reap, unresolved process передаёт cleanup barrier.
+Seek/preroll и native allocations не являются hard OS RAM quota.
+Ошибки различаются внутренними phases `audio_precision_unsupported_format`,
+`audio_precision_malformed` (probe schema), `*_malformed_media` (явный invalid-data
+ответ декодера), `audio_precision_*_decoder` (прочий отказ декодера), `*_timeout`,
+`*_overflow`, `audio_precision_preflight`, `audio_precision_observation_mismatch`,
+`audio_precision_empty_window`. Malformed numeric artifact отклоняется reader
+по identity/shape/dtype/exact length/finite values. Findings не создаются.
 
 **Preflight JPEG.** `JpegHeader.preflight` работает только с малыми
 типизированными SOF facts, до вызова native decoder: размеры 1–65535, 8-bit

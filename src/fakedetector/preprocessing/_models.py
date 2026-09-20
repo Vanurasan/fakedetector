@@ -366,6 +366,38 @@ class AudioPrecisionFacts(_BoundedValue):
     decoder_format: Literal["u8", "s16", "s32", "flt", "dbl", "unknown"]
     sample_rate: Annotated[int, Field(gt=0, le=768_000)]
     channels: Annotated[int, Field(gt=0, le=64)]
+    declared_bits_per_sample: Annotated[int, Field(gt=0, le=64)] | None = None
+    declared_bits_per_raw_sample: Annotated[int, Field(gt=0, le=64)] | None = None
+    declared_sample_format: _Token | None = None
+    declared_channel_layout: (
+        Annotated[str, Field(max_length=64, pattern=r"^[a-zA-Z0-9 .()+_-]+$")] | None
+    ) = None
+    decoded_channel_layout: (
+        Annotated[str, Field(max_length=64, pattern=r"^[a-zA-Z0-9 .()+_-]+$")] | None
+    ) = None
+    decoded_planar: bool = False
+    decoder_storage_bits: Literal[8, 16, 32, 64] | None = None
+    decoded_sample_rate: Annotated[int, Field(gt=0, le=768_000)] | None = None
+    decoded_channels: Annotated[int, Field(gt=0, le=64)] | None = None
+    integer_right_shift: Annotated[int, Field(ge=0, le=24)] = 0
+    declared_duration_seconds: Annotated[float, Field(ge=0, allow_inf_nan=False)] | None = None
+    declared_start_seconds: Annotated[float, Field(allow_inf_nan=False)] | None = None
+
+    @model_validator(mode="after")
+    def decoded_precision(self) -> Self:
+        widths = {"u8": 8, "s16": 16, "s32": 32, "flt": 32, "dbl": 64}
+        if (
+            self.decoder_storage_bits is not None
+            and self.decoder_storage_bits != widths.get(self.decoder_format)
+            or self.decoded_sample_rate is not None
+            and self.decoded_sample_rate != self.sample_rate
+            or self.decoded_channels is not None
+            and self.decoded_channels != self.channels
+            or self.decoder_format in ("flt", "dbl", "unknown")
+            and self.integer_right_shift != 0
+        ):
+            raise ValueError("decoded precision facts conflict with the unchanged source layout")
+        return self
 
 
 class AudioWindowDescriptor(_BoundedValue):
@@ -380,6 +412,8 @@ class AudioWindowDescriptor(_BoundedValue):
     stream_index: Annotated[int, Field(ge=0, le=255)]
     samples: IndexRange
     data: NumericArtifact
+    requested_samples: IndexRange | None = None
+    first_sample_pts: _Tick | None = None
 
     @model_validator(mode="after")
     def layout(self) -> Self:
@@ -387,6 +421,8 @@ class AudioWindowDescriptor(_BoundedValue):
             self.data.dtype not in ("<i4", "<f8")
             or len(self.data.shape) != 2
             or self.data.shape[0] != self.samples.count
+            or self.requested_samples is not None
+            and self.samples.count > self.requested_samples.count
         ):
             raise ValueError("audio storage must have sample/channel axes")
         return self
@@ -570,6 +606,16 @@ class ForensicManifest(_BoundedValue):
         if len({a.artifact_id for a in numeric}) != len(numeric):
             raise ValueError("numeric artifacts must have unique ownership")
         audio = {f.stream_index: f for f in facts if isinstance(f, AudioPrecisionFacts)}
+        audio_provenance = {
+            r.facts.stream_index: r.provenance
+            for r in self.representations
+            if isinstance(r.facts, AudioPrecisionFacts)
+        }
+        for representation in self.representations:
+            if isinstance(representation.facts, AudioWindowDescriptor) and (
+                representation.provenance != audio_provenance.get(representation.facts.stream_index)
+            ):
+                raise ValueError("audio samples must retain precision provenance identity")
         streams = {f.stream_index: f for f in facts if isinstance(f, StreamTimingFacts)}
         samples = {f.data.artifact_id: f for f in facts if isinstance(f, AudioWindowDescriptor)}
         timing = {f.data.artifact_id: f for f in facts if isinstance(f, TimingRecordsDescriptor)}

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePath
 from typing import BinaryIO, TypeVar, cast
 
+import numpy as np
 import pytest
 import yaml
 from PIL import Image, PngImagePlugin
@@ -25,7 +26,12 @@ from fakedetector.config.models import (
     ImagePreprocessingConfig,
     VideoPreprocessingConfig,
 )
-from fakedetector.core._bounded_process import ProcessResult, ProcessTimeoutError
+from fakedetector.core._bounded_process import (
+    ProcessInfrastructureError,
+    ProcessOutputLimitError,
+    ProcessResult,
+    ProcessTimeoutError,
+)
 from fakedetector.domain import (
     AudioTechnicalParameters,
     ImageTechnicalParameters,
@@ -40,15 +46,33 @@ from fakedetector.intake.temporary_input import (
     PreparedSourceRef,
 )
 from fakedetector.lifecycle.artifacts import WorkspaceArtifactRef, WorkspaceArtifactRegistry
+from fakedetector.preprocessing import _media_tools as decoder
 from fakedetector.preprocessing._errors import PreprocessingError
-from fakedetector.preprocessing._media_tools import _FFmpegPreprocessingTool, _parse_jpeg
+from fakedetector.preprocessing._media_tools import (
+    _FFmpegPreprocessingTool,
+    _parse_jpeg,
+    decode_audio_window,
+    frame_audio,
+    frequency_bins,
+    periodic_hann,
+    probe_audio,
+    select_audio_windows,
+    stft_batches,
+)
 from fakedetector.preprocessing._models import (
+    AudioWindowDescriptor,
+    IndexRange,
     JpegCoefficientsDescriptor,
     OriginalImageFacts,
     PreparedArtifact,
     PreparedMedia,
+    SpectralWindowDescriptor,
 )
-from fakedetector.preprocessing._requirements import ForensicCapability, PreprocessingRequirements
+from fakedetector.preprocessing._requirements import (
+    ForensicCapability,
+    ForensicResourcePolicy,
+    PreprocessingRequirements,
+)
 from fakedetector.preprocessing._service import (
     AudioPreprocessor,
     ImagePreprocessor,
@@ -2068,3 +2092,643 @@ def test_jpeg_partial_artifact_failure_is_registered_and_cleaned(tmp_path, monke
     finally:
         case.cleanup()
     assert not (tmp_path / "temp" / case.request.analysis_id).exists()
+
+
+def immutable(values, dtype="<f8"):
+    values = np.asarray(values, dtype=dtype)
+    return np.frombuffer(values.tobytes(), dtype=dtype).reshape(values.shape)
+
+
+def pcm(path, bits, channels=1, rate=8000, count=8000):
+    codes = np.resize(
+        np.array([0, 1, -1, (1 << (bits - 1)) - 1, -(1 << (bits - 1))], dtype="<i4"),
+        count * channels,
+    )
+    if bits == 24:
+        data = codes.view("u1").reshape(-1, 4)[:, :3].tobytes()
+    else:
+        data = codes.astype(f"<i{bits // 8}").tobytes()
+    with wave.open(str(path), "wb") as stream:
+        stream.setparams((channels, bits // 8, rate, 0, "NONE", "none"))
+        stream.writeframes(data)
+    return codes.reshape(count, channels)
+
+
+@pytest.mark.parametrize("bits", [16, 24, 32])
+@pytest.mark.parametrize("channels", [1, 2, 8])
+def test_integer_codes_preserved(tmp_path, bits, channels):
+    source = tmp_path / "precision.wav"
+    expected = pcm(source, bits, channels)
+    facts = probe_audio(source, executable="ffprobe", timeout=10)
+    result = decode_audio_window(
+        source, facts, IndexRange(start=0, stop=8000), executable="ffmpeg", timeout=10
+    )
+    np.testing.assert_array_equal(result.values, expected)
+    assert result.facts.decoder_storage_bits == (16 if bits == 16 else 32)
+    assert result.facts.source_bits == bits
+    assert result.values.dtype.str == "<i4"
+    assert result.first_pts == 0
+    with pytest.raises(ValueError):
+        result.values.setflags(write=True)
+
+
+@pytest.mark.parametrize("encoding,dtype", [("pcm_f32le", "<f4"), ("pcm_f64le", "<f8")])
+def test_float_not_clipped(tmp_path, encoding, dtype):
+    raw = tmp_path / "input.raw"
+    values = np.tile(np.array([-2.5, -0.123456789, 0.0, 1.5], dtype=dtype), 2000)
+    raw.write_bytes(values.tobytes())
+    source = tmp_path / "float.wav"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "f32le" if dtype == "<f4" else "f64le",
+            "-ar",
+            "8000",
+            "-ac",
+            "1",
+            "-i",
+            str(raw),
+            "-c:a",
+            encoding,
+            str(source),
+        ],
+        check=True,
+        timeout=10,
+    )
+    facts = probe_audio(source, executable="ffprobe", timeout=10)
+    result = decode_audio_window(
+        source, facts, IndexRange(start=0, stop=8000), executable="ffmpeg", timeout=10
+    )
+    np.testing.assert_array_equal(result.values[:, 0], values.astype("<f8"))
+    assert result.values.dtype.str == "<f8"
+
+
+def test_lossy_and_seek_actual_coverage(tmp_path):
+    source = tmp_path / "input.wav"
+    pcm(source, 16, count=24000)
+    lossy = tmp_path / "lossy.mp3"
+    subprocess.run(["ffmpeg", "-v", "error", "-i", str(source), str(lossy)], check=True, timeout=10)
+    facts = probe_audio(lossy, executable="ffprobe", timeout=10)
+    first = decode_audio_window(
+        lossy, facts, IndexRange(start=0, stop=8000), executable="ffmpeg", timeout=10
+    )
+    middle = decode_audio_window(
+        lossy, facts, IndexRange(start=8000, stop=16000), executable="ffmpeg", timeout=10
+    )
+    assert first.facts.decoder_format in ("flt", "dbl")
+    assert first.values.shape == middle.values.shape == (8000, 1)
+    assert middle.first_pts - first.first_pts == 8000
+
+
+@pytest.mark.parametrize("count", [1, 7999, 8000, 8001])
+def test_incomplete_window_no_padding(tmp_path, count):
+    source = tmp_path / "short.wav"
+    expected = pcm(source, 16, count=count)
+    facts = probe_audio(source, executable="ffprobe", timeout=10)
+    decoded = decode_audio_window(
+        source, facts, IndexRange(start=0, stop=count + 100), executable="ffmpeg", timeout=10
+    )
+    np.testing.assert_array_equal(decoded.values, expected)
+
+
+@pytest.mark.parametrize(
+    "total,expected",
+    [
+        (1, [(0, 1)]),
+        (80000, [(0, 80000)]),
+        (160000, [(0, 80000), (80000, 160000)]),
+        (800000, [(0, 80000), (360000, 440000), (720000, 800000)]),
+    ],
+)
+def test_window_selection(total, expected):
+    assert [(r.start, r.stop) for r in select_audio_windows(total, 8000, 1)] == expected
+
+
+@pytest.mark.parametrize("rate,channels", [(192000, 8), (1, 1), (192000, 1)])
+def test_window_policy_limits(rate, channels):
+    for window in select_audio_windows(rate * 100, rate, channels):
+        ForensicResourcePolicy().check_audio(window.count, channels, rate)
+
+
+@pytest.mark.parametrize("rate,channels", [(192001, 1), (0, 1), (8000, 9), (8000, 0)])
+def test_window_policy_rejection(rate, channels):
+    with pytest.raises(ValueError):
+        select_audio_windows(800000, rate, channels)
+
+
+@pytest.mark.parametrize("count,covered,tail", [(16, 16, 0), (17, 16, 1), (3, 0, 3)])
+def test_frames(count, covered, tail):
+    data = immutable(np.arange(count * 2).reshape(count, 2), "<i4")
+    frames = frame_audio(data, sample_rate=8000, frame_length=8, hop=4)
+    assert frames.covered_samples == covered
+    assert frames.dropped_tail_samples == tail
+    assert frames.values.shape == (max(0, 1 + (count - 8) // 4), 2, 8)
+    if count >= 8:
+        np.testing.assert_array_equal(frames.values[0], data[:8].T)
+        assert np.shares_memory(frames.values, data)
+    with pytest.raises(ValueError):
+        frames.values.setflags(write=True)
+
+
+@pytest.mark.parametrize("length,hop", [(0, 1), (4097, 1025), (8, 1), (8, 9), (8, 0), (True, 1)])
+def test_invalid_framing(length, hop):
+    with pytest.raises(ValueError):
+        frame_audio(immutable(np.zeros((16, 1))), sample_rate=8000, frame_length=length, hop=hop)
+
+
+def test_hann_exact_definition():
+    np.testing.assert_allclose(periodic_hann(4), [0, 0.5, 1, 0.5], atol=1e-15)
+    np.testing.assert_array_equal(periodic_hann(1), [0])
+    np.testing.assert_array_equal(periodic_hann(2), [0, 1])
+    assert periodic_hann(8)[-1] != 0
+    with pytest.raises(ValueError):
+        periodic_hann(4).setflags(write=True)
+
+
+@pytest.mark.parametrize("scaling", ["complex", "magnitude", "power"])
+def test_fft_dc_sine_multichannel_deterministic(scaling):
+    n = 64
+    data = immutable(
+        np.column_stack((np.ones(n * 3), np.sin(2 * np.pi * 4 * np.arange(n * 3) / n)))
+    )
+    kwargs = {
+        "sample_rate": 8000,
+        "n_fft": n,
+        "hop": n,
+        "window": "rectangular",
+        "scaling": scaling,
+        "batch_size": 2,
+    }
+    batches = list(stft_batches(data, **kwargs))
+    actual = np.concatenate([b.values for b in batches])
+    assert [b.first_frame for b in batches] == [0, 2]
+    assert actual.shape == (3, 2, 33)
+    expected = np.fft.rfft(data[:n].T)
+    if scaling != "complex":
+        expected = np.abs(expected)
+    if scaling == "power":
+        expected **= 2
+    np.testing.assert_allclose(actual[0], expected)
+    assert np.argmax(np.abs(actual[0, 1])) == 4
+    np.testing.assert_array_equal(
+        actual, np.concatenate([b.values for b in stft_batches(data, **kwargs)])
+    )
+    np.testing.assert_array_equal(frequency_bins(8000, n), np.arange(33) * 125)
+    with pytest.raises(ValueError):
+        batches[0].values.setflags(write=True)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        np.zeros((16, 1)),
+        immutable([[np.nan]]),
+        immutable([[np.inf]]),
+        immutable([[1]], ">i4"),
+        immutable([[1]], "<f4"),
+    ],
+)
+def test_invalid_numeric_input(data):
+    with pytest.raises(ValueError):
+        frame_audio(data, sample_rate=8000, frame_length=4, hop=1)
+
+
+@pytest.mark.parametrize(
+    "exception,kind,phase",
+    [
+        (ProcessTimeoutError(), "media_tool", "audio_precision_probe_timeout"),
+        (ProcessOutputLimitError(), "resource_limit", "audio_precision_probe_overflow"),
+        (ProcessInfrastructureError("start"), "infrastructure", "audio_precision_probe_process"),
+    ],
+)
+def test_process_failures_safe(monkeypatch, tmp_path, exception, kind, phase):
+    def fail(*args, **kwargs):
+        raise exception
+
+    monkeypatch.setattr(decoder, "run_bounded_process", fail)
+    with pytest.raises(PreprocessingError) as caught:
+        probe_audio(tmp_path / "secret.wav", executable="ffprobe", timeout=5)
+    assert (caught.value.kind, caught.value.phase) == (kind, phase)
+    assert "secret" not in str(caught.value)
+
+
+def test_malformed_and_unsupported(tmp_path):
+    source = tmp_path / "bad.wav"
+    source.write_bytes(b"not audio")
+    with pytest.raises(PreprocessingError, match="Media preprocessing failed"):
+        probe_audio(source, executable="ffprobe", timeout=5)
+    pcm(source, 16)
+    facts = probe_audio(source, executable="ffprobe", timeout=5)
+    facts = facts.model_copy(update={"declared_sample_format": "s64"})
+    with pytest.raises(PreprocessingError) as error:
+        decode_audio_window(
+            source, facts, IndexRange(start=0, stop=8000), executable="ffmpeg", timeout=5
+        )
+    assert error.value.phase == "audio_precision_unsupported_format"
+
+
+def test_producer_demand_and_legacy_regression(tmp_path):
+    source = tmp_path / "pcm.wav"
+    pcm(source, 24)
+    descriptor = _audio_descriptor(
+        duration_seconds=1.0, sample_rate_hz=8000, channels=1, codec="pcm_s24le"
+    ).model_copy(
+        update={
+            "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "size_bytes": source.stat().st_size,
+        }
+    )
+    tool = _FFmpegPreprocessingTool(executable="ffmpeg", timeout_seconds=10)
+    processor = AudioPreprocessor(AudioPreprocessingConfig(), media_tool=tool)
+    legacy = _case(tmp_path / "legacy", source, descriptor)
+    expanded = _case(tmp_path / "expanded", source, descriptor)
+    old = processor.prepare(legacy.request, PreprocessingRequirements(audio_spectrogram=True))
+    new = processor.prepare(
+        expanded.request,
+        PreprocessingRequirements(
+            audio_spectrogram=True, forensic=frozenset({ForensicCapability.AUDIO_SPECTRAL})
+        ),
+    )
+    assert old.forensic is None
+    assert new.forensic is not None
+    facts = [r.facts for r in new.forensic.representations]
+    windows = [f for f in facts if isinstance(f, AudioWindowDescriptor)]
+    spectral = [f for f in facts if isinstance(f, SpectralWindowDescriptor)]
+    assert len(windows) == len(spectral) == 1
+    assert windows[0].samples == IndexRange(start=0, stop=8000)
+    assert len(new.forensic.to_metadata()) < 16384
+    for artifact in old.artifacts:
+        matching = next(a for a in new.artifacts if a.artifact_id == artifact.artifact_id)
+        old_bytes = legacy.registry.with_local_artifact_path(artifact.artifact_ref, Path.read_bytes)
+        new_bytes = expanded.registry.with_local_artifact_path(
+            matching.artifact_ref, Path.read_bytes
+        )
+        assert old_bytes == new_bytes
+    for case in (legacy, expanded):
+        for event in case.registry.events:
+            if event[0] == "access":
+                assert any(e[0] == "register" and e[1] == event[1] for e in case.registry.events)
+
+
+def test_spectral_resource_and_finite_output():
+    data = immutable(np.zeros((4096, 8)))
+    with pytest.raises(ValueError, match="workspace"):
+        stft_batches(data, sample_rate=8000, n_fft=4096, hop=1024, batch_size=32)
+    with pytest.raises(ValueError, match="batch"):
+        stft_batches(data, sample_rate=8000, n_fft=4096, hop=1024, batch_size=33)
+    huge = immutable(np.full((8, 1), 1e308))
+    with pytest.raises(ValueError, match="nonfinite"):
+        list(stft_batches(huge, sample_rate=8000, n_fft=8, hop=8, scaling="power"))
+
+
+def test_malformed_probe_json(monkeypatch, tmp_path):
+    monkeypatch.setattr(decoder, "run_bounded_process", lambda *a, **k: ProcessResult(0, b"{}"))
+    with pytest.raises(PreprocessingError) as caught:
+        probe_audio(tmp_path / "x", executable="ffprobe", timeout=1)
+    assert caught.value.phase == "audio_precision_malformed"
+
+
+def test_u8_centering_and_high_rate(tmp_path):
+    source = tmp_path / "u8.wav"
+    values = bytes([0, 127, 128, 129, 255]) * 200
+    with wave.open(str(source), "wb") as stream:
+        stream.setparams((1, 1, 192000, 0, "NONE", "none"))
+        stream.writeframes(values)
+    facts = probe_audio(source, executable="ffprobe", timeout=5)
+    result = decode_audio_window(
+        source, facts, IndexRange(start=0, stop=1000), executable="ffmpeg", timeout=5
+    )
+    np.testing.assert_array_equal(
+        result.values[:, 0], np.frombuffer(values, "u1").astype("<i4") - 128
+    )
+    assert result.facts.decoder_format == "u8"
+
+
+def test_truncated_source_is_not_padded(tmp_path):
+    source = tmp_path / "truncated.wav"
+    pcm(source, 24)
+    source.write_bytes(source.read_bytes()[:-1])
+    facts = probe_audio(source, executable="ffprobe", timeout=5)
+    with pytest.raises(PreprocessingError) as error:
+        decode_audio_window(
+            source, facts, IndexRange(start=0, stop=8000), executable="ffmpeg", timeout=5
+        )
+    assert error.value.phase == "audio_precision_window_malformed_media"
+
+
+def test_unresolved_child_barrier_is_preserved(monkeypatch, tmp_path):
+    class Barrier:
+        def try_confirm_safe(self):
+            return False
+
+    barrier = Barrier()
+
+    def fail(*args, **kwargs):
+        raise ProcessInfrastructureError("termination", _cleanup_safety_barrier=barrier)
+
+    monkeypatch.setattr(decoder, "run_bounded_process", fail)
+    with pytest.raises(PreprocessingError) as caught:
+        probe_audio(tmp_path / "x", executable="ffprobe", timeout=5)
+    assert caught.value._cleanup_safety_barrier is barrier
+
+
+@pytest.mark.parametrize(
+    "change", ["format", "channels", "rate", "count", "pts", "length", "empty", "nonfinite"]
+)
+def test_decoder_sideband_mismatch_rejected(monkeypatch, tmp_path, change):
+    from fakedetector.preprocessing._models import AudioPrecisionFacts
+
+    facts = AudioPrecisionFacts(
+        stream_index=0,
+        codec="pcm_f64le",
+        source_bits=64,
+        decoder_format="unknown",
+        sample_rate=8000,
+        channels=1,
+        declared_sample_format="dbl",
+    )
+    line = (
+        b"[Parsed_ashowinfo_1 @ abc] n:0 pts:0 pts_time:0 fmt:dbl channels:1 "
+        b"chlayout:mono rate:8000 nb_samples:4 checksum:0\n"
+    )
+    replacements = {
+        "format": (b"fmt:dbl", b"fmt:s64"),
+        "channels": (b"channels:1", b"channels:2"),
+        "rate": (b"rate:8000", b"rate:16000"),
+        "count": (b"nb_samples:4", b"nb_samples:5"),
+    }
+    if change in replacements:
+        line = line.replace(*replacements[change])
+    if change == "pts":
+        line += line.replace(b"n:0 pts:0", b"n:1 pts:7")
+    payload = np.full(4, np.nan if change == "nonfinite" else 1, dtype="<f8").tobytes()
+    if change == "length":
+        payload += b"x"
+    if change == "empty":
+        payload = b""
+    monkeypatch.setattr(
+        decoder, "run_bounded_process", lambda *a, **k: ProcessResult(0, payload, line)
+    )
+    with pytest.raises(PreprocessingError):
+        decode_audio_window(
+            tmp_path / "x", facts, IndexRange(start=0, stop=4), executable="ffmpeg", timeout=5
+        )
+
+
+@pytest.mark.parametrize("declared", ["s16p", "s32p", "u8p", "fltp", "dblp"])
+def test_planar_decoder_format_is_retained(monkeypatch, tmp_path, declared):
+    from fakedetector.preprocessing._models import AudioPrecisionFacts
+
+    floating = declared in ("fltp", "dblp")
+    facts = AudioPrecisionFacts(
+        stream_index=0,
+        codec="fixture",
+        source_bits=None,
+        decoder_format="unknown",
+        sample_rate=8000,
+        channels=2,
+        declared_sample_format=declared,
+    )
+    line = (
+        f"[Parsed_ashowinfo_1 @ abc] n:0 pts:0 pts_time:0 fmt:{declared} channels:2 "
+        "chlayout:stereo rate:8000 nb_samples:4 checksum:0\n"
+    ).encode()
+    payload = bytes(4 * 2 * (8 if floating else 4))
+    monkeypatch.setattr(
+        decoder, "run_bounded_process", lambda *a, **k: ProcessResult(0, payload, line)
+    )
+    result = decode_audio_window(
+        tmp_path / "x", facts, IndexRange(start=0, stop=4), executable="ffmpeg", timeout=5
+    )
+    assert result.facts.decoded_planar
+    assert result.values.shape == (4, 2)
+
+
+def test_precision_only_does_not_write_samples(tmp_path):
+    from fakedetector.preprocessing._service import _prepare_audio_forensic
+
+    source = tmp_path / "short.wav"
+    pcm(source, 16, count=100)
+    descriptor = _audio_descriptor(
+        duration_seconds=0.0125, sample_rate_hz=8000, channels=1
+    ).model_copy(update={"sha256": hashlib.sha256(source.read_bytes()).hexdigest()})
+    case = _case(tmp_path / "case", source, descriptor)
+    artifacts = []
+    manifest = _prepare_audio_forensic(
+        case.request,
+        PreprocessingRequirements(forensic=frozenset({ForensicCapability.AUDIO_PRECISION})),
+        _FFmpegPreprocessingTool(executable="ffmpeg", timeout_seconds=5),
+        artifacts,
+        0.0125,
+        None,
+    )
+    assert len(manifest.representations) == 1
+    assert manifest.representations[0].facts.decoder_format == "s16"
+    assert artifacts == []
+    assert case.registry.events == []
+
+
+@pytest.mark.parametrize("total", [100, 80000, 160000, 320000])
+def test_window_values_and_coverage_match_source(tmp_path, total):
+    source = tmp_path / "long.wav"
+    expected = pcm(source, 24, count=total)
+    facts = probe_audio(source, executable="ffprobe", timeout=5)
+    for requested in select_audio_windows(total, 8000, 1):
+        result = decode_audio_window(source, facts, requested, executable="ffmpeg", timeout=5)
+        assert result.first_pts == requested.start
+        np.testing.assert_array_equal(result.values, expected[requested.start : requested.stop])
+
+
+def test_fft_aggregate_frames_and_tightened_policy():
+    data = immutable(np.zeros((32773, 1)))
+    with pytest.raises(ValueError):
+        stft_batches(data, sample_rate=8000, n_fft=4, hop=4)
+    data = immutable(np.zeros((64, 1)))
+    with pytest.raises(ValueError):
+        stft_batches(
+            data, sample_rate=8000, n_fft=64, hop=16, policy=ForensicResourcePolicy(fft_size=32)
+        )
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+def test_numeric_reader_rejects_nonfinite_audio(tmp_path, value):
+    from pydantic import BaseModel
+    from test_stage5_internal_models import _manifest
+
+    from fakedetector.analyzers._models import (
+        AnalyzerArtifactInput,
+        AnalyzerRequest,
+        _AnalyzerFileFacts,
+        _ReadOnlyAnalyzerInput,
+    )
+    from fakedetector.domain import MediaType
+    from fakedetector.preprocessing._models import AudioPrecisionFacts, NumericArtifact
+
+    class EmptySettings(BaseModel):
+        pass
+
+    numeric = NumericArtifact(artifact_id="samples", shape=(1, 1), dtype="<f8")
+    facts = AudioPrecisionFacts(
+        stream_index=0,
+        codec="pcm_f64le",
+        source_bits=64,
+        decoder_format="dbl",
+        sample_rate=8000,
+        channels=1,
+    )
+    manifest = _manifest(
+        facts,
+        AudioWindowDescriptor(stream_index=0, samples=IndexRange(start=0, stop=1), data=numeric),
+        media_type=MediaType.AUDIO,
+    )
+    path = tmp_path / "samples.raw"
+    path.write_bytes(np.array([value], dtype="<f8").tobytes())
+    request = AnalyzerRequest(
+        analysis_id="reader",
+        media_type=MediaType.AUDIO,
+        file_facts=_AnalyzerFileFacts.from_validated_file(
+            _audio_descriptor(duration_seconds=1.0, sample_rate_hz=8000, channels=1)
+        ),
+        source=_ReadOnlyAnalyzerInput(tmp_path / "unused"),
+        settings=EmptySettings(),
+        timeout_seconds=1,
+        metadata={"forensic": manifest.to_metadata()},
+        artifacts=(
+            AnalyzerArtifactInput(
+                artifact_id="samples",
+                artifact_type="audio_numeric",
+                content=_ReadOnlyAnalyzerInput(path),
+                format="forensic_raw",
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="nonfinite"):
+        request.read_numeric(numeric)
+
+
+def test_audio_sample_provenance_identity():
+    from pydantic import ValidationError
+    from test_stage5_internal_models import _audio_facts, _manifest, _sample_window
+
+    from fakedetector.preprocessing._models import ForensicManifest
+
+    manifest = _manifest(_audio_facts(), _sample_window(), media_type=MediaType.AUDIO)
+    payload = manifest.model_dump()
+    payload["representations"][1]["provenance"]["profile"] = "unrelated"
+    with pytest.raises(ValidationError, match="provenance"):
+        ForensicManifest.model_validate(payload)
+
+
+def test_audio_precision_budget_preflight_precedes_decode(tmp_path):
+    from dataclasses import replace
+
+    from fakedetector.preprocessing._service import _prepare_audio_forensic
+
+    source = tmp_path / "long.wav"
+    pcm(source, 16, count=800000)
+    descriptor = _audio_descriptor(duration_seconds=100.0, sample_rate_hz=8000, channels=1)
+    descriptor = descriptor.model_copy(
+        update={"sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+    )
+    case = _case(tmp_path / "case", source, descriptor)
+    request = replace(
+        case.request, artifact_budget=_artifact_budget(MediaType.AUDIO, max_size_mb=1)
+    )
+
+    class NoDecode(_FFmpegPreprocessingTool):
+        def precision_window(self, *args, **kwargs):
+            pytest.fail("resource rejection must precede decode")
+
+    with pytest.raises(PreprocessingError) as error:
+        _prepare_audio_forensic(
+            request,
+            PreprocessingRequirements(forensic=frozenset({ForensicCapability.AUDIO_SAMPLES})),
+            NoDecode(executable="ffmpeg", timeout_seconds=5),
+            [],
+            100.0,
+            None,
+        )
+    assert error.value.kind == "resource_limit"
+    assert case.registry.events == []
+
+
+def test_audio_producer_retains_incomplete_requested_coverage(tmp_path):
+    from fakedetector.preprocessing._service import _prepare_audio_forensic
+
+    source = tmp_path / "partial.wav"
+    pcm(source, 16)
+    descriptor = _audio_descriptor(duration_seconds=1.0, sample_rate_hz=8000, channels=1)
+    descriptor = descriptor.model_copy(
+        update={"sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+    )
+    case = _case(tmp_path / "case", source, descriptor)
+
+    class OverstatedDuration(_FFmpegPreprocessingTool):
+        def audio_precision(self, source, *, timeout_seconds):
+            facts = super().audio_precision(source, timeout_seconds=timeout_seconds)
+            return facts.model_copy(update={"declared_duration_seconds": 2.0})
+
+    manifest = _prepare_audio_forensic(
+        case.request,
+        PreprocessingRequirements(forensic=frozenset({ForensicCapability.AUDIO_SAMPLES})),
+        OverstatedDuration(executable="ffmpeg", timeout_seconds=5),
+        [],
+        1.0,
+        None,
+    )
+    window = manifest.representations[1].facts
+    assert window.requested_samples == IndexRange(start=0, stop=16000)
+    assert window.samples == IndexRange(start=0, stop=8000)
+    assert window.first_sample_pts == 0
+
+
+def test_dispatcher_numeric_audio_demand(tmp_path, monkeypatch):
+    raw_config = yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+    source = tmp_path / "multichannel.wav"
+    pcm(source, 32, channels=8, rate=192000, count=4096)
+    descriptor = _audio_descriptor(
+        duration_seconds=4096 / 192000, sample_rate_hz=192000, channels=8
+    )
+    descriptor = descriptor.model_copy(
+        update={"sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+    )
+    case = _case(tmp_path / "case", source, descriptor)
+    processor = PreprocessingDispatcher(AppConfig.model_validate(raw_config))
+    prepared = processor.prepare(
+        case.request,
+        PreprocessingRequirements(forensic=frozenset({ForensicCapability.AUDIO_SPECTRAL})),
+    )
+    spectra = [
+        r.facts
+        for r in prepared.forensic.representations
+        if isinstance(r.facts, SpectralWindowDescriptor)
+    ]
+    assert len(spectra) == 1
+    assert spectra[0].data.shape == (1, 8, 2049)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("production legacy demand must not invoke precision producers")
+
+    monkeypatch.setattr(_FFmpegPreprocessingTool, "audio_precision", forbidden)
+    legacy = _case(tmp_path / "legacy", source, descriptor)
+    assert processor.prepare(legacy.request).forensic is None
+
+
+@pytest.mark.parametrize(
+    "stderr,suffix",
+    [
+        (b"private path: Invalid data found when processing input", "malformed_media"),
+        (b"private decoder details", "decoder"),
+    ],
+)
+def test_audio_malformed_media_distinct_from_decoder_failure(monkeypatch, tmp_path, stderr, suffix):
+    monkeypatch.setattr(
+        decoder, "run_bounded_process", lambda *a, **k: ProcessResult(1, b"", stderr)
+    )
+    with pytest.raises(PreprocessingError) as caught:
+        probe_audio(tmp_path / "input", executable="ffprobe", timeout=1)
+    assert caught.value.phase == f"audio_precision_probe_{suffix}"
+    assert "private" not in str(caught.value)
