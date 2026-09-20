@@ -1323,8 +1323,9 @@ ownership semantics.
 Решения владельца G1–G5 приняты. Производитель новых представлений остаётся
 в preprocessing; источник, реестр артефактов, общий бюджет и private worker
 transport сохраняют прежнее владение. M1-A реализует типы, декларации,
-проверки размеров и координат; M1-B — original image/JPEG producer и numeric reader.
-Остальное извлечение относится к последующим M1-C–F.
+проверки размеров и координат; M1-B — original image/JPEG producer и numeric reader;
+M1-C — общие bounded deterministic image residual kernels. Остальное извлечение
+относится к последующим M1-D–F.
 Новые требования отсутствуют у четырёх текущих анализаторов версии `1.0.0`.
 Публичные схемы, локализация, риск, полнота и YAML не изменяются.
 
@@ -1440,6 +1441,49 @@ safety envelope, не production sampling defaults и не YAML. Значени�
 recursive metadata/raw EXIF/raw ffprobe JSON, путей и массивов; ответы worker
 по-прежнему ограничены 65 536 байтами. Числовые данные не входят в response или
 `raw_metrics`. Потолки данных не заменяют remaining timeout и контроль native RSS.
+
+**Residual kernels.** M1-C добавляет только private числовой слой в
+`preprocessing/_media_tools.py`; producer `residual_raster`, новый analyzer,
+Finding и постоянный derived artifact этим не создаются. Входной raster имеет
+dtype `uint8` и форму `H×W`, `H×W×1`, `H×W×3` RGB или `H×W×4` RGBA. Strided
+raster допустим, но каждая выбранная область копируется в C-order buffer с
+immutable `bytes` backing. До чтения области проверяются общий raster до `2^22`
+pixels, tuple из 1–16 прямоугольных core-областей до 512×512, их принадлежность
+raster и halo 0–2. У границы источника недостающий halo достраивается правилом
+`reflect` NumPy, эквивалентным `BORDER_REFLECT_101`; сохранённая tile shape равна
+`(core_height + 2*halo, core_width + 2*halo[, channels])`.
+
+Luminance сохраняет полный halo, имеет C-order little-endian `float64`, диапазон
+`[0, 255]` и ту же пространственную shape. Для grayscale значения только
+переводятся в `float64`; RGB использует фиксированное
+`0.299 R + 0.587 G + 0.114 B`. В RGBA alpha полностью игнорируется: он не
+маскирует RGB и не становится числовым сигналом. Smoothing использует только
+нормированные separable binomial kernels 3×3 (`[1,2,1]/4`) и 5×5
+(`[1,4,6,4,1]/16`); required halo равен соответственно 1 или 2. High-pass
+равен `luminance - smoothing`. Горизонтальная и вертикальная производные —
+центральные разности `[-0.5, 0, 0.5]` с halo 1. Все три операции возвращают
+ровно core shape и исходную oriented coverage; padding внутри kernels не
+выполняется. Диапазоны результатов: smoothing `[0,255]`, high-pass
+`[-255,255]`, производные `[-127.5,127.5]`.
+
+Локальная robust summary над одной core-plane содержит только `sample_count`,
+median, unscaled median absolute deviation и квартиль 25/75 с linear
+interpolation. Это числовые наблюдения без порогов и forensic labels. Все
+числовые входы и результаты конечны; `NaN`/`Inf`, иной dtype/shape, mutable
+backing и недостаточный halo отклоняются. Возвращаемые arrays имеют immutable
+`bytes` backing, поэтому включить запись через `setflags` нельзя. Фиксированные
+ядра, порядок NumPy reduction (`optimize=False`) и отсутствие RNG обеспечивают
+повторяемый результат для одинакового входа независимо от thread timing.
+
+Память проверяется через тот же `ForensicResourcePolicy` до вычисления. Для
+tile extraction оценка peak равна сумме retained output bytes плюс крупнейшая
+временная tile; luminance учитывает две float64 planes для grayscale и три для
+RGB/RGBA вместе с immutable copy; smoothing — две core planes, residual — три,
+две производные и robust summary — по четыре. Каждая оценка обязана быть не
+больше 32 MiB. Полноразмерная float64-копия raster не создаётся: численные
+операции выполняются только над выбранными tiles, а память исходного целого
+uint8 RGB/RGBA raster учитывается отдельно. Arrays не передаются через worker
+response, metadata или `raw_metrics`.
 
 **Preflight JPEG.** `JpegHeader.preflight` работает только с малыми
 типизированными SOF facts, до вызова native decoder: размеры 1–65535, 8-bit

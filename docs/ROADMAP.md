@@ -120,10 +120,11 @@ AFTER_MVP
 Статус Macros 0–8 Stage 11: DONE / owner accepted
 Последний завершённый Macro: Stage 12 Macro 0 — Stage Definition, Licensing & Third-Party Policy (DONE)
 Статус Stage 12: IN_PROGRESS
-Текущий Macro: Macro 1 — Forensic Preprocessing Foundations (IN_PROGRESS; Pass 1)
+Текущий Macro: Macro 1 — Forensic Preprocessing Foundations (IN_PROGRESS; M1-A–M1-C DONE)
 Статус Macro 0: DONE
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
-Следующее действие: решения владельца по Macro 1 G1–G5, затем отдельная задача M1-A
+Последний завершённый increment: M1-C — Shared Deterministic Image Residual Kernels (DONE)
+Следующее действие: M1-D — audio precision/STFT
 Следующий Macro: Macro 2 — Image Analyzer Expansion — Wave 1 (NOT_STARTED; после закрытия Macro 1)
 Будущие работы: Stage 12 Macros 2–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры: отсутствуют
@@ -150,12 +151,11 @@ Stage 12 явно разрешён владельцем 2026-09-20. Решени
 и уведомлениях находятся в `REFERENCES.md`. Оформление лицензии и изменения
 поставки проверены. После добавления `LICENSE` в Git владельцем повторные
 release-package/release-verification тесты прошли: **47 passed**.
-Macro 0 — `DONE`. Macro 1 — Forensic Preprocessing Foundations — `IN_PROGRESS`:
-Pass 1 от 2026-09-20 изучает архитектуру, зависимости и план реализации.
-Код и действующие контракты в Pass 1 не меняются. Следующий implementation
-increment — **M1-A**, после рассмотрения владельцем предложений G1–G5 ниже.
-Новые зависимости пока не допущены в runtime проекта; проверка кандидата
-в отдельной исследовательской среде не является таким допуском.
+Macro 0 — `DONE`. Macro 1 — Forensic Preprocessing Foundations — `IN_PROGRESS`.
+M1-A (contracts/limits), M1-B (original image/JPEG) и M1-C (deterministic image
+residual kernels) завершены. Следующий отдельный implementation increment —
+**M1-D: audio precision/STFT**. Решения G1–G5 закрыты; для M1-C новые
+runtime dependencies, публичные схемы и конфигурационные поля не вводились.
 
 ---
 
@@ -175,7 +175,7 @@ increment — **M1-A**, после рассмотрения владельцем
 | 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
 | 10 | Сборка и демонстрация MVP | DONE / CLOSED | Macro 1–3 DONE / owner accepted; independent post-remediation audit — PASS; S10-A01–S10-A04 CLOSED |
 | 11 | Post-MVP Normalization & Hardening | DONE / CLOSED | Macros 0–8 DONE / owner accepted; финальная проверка и strict certification — PASS; actionable findings 0 |
-| 12 | Analyzer Expansion, Licensing & Product Validation | IN_PROGRESS | Macro 0 DONE; Macro 1 IN_PROGRESS, Pass 1; лицензия проекта Apache-2.0 |
+| 12 | Analyzer Expansion, Licensing & Product Validation | IN_PROGRESS | Macro 0 DONE; Macro 1 IN_PROGRESS, M1-A–M1-C DONE; лицензия проекта Apache-2.0 |
 | 13+ | Дальнейшие расширения | AFTER_MVP / NOT_STARTED | ML, интеграции, история, масштабирование; отдельное решение владельца |
 
 ---
@@ -2337,7 +2337,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 | Macro | Название | Статус | Вход / результат и критерий перехода |
 |---:|---|---|---|
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
-| 1 | Forensic Preprocessing Foundations | IN_PROGRESS | Pass 1: аудит и план M1-A–M1-H; реализация после owner gates G1–G5 |
+| 1 | Forensic Preprocessing Foundations | IN_PROGRESS | M1-A–M1-C DONE; следующий increment M1-D, owner blockers отсутствуют |
 | 2 | Image Analyzer Expansion — Wave 1 | NOT_STARTED | После 1: согласованный набор image-методов, provenance, применимость, признаки и тесты |
 | 3 | Audio Analyzer Expansion — Wave 1 | NOT_STARTED | После 1 и планового закрытия 2: согласованный audio-набор на общих представлениях |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
@@ -2492,13 +2492,14 @@ metadata-границу; большие числовые данные — зар
 
 ### Последовательность M1-A–M1-H
 
-M1-A и M1-B — `DONE`; C–H остаются `NOT_STARTED`. Macro 1 — `IN_PROGRESS`.
+M1-A, M1-B и M1-C — `DONE`; D–H остаются `NOT_STARTED`.
+Macro 1 — `IN_PROGRESS`.
 
 | Increment | Зависимости | Проверяемый результат |
 |---|---|---|
 | M1-A — contracts/models/limits — DONE | Решения G1–G5 | Типизированные immutable facts, manifests и контракты будущих readers, applicability/coverage, source identity, пределы чисел/размеров; общий demand plan и бюджет до записи; уточнение внутренних контрактов без public schema expansion |
 | M1-B — original image/JPEG — DONE | A, G1/G4 | Ограниченные исходные факты, EXIF mapping всех 8 ориентаций, native quantized coefficients и таблицы с component/table IDs; изолированный decoder, общее bounded stderr для строгой обработки warnings, Unicode workspace и installed-wheel smoke |
-| M1-C — residual kernels | A, mapping из B | Небольшие собственные детерминированные residual/filter kernels с явными dtype, границами, halo и областью покрытия; без Noiseprint и копирования чужих ограниченных реализаций |
+| M1-C — residual kernels — DONE | A, mapping из B | Небольшие собственные детерминированные residual/filter kernels с явными dtype, границами, halo и областью покрытия; без Noiseprint и копирования чужих ограниченных реализаций |
 | M1-D — audio precision/STFT | A, G2/G3 | Source/decoded sample-format facts, точные sample indices и дополнительные окна; общий framing/window/rFFT/magnitude/power API, без чтения spectrogram PNG и без принудительного downmix/resample |
 | M1-E — bounded timing | A/B, G4 | Типизированные stream/packet/frame facts, signed PTS/DTS и rational time base; bounded ffprobe и переиспользование общей sideband-границы из B для timing; без raw JSON в analyzer inputs |
 | M1-F — dense windows/AV mapping | B/C/D/E | Ограниченные последовательные кадры из одного decode на окно с подтверждённой связью pixels/timestamps; mapping audio sample indices и video timeline, обработка offsets/discontinuities и неизвестных значений |
@@ -2506,7 +2507,7 @@ M1-A и M1-B — `DONE`; C–H остаются `NOT_STARTED`. Macro 1 — `IN_P
 | M1-H — independent closure audit | G | Отдельный независимый read-only аудит, отсутствие незакрытых findings, проверка критериев Macro 1 и решение о закрытии |
 
 Точный следующий implementation increment — отдельная задача
-**M1-C: residual kernels**. A задаёт общие contracts/limits для B–F;
+**M1-D: audio precision/STFT**. A задаёт общие contracts/limits для B–F;
 точные реализованные ограничения принадлежат `CONTRACTS.md` §7.5. Предложения
 Pass 1 ниже сохраняются как критерии дальнейшей проверки A/G, не production
 sampling defaults и не новые YAML-поля.
@@ -2564,7 +2565,37 @@ hard RAM quota. В M1-G остаются общий RSS/concurrency и native al
 а также strict clean committed-tree certification: эта проверка честно выполнена
 на изменённом working tree (`source_tree_clean=false`). Provenance guards не
 ослаблены. Git mutations и пересборка Graphify не выполнялись. Owner blockers
-отсутствуют; Stage 12 и Macro 1 остаются `IN_PROGRESS`. M1-C не начат.
+отсутствуют; Stage 12 и Macro 1 остаются `IN_PROGRESS`. Следующим increment был M1-C.
+
+### M1-C — shared deterministic image residual kernels — DONE
+
+Baseline: `23070b84dc322adf42d5cdbe56970fdcf538baa8`, ветка
+`feat/stage12-macro1-forensic-preprocessing-foundations`, начальное дерево чистое.
+Добавлен один private NumPy-слой для bounded tiles, BT.601 luminance, binomial
+smoothing 3×3/5×5, high-pass residual, центральных конечных разностей и robust
+local statistics. Tile boundary использует фиксированный `REFLECT_101`; kernel
+outputs покрывают ровно core, RGBA alpha не участвует в сигнале. Все числовые
+результаты — finite immutable little-endian float64 с `bytes` backing. Точный
+numeric/resource contract находится в `CONTRACTS.md` §7.5.
+
+Проверено 2026-09-21:
+
+- focused kernel tests — **52 passed**;
+- focused kernels + analyzer registry + все текущие production analyzers —
+  **170 passed**;
+- `uv run poe check` — **PASS**: pre-commit, mypy (65 source files), pytest
+  **2189 collected / 2172 passed / 17 skipped**, покрытие **90%**, CLI smoke;
+- максимальные raster/tile/count/halo limits проверены ниже, на границе и выше;
+  workspace preflight, pathological dimensions, strided input, invalid dtype/
+  shape, `NaN`/`Inf`, border, alpha и immutable buffers покрыты тестами;
+- итоговый diff и `git diff --check` проверены; public API/schema/YAML,
+  normalized image pipeline, четыре analyzer `1.0.0`, risk и completeness не
+  изменены.
+
+Новых зависимостей и provenance нет; `CHANGELOG.md` и `REFERENCES.md` не
+изменялись. Release certification и пересборка Graphify не запускались. Git
+mutations не выполнялись. Owner blockers отсутствуют; Stage 12 и Macro 1
+остаются `IN_PROGRESS`. Следующий increment — M1-D.
 
 ### Критерии ресурсов и достоверности для A/G
 
@@ -2630,6 +2661,9 @@ hard RAM quota. В M1-G остаются общий RSS/concurrency и native al
 - [x] EXIF 1–8, non-square image, component subsampling/padding и преобразование
   native bbox в normalized coordinates проверены; native JPEG DCT не вычисляется
   из PNG и не меняет координатную систему молча.
+- [x] Residual kernels ограничены tiles/halo/workspace, имеют фиксированные
+  dtype/range/border/coverage и immutable outputs; grayscale/RGB/RGBA, alpha,
+  determinism, finite validation и resource boundaries проверены без Findings.
 - [x] Проверены baseline/progressive/grayscale JPEG, non-contiguous quant table
   IDs, malformed/truncated/oversized input, native warnings/crash/timeout и
   Unicode workspace. Source markers не попадают в logs/results.

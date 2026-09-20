@@ -1,4 +1,4 @@
-"""Bounded media tools and structural JPEG preflight for trusted preprocessing."""
+"""Bounded media tools, image kernels, and JPEG preflight for trusted preprocessing."""
 
 from __future__ import annotations
 
@@ -15,6 +15,10 @@ from pathlib import Path
 from time import monotonic
 from typing import BinaryIO
 
+import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
+from numpy.typing import NDArray
+
 from fakedetector._generated_artifact_budget import (
     _GeneratedArtifactBudget,
     _GeneratedArtifactLimitError,
@@ -28,11 +32,442 @@ from fakedetector.core._bounded_process import (
 )
 from fakedetector.preprocessing._errors import PreprocessingError
 from fakedetector.preprocessing._models import JpegComponent, JpegHeader, JpegQuantizationTable
-from fakedetector.preprocessing._requirements import _FORENSIC_POLICY
+from fakedetector.preprocessing._requirements import (
+    _FORENSIC_POLICY,
+    ForensicResourcePolicy,
+)
 
 _MAX_FLAC_PROGRESS_BYTES = 16 * 1024
 _RIFF_UINT32_MAX = (1 << 32) - 1
 _FLAC_TOTAL_SAMPLES_MASK = (1 << 36) - 1
+_UINT8 = np.dtype("|u1")
+_FLOAT64 = np.dtype("<f8")
+_LUMINANCE_WEIGHTS = (0.299, 0.587, 0.114)
+_SMOOTHING_VECTORS = {
+    3: (0.25, 0.5, 0.25),
+    5: (0.0625, 0.25, 0.375, 0.25, 0.0625),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class TileRegion:
+    """Zero-based half-open core coverage in oriented raster coordinates."""
+
+    x: int
+    y: int
+    width: int
+    height: int
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.x) is not int
+            or type(self.y) is not int
+            or type(self.width) is not int
+            or type(self.height) is not int
+            or self.x < 0
+            or self.y < 0
+            or self.width <= 0
+            or self.height <= 0
+        ):
+            raise ValueError("tile region must contain nonnegative coordinates and positive size")
+
+
+@dataclass(frozen=True, slots=True)
+class ImageTile:
+    """Immutable uint8 core plus a complete REFLECT_101 halo."""
+
+    pixels: NDArray[np.uint8]
+    region: TileRegion
+    halo: int
+
+    def __post_init__(self) -> None:
+        _validate_halo(self.halo)
+        expected = (self.region.height + 2 * self.halo, self.region.width + 2 * self.halo)
+        if (
+            not isinstance(self.pixels, np.ndarray)
+            or self.pixels.dtype != _UINT8
+            or self.pixels.ndim not in (2, 3)
+            or self.pixels.shape[:2] != expected
+            or self.pixels.ndim == 3
+            and self.pixels.shape[2] not in (1, 3, 4)
+            or not self.pixels.flags.c_contiguous
+            or not _has_immutable_backing(self.pixels)
+        ):
+            raise ValueError("image tile does not satisfy the immutable uint8 layout")
+
+
+@dataclass(frozen=True, slots=True)
+class LuminanceTile:
+    """Immutable float64 luminance window retaining the source tile halo."""
+
+    values: NDArray[np.float64]
+    region: TileRegion
+    halo: int
+
+    def __post_init__(self) -> None:
+        _validate_halo(self.halo)
+        expected = (self.region.height + 2 * self.halo, self.region.width + 2 * self.halo)
+        _validate_float_plane(self.values, expected)
+        if np.any(self.values < 0.0) or np.any(self.values > 255.0):
+            raise ValueError("luminance values must be in the closed range [0, 255]")
+
+
+@dataclass(frozen=True, slots=True)
+class KernelPlane:
+    """Immutable float64 observation covering exactly one tile core."""
+
+    values: NDArray[np.float64]
+    coverage: TileRegion
+    halo_used: int
+
+    def __post_init__(self) -> None:
+        _validate_halo(self.halo_used)
+        _validate_float_plane(self.values, (self.coverage.height, self.coverage.width))
+
+
+@dataclass(frozen=True, slots=True)
+class GradientPlanes:
+    """Horizontal and vertical centered finite differences for equal coverage."""
+
+    horizontal: KernelPlane
+    vertical: KernelPlane
+
+    def __post_init__(self) -> None:
+        if (
+            self.horizontal.coverage != self.vertical.coverage
+            or self.horizontal.halo_used != 1
+            or self.vertical.halo_used != 1
+        ):
+            raise ValueError("gradient planes must have equal coverage and one-pixel halo")
+
+
+@dataclass(frozen=True, slots=True)
+class RobustLocalStatistics:
+    """Distribution observations without forensic labels or thresholds."""
+
+    sample_count: int
+    median: float
+    median_absolute_deviation: float
+    lower_quartile: float
+    upper_quartile: float
+
+    def __post_init__(self) -> None:
+        numeric = (
+            self.median,
+            self.median_absolute_deviation,
+            self.lower_quartile,
+            self.upper_quartile,
+        )
+        if (
+            type(self.sample_count) is not int
+            or self.sample_count <= 0
+            or not all(type(value) is float and np.isfinite(value) for value in numeric)
+            or self.median_absolute_deviation < 0.0
+            or self.lower_quartile > self.upper_quartile
+        ):
+            raise ValueError("robust local statistics are invalid")
+
+
+def extract_image_tiles(
+    raster: NDArray[np.generic],
+    regions: tuple[TileRegion, ...],
+    *,
+    halo: int,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> tuple[ImageTile, ...]:
+    """Copy bounded core windows with a fixed NumPy ``reflect``/REFLECT_101 halo.
+
+    ``raster`` may be C-contiguous or strided. Accepted layouts are HxW,
+    HxWx1, HxWx3 (RGB), and HxWx4 (RGBA), all uint8. Returned buffers are
+    C-order and backed by immutable ``bytes``.
+    """
+    height, width, channels = _validate_raster(raster)
+    if type(regions) is not tuple:
+        raise TypeError("tile regions must be a tuple")
+    policy.check_raster(width, height, tiles=len(regions))
+
+    output_sizes: list[int] = []
+    for region in regions:
+        if not isinstance(region, TileRegion):
+            raise TypeError("tile regions must contain TileRegion values")
+        policy.check_tile(region.width, region.height, halo, 1)
+        if region.x + region.width > width or region.y + region.height > height:
+            raise ValueError("tile region exceeds raster coverage")
+        output_sizes.append((region.width + 2 * halo) * (region.height + 2 * halo) * channels)
+
+    total_output = sum(output_sizes)
+    peak_workspace = total_output + max(output_sizes)
+    first = regions[0]
+    policy.check_tile(first.width, first.height, halo, peak_workspace)
+
+    tiles: list[ImageTile] = []
+    for region in regions:
+        desired_left = region.x - halo
+        desired_top = region.y - halo
+        desired_right = region.x + region.width + halo
+        desired_bottom = region.y + region.height + halo
+        source_left = max(desired_left, 0)
+        source_top = max(desired_top, 0)
+        source_right = min(desired_right, width)
+        source_bottom = min(desired_bottom, height)
+        crop = raster[source_top:source_bottom, source_left:source_right]
+        spatial_pad = (
+            (source_top - desired_top, desired_bottom - source_bottom),
+            (source_left - desired_left, desired_right - source_right),
+        )
+        if not halo:
+            padded = crop
+        elif raster.ndim == 3:
+            padded = np.pad(crop, (*spatial_pad, (0, 0)), mode="reflect")
+        else:
+            padded = np.pad(crop, spatial_pad, mode="reflect")
+        pixels = _immutable_uint8(padded)
+        tiles.append(ImageTile(pixels=pixels, region=region, halo=halo))
+    return tuple(tiles)
+
+
+def to_luminance(
+    tile: ImageTile,
+    *,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> LuminanceTile:
+    """Convert grayscale/RGB/RGBA uint8 to BT.601 float64 luminance.
+
+    RGBA alpha is intentionally ignored; only the first three RGB channels
+    contribute. The output retains the input halo and has range [0, 255].
+    """
+    _check_tile_instance(tile, policy)
+    height, width = tile.pixels.shape[:2]
+    plane_bytes = height * width * _FLOAT64.itemsize
+    workspace_planes = 2 if tile.pixels.ndim == 2 or tile.pixels.shape[2] == 1 else 3
+    policy.check_tile(
+        tile.region.width,
+        tile.region.height,
+        tile.halo,
+        workspace_planes * plane_bytes,
+    )
+
+    if tile.pixels.ndim == 2:
+        values = tile.pixels.astype(_FLOAT64, copy=True)
+    elif tile.pixels.shape[2] == 1:
+        values = tile.pixels[..., 0].astype(_FLOAT64, copy=True)
+    else:
+        values = np.empty((height, width), dtype=_FLOAT64)
+        temporary = np.empty_like(values)
+        np.multiply(tile.pixels[..., 0], _LUMINANCE_WEIGHTS[0], out=values)
+        np.multiply(tile.pixels[..., 1], _LUMINANCE_WEIGHTS[1], out=temporary)
+        np.add(values, temporary, out=values)
+        np.multiply(tile.pixels[..., 2], _LUMINANCE_WEIGHTS[2], out=temporary)
+        np.add(values, temporary, out=values)
+    return LuminanceTile(
+        values=_immutable_float64(values),
+        region=tile.region,
+        halo=tile.halo,
+    )
+
+
+def smooth_luminance(
+    tile: LuminanceTile,
+    *,
+    kernel_size: int = 3,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> KernelPlane:
+    """Apply a normalized binomial 3x3 or 5x5 kernel to the tile core."""
+    kernel, radius = _smoothing_kernel(kernel_size)
+    _check_luminance_tile(tile, required_halo=radius, policy=policy, workspace_planes=2)
+    values = _filter_core(tile, kernel)
+    return KernelPlane(
+        values=_immutable_float64(values),
+        coverage=tile.region,
+        halo_used=radius,
+    )
+
+
+def high_pass_residual(
+    tile: LuminanceTile,
+    *,
+    kernel_size: int = 3,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> KernelPlane:
+    """Subtract fixed binomial smoothing from luminance over the tile core."""
+    kernel, radius = _smoothing_kernel(kernel_size)
+    _check_luminance_tile(tile, required_halo=radius, policy=policy, workspace_planes=3)
+    smoothed = _filter_core(tile, kernel)
+    residual = np.subtract(_core_values(tile), smoothed)
+    return KernelPlane(
+        values=_immutable_float64(residual),
+        coverage=tile.region,
+        halo_used=radius,
+    )
+
+
+def finite_differences(
+    tile: LuminanceTile,
+    *,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> GradientPlanes:
+    """Return centered [−0.5, 0, 0.5] horizontal and vertical differences."""
+    _check_luminance_tile(tile, required_halo=1, policy=policy, workspace_planes=4)
+    halo = tile.halo
+    height = tile.region.height
+    width = tile.region.width
+    values = tile.values
+    horizontal = np.subtract(
+        values[halo : halo + height, halo + 1 : halo + width + 1],
+        values[halo : halo + height, halo - 1 : halo + width - 1],
+    )
+    horizontal *= 0.5
+    vertical = np.subtract(
+        values[halo + 1 : halo + height + 1, halo : halo + width],
+        values[halo - 1 : halo + height - 1, halo : halo + width],
+    )
+    vertical *= 0.5
+    coverage = tile.region
+    return GradientPlanes(
+        horizontal=KernelPlane(
+            values=_immutable_float64(horizontal),
+            coverage=coverage,
+            halo_used=1,
+        ),
+        vertical=KernelPlane(
+            values=_immutable_float64(vertical),
+            coverage=coverage,
+            halo_used=1,
+        ),
+    )
+
+
+def robust_local_statistics(
+    plane: KernelPlane,
+    *,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> RobustLocalStatistics:
+    """Return median, MAD, and quartiles for one bounded finite core plane."""
+    if not isinstance(plane, KernelPlane):
+        raise TypeError("statistics input must be a KernelPlane")
+    plane_bytes = plane.values.size * _FLOAT64.itemsize
+    policy.check_tile(
+        plane.coverage.width,
+        plane.coverage.height,
+        plane.halo_used,
+        4 * plane_bytes,
+    )
+    flattened = plane.values.reshape(-1)
+    median = float(np.median(flattened))
+    deviation = float(np.median(np.abs(flattened - median)))
+    quartiles = np.quantile(flattened, (0.25, 0.75), method="linear")
+    return RobustLocalStatistics(
+        sample_count=flattened.size,
+        median=median,
+        median_absolute_deviation=deviation,
+        lower_quartile=float(quartiles[0]),
+        upper_quartile=float(quartiles[1]),
+    )
+
+
+def _validate_raster(raster: NDArray[np.generic]) -> tuple[int, int, int]:
+    if not isinstance(raster, np.ndarray) or raster.dtype != _UINT8:
+        raise TypeError("raster must be a uint8 ndarray")
+    if raster.ndim == 2:
+        height, width = raster.shape
+        channels = 1
+    elif raster.ndim == 3 and raster.shape[2] in (1, 3, 4):
+        height, width, channels = raster.shape
+    else:
+        raise ValueError("raster shape must be HxW, HxWx1, HxWx3, or HxWx4")
+    if height <= 0 or width <= 0:
+        raise ValueError("raster dimensions must be positive")
+    return height, width, channels
+
+
+def _validate_halo(halo: int) -> None:
+    if type(halo) is not int or halo < 0:
+        raise ValueError("halo must be a nonnegative integer")
+
+
+def _validate_float_plane(values: NDArray[np.float64], expected: tuple[int, int]) -> None:
+    if (
+        not isinstance(values, np.ndarray)
+        or values.dtype != _FLOAT64
+        or values.ndim != 2
+        or values.shape != expected
+        or not values.flags.c_contiguous
+        or not _has_immutable_backing(values)
+        or not np.isfinite(values).all()
+    ):
+        raise ValueError("numeric plane must be finite immutable C-order little-endian float64")
+
+
+def _has_immutable_backing(array: NDArray[np.generic]) -> bool:
+    owner: object = array
+    while isinstance(owner, np.ndarray):
+        if owner.flags.writeable:
+            return False
+        owner = owner.base
+    return isinstance(owner, bytes)
+
+
+def _immutable_uint8(array: NDArray[np.generic]) -> NDArray[np.uint8]:
+    contiguous = np.ascontiguousarray(array, dtype=_UINT8)
+    payload = contiguous.tobytes(order="C")
+    return np.frombuffer(payload, dtype=_UINT8).reshape(contiguous.shape)
+
+
+def _immutable_float64(array: NDArray[np.generic]) -> NDArray[np.float64]:
+    contiguous = np.ascontiguousarray(array, dtype=_FLOAT64)
+    payload = contiguous.tobytes(order="C")
+    return np.frombuffer(payload, dtype=_FLOAT64).reshape(contiguous.shape)
+
+
+def _check_tile_instance(tile: ImageTile, policy: ForensicResourcePolicy) -> None:
+    if not isinstance(tile, ImageTile):
+        raise TypeError("luminance input must be an ImageTile")
+    policy.check_tile(tile.region.width, tile.region.height, tile.halo, 1)
+
+
+def _check_luminance_tile(
+    tile: LuminanceTile,
+    *,
+    required_halo: int,
+    policy: ForensicResourcePolicy,
+    workspace_planes: int,
+) -> None:
+    if not isinstance(tile, LuminanceTile):
+        raise TypeError("kernel input must be a LuminanceTile")
+    if tile.halo < required_halo:
+        raise ValueError("tile halo is smaller than the kernel radius")
+    workspace = tile.region.width * tile.region.height * _FLOAT64.itemsize * workspace_planes
+    policy.check_tile(tile.region.width, tile.region.height, tile.halo, workspace)
+
+
+def _smoothing_kernel(kernel_size: int) -> tuple[NDArray[np.float64], int]:
+    if type(kernel_size) is not int or kernel_size not in _SMOOTHING_VECTORS:
+        raise ValueError("smoothing kernel size must be 3 or 5")
+    vector = np.asarray(_SMOOTHING_VECTORS[kernel_size], dtype=_FLOAT64)
+    return np.multiply.outer(vector, vector), kernel_size // 2
+
+
+def _filter_core(tile: LuminanceTile, kernel: NDArray[np.float64]) -> NDArray[np.float64]:
+    size = kernel.shape[0]
+    radius = size // 2
+    windows = sliding_window_view(tile.values, (size, size))
+    start = tile.halo - radius
+    selected = windows[
+        start : start + tile.region.height,
+        start : start + tile.region.width,
+    ]
+    result: NDArray[np.float64] = np.einsum(
+        "ijkl,kl->ij", selected, kernel, dtype=_FLOAT64, optimize=False
+    )
+    return result
+
+
+def _core_values(tile: LuminanceTile) -> NDArray[np.float64]:
+    halo = tile.halo
+    return tile.values[
+        halo : halo + tile.region.height,
+        halo : halo + tile.region.width,
+    ]
 
 
 class _StreamedContainerError(Exception):

@@ -9,6 +9,7 @@ from io import BytesIO
 from pathlib import Path, PurePath
 from typing import cast
 
+import numpy as np
 import pytest
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ValidationError
@@ -32,6 +33,20 @@ from fakedetector.intake.temporary_input import PreparedSourceRef
 from fakedetector.lifecycle import AnalysisContext, AnalysisTask, TaskSnapshot
 from fakedetector.lifecycle.artifacts import WorkspaceArtifactRegistry
 from fakedetector.lifecycle.models import Stage5TaskData, _StoredAnalyzerResult
+from fakedetector.preprocessing._media_tools import (
+    GradientPlanes,
+    ImageTile,
+    KernelPlane,
+    LuminanceTile,
+    RobustLocalStatistics,
+    TileRegion,
+    extract_image_tiles,
+    finite_differences,
+    high_pass_residual,
+    robust_local_statistics,
+    smooth_luminance,
+    to_luminance,
+)
 from fakedetector.preprocessing._models import (
     AudioPrecisionFacts,
     AudioWindowDescriptor,
@@ -956,6 +971,441 @@ def test_prepared_models_are_immutable_defensive_and_path_free(tmp_path: Path) -
     assert str(tmp_path) not in repr(prepared_from_aliases)
 
     cleanup_prepared(accepted_source, registry)
+
+
+def _tile(
+    raster: np.ndarray,
+    *,
+    region: TileRegion | None = None,
+    halo: int = 0,
+    policy: ForensicResourcePolicy | None = None,
+) -> ImageTile:
+    height, width = raster.shape[:2]
+    selected = region or TileRegion(x=0, y=0, width=width, height=height)
+    kwargs = {} if policy is None else {"policy": policy}
+    return extract_image_tiles(raster, (selected,), halo=halo, **kwargs)[0]
+
+
+def _luminance(
+    raster: np.ndarray,
+    *,
+    region: TileRegion | None = None,
+    halo: int = 0,
+) -> LuminanceTile:
+    return to_luminance(_tile(raster, region=region, halo=halo))
+
+
+def _readonly_float64(values: object) -> np.ndarray:
+    array = np.asarray(values, dtype="<f8")
+    return np.frombuffer(array.tobytes(), dtype="<f8").reshape(array.shape)
+
+
+def _plane(values: object, *, halo_used: int = 0) -> KernelPlane:
+    array = _readonly_float64(values)
+    return KernelPlane(
+        values=array,
+        coverage=TileRegion(x=0, y=0, width=array.shape[1], height=array.shape[0]),
+        halo_used=halo_used,
+    )
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        (3, 4),
+        (3, 4, 1),
+    ],
+)
+def test_image_residual_luminance_accepts_explicit_grayscale_layouts(shape):
+    raster = np.arange(12, dtype=np.uint8).reshape(shape)
+    luminance = _luminance(raster)
+
+    assert luminance.values.dtype == np.dtype("<f8")
+    assert luminance.values.shape == (3, 4)
+    np.testing.assert_array_equal(luminance.values, np.arange(12).reshape(3, 4))
+
+
+def test_image_residual_luminance_uses_fixed_bt601_rgb_weights():
+    raster = np.asarray([[[255, 0, 0], [0, 255, 0], [0, 0, 255]]], dtype=np.uint8)
+    luminance = _luminance(raster)
+
+    np.testing.assert_allclose(luminance.values, [[76.245, 149.685, 29.07]], rtol=0, atol=1e-12)
+    assert np.all(luminance.values >= 0.0)
+    assert np.all(luminance.values <= 255.0)
+
+
+def test_image_residual_rgba_alpha_is_not_a_luminance_signal():
+    rgb = np.asarray([[[12, 34, 56], [78, 90, 123]]], dtype=np.uint8)
+    first = np.concatenate((rgb, np.zeros((1, 2, 1), dtype=np.uint8)), axis=2)
+    second = np.concatenate((rgb, np.full((1, 2, 1), 255, dtype=np.uint8)), axis=2)
+
+    first_values = _luminance(first).values
+    second_values = _luminance(second).values
+
+    np.testing.assert_array_equal(first_values, second_values)
+
+
+def test_image_residual_tile_border_is_fixed_reflect101_and_core_shape_is_preserved():
+    raster = np.asarray([[1, 2], [3, 4]], dtype=np.uint8)
+    tile = _tile(raster, halo=1)
+
+    np.testing.assert_array_equal(
+        tile.pixels,
+        np.asarray(
+            [
+                [4, 3, 4, 3],
+                [2, 1, 2, 1],
+                [4, 3, 4, 3],
+                [2, 1, 2, 1],
+            ],
+            dtype=np.uint8,
+        ),
+    )
+    assert tile.region == TileRegion(x=0, y=0, width=2, height=2)
+    assert tile.halo == 1
+
+
+def test_image_residual_tile_extraction_supports_noncontiguous_rasters():
+    source = np.arange(36, dtype=np.uint8).reshape(6, 6)
+    strided = source[::2, ::2]
+    assert not strided.flags.c_contiguous
+
+    actual = _tile(strided, region=TileRegion(x=1, y=1, width=2, height=2), halo=1)
+    expected = _tile(
+        np.ascontiguousarray(strided),
+        region=TileRegion(x=1, y=1, width=2, height=2),
+        halo=1,
+    )
+
+    np.testing.assert_array_equal(actual.pixels, expected.pixels)
+    assert actual.pixels.flags.c_contiguous
+
+
+@pytest.mark.parametrize("kernel_size,halo", [(3, 1), (5, 2)])
+def test_image_residual_smoothing_has_fixed_binomial_kernel_and_core_coverage(kernel_size, halo):
+    side = 7
+    raster = np.add.outer(
+        np.arange(side, dtype=np.uint8) * 10,
+        np.arange(side, dtype=np.uint8),
+    )
+    region = TileRegion(x=2, y=2, width=3, height=3)
+    smoothed = smooth_luminance(
+        _luminance(raster, region=region, halo=halo),
+        kernel_size=kernel_size,
+    )
+
+    assert smoothed.values.shape == (3, 3)
+    assert smoothed.coverage == region
+    assert smoothed.halo_used == halo
+    np.testing.assert_array_equal(smoothed.values, raster[2:5, 2:5])
+
+
+def test_image_residual_high_pass_residual_subtracts_smoothing_without_a_forensic_threshold():
+    raster = np.zeros((3, 3), dtype=np.uint8)
+    raster[1, 1] = 255
+    residual = high_pass_residual(
+        _luminance(raster, region=TileRegion(x=1, y=1, width=1, height=1), halo=1)
+    )
+
+    assert residual.values.shape == (1, 1)
+    assert residual.coverage == TileRegion(x=1, y=1, width=1, height=1)
+    assert residual.halo_used == 1
+    np.testing.assert_array_equal(residual.values, [[191.25]])
+
+
+def test_image_residual_high_pass_of_affine_ramp_is_zero_in_the_valid_core():
+    raster = np.add.outer(
+        np.arange(7, dtype=np.uint8) * 10,
+        np.arange(7, dtype=np.uint8),
+    )
+    residual = high_pass_residual(
+        _luminance(raster, region=TileRegion(x=2, y=2, width=3, height=3), halo=2),
+        kernel_size=5,
+    )
+
+    np.testing.assert_array_equal(residual.values, np.zeros((3, 3), dtype=np.float64))
+
+
+def test_image_residual_finite_differences_are_centered_and_cover_the_core():
+    raster = np.add.outer(
+        np.arange(5, dtype=np.uint8) * 10,
+        np.arange(5, dtype=np.uint8),
+    )
+    region = TileRegion(x=1, y=1, width=3, height=3)
+    gradients = finite_differences(_luminance(raster, region=region, halo=1))
+
+    assert gradients.horizontal.coverage == region
+    assert gradients.vertical.coverage == region
+    np.testing.assert_array_equal(gradients.horizontal.values, np.ones((3, 3)))
+    np.testing.assert_array_equal(gradients.vertical.values, np.full((3, 3), 10.0))
+
+
+def test_image_residual_robust_local_statistics_are_unlabelled_numeric_observations():
+    statistics = robust_local_statistics(_plane([[0.0, 1.0], [2.0, 100.0]]))
+
+    assert statistics == RobustLocalStatistics(
+        sample_count=4,
+        median=1.5,
+        median_absolute_deviation=1.0,
+        lower_quartile=0.75,
+        upper_quartile=26.5,
+    )
+
+
+def test_image_residual_identical_input_produces_bit_identical_results():
+    raster = np.arange(8 * 9 * 4, dtype=np.uint8).reshape(8, 9, 4)
+    region = TileRegion(x=2, y=2, width=5, height=4)
+
+    def observe() -> tuple[np.ndarray, ...]:
+        luminance = _luminance(raster, region=region, halo=2)
+        gradients = finite_differences(luminance)
+        return (
+            luminance.values,
+            smooth_luminance(luminance, kernel_size=5).values,
+            high_pass_residual(luminance, kernel_size=5).values,
+            gradients.horizontal.values,
+            gradients.vertical.values,
+        )
+
+    first = observe()
+    second = observe()
+    assert all(np.array_equal(left, right) for left, right in zip(first, second, strict=True))
+
+
+def test_image_residual_all_array_outputs_have_immutable_bytes_backing():
+    tile = _tile(np.arange(25, dtype=np.uint8).reshape(5, 5), halo=2)
+    luminance = to_luminance(tile)
+    smoothed = smooth_luminance(luminance, kernel_size=5)
+    residual = high_pass_residual(luminance, kernel_size=5)
+    gradients = finite_differences(luminance)
+
+    arrays = (
+        tile.pixels,
+        luminance.values,
+        smoothed.values,
+        residual.values,
+        gradients.horizontal.values,
+        gradients.vertical.values,
+    )
+    for array in arrays:
+        assert not array.flags.writeable
+        assert array.flags.c_contiguous
+        with pytest.raises(ValueError):
+            array.setflags(write=True)
+
+
+@pytest.mark.parametrize(
+    "raster",
+    [
+        np.zeros((1, 1), dtype=np.uint16),
+        np.zeros((1, 1), dtype=np.float32),
+        np.asarray([[np.nan]], dtype=np.float64),
+        np.asarray([[np.inf]], dtype=np.float64),
+        np.zeros((1, 1), dtype=np.bool_),
+    ],
+)
+def test_image_residual_raster_rejects_every_dtype_except_uint8(raster):
+    with pytest.raises(TypeError):
+        _tile(raster)
+
+
+@pytest.mark.parametrize(
+    "raster",
+    [
+        np.empty((0, 1), dtype=np.uint8),
+        np.empty((1, 0), dtype=np.uint8),
+        np.empty((1,), dtype=np.uint8),
+        np.empty((1, 1, 2), dtype=np.uint8),
+        np.empty((1, 1, 5), dtype=np.uint8),
+        np.empty((1, 1, 1, 1), dtype=np.uint8),
+    ],
+)
+def test_image_residual_raster_rejects_empty_or_unsupported_shapes(raster):
+    with pytest.raises(ValueError):
+        extract_image_tiles(raster, (TileRegion(0, 0, 1, 1),), halo=0)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        (-1, 0, 1, 1),
+        (0, -1, 1, 1),
+        (0, 0, 0, 1),
+        (0, 0, 1, 0),
+        (True, 0, 1, 1),
+        (0, 0, False, 1),
+    ],
+)
+def test_image_residual_tile_region_rejects_invalid_coordinates_and_dimensions(values):
+    with pytest.raises(ValueError):
+        TileRegion(*values)
+
+
+def test_image_residual_tile_request_rejects_invalid_collection_and_coverage():
+    raster = np.zeros((4, 4), dtype=np.uint8)
+    with pytest.raises(TypeError):
+        extract_image_tiles(raster, [TileRegion(0, 0, 1, 1)], halo=0)
+    with pytest.raises(ValueError):
+        extract_image_tiles(raster, (), halo=0)
+    with pytest.raises(TypeError):
+        extract_image_tiles(raster, (object(),), halo=0)
+    with pytest.raises(ValueError):
+        extract_image_tiles(raster, (TileRegion(3, 3, 2, 2),), halo=0)
+    with pytest.raises(ValueError):
+        extract_image_tiles(raster, (TileRegion(1 << 63, 0, 1, 1),), halo=0)
+
+
+def test_image_residual_raster_pixel_limit_accepts_below_and_at_but_rejects_above():
+    limit = 1 << 22
+    scalar = np.zeros((1, 1), dtype=np.uint8)
+    for width in (limit - 1, limit):
+        raster = np.broadcast_to(scalar, (1, width))
+        assert _tile(raster, region=TileRegion(0, 0, 1, 1)).pixels.shape == (1, 1)
+    with pytest.raises(ValueError):
+        _tile(
+            np.broadcast_to(scalar, (1, limit + 1)),
+            region=TileRegion(0, 0, 1, 1),
+        )
+
+
+def test_image_residual_tile_side_limit_accepts_below_and_at_but_rejects_above():
+    raster = np.zeros((513, 513), dtype=np.uint8)
+    for side in (511, 512):
+        tile = _tile(raster, region=TileRegion(0, 0, side, side))
+        assert tile.pixels.shape == (side, side)
+    with pytest.raises(ValueError):
+        _tile(raster, region=TileRegion(0, 0, 513, 513))
+
+
+def test_image_residual_tile_count_and_halo_limits_are_enforced_at_the_boundary():
+    raster = np.zeros((3, 3), dtype=np.uint8)
+    region = TileRegion(1, 1, 1, 1)
+    for count in (15, 16):
+        assert len(extract_image_tiles(raster, (region,) * count, halo=2)) == count
+    with pytest.raises(ValueError):
+        extract_image_tiles(raster, (region,) * 17, halo=2)
+    for halo in (0, 1, 2):
+        assert _tile(raster, region=region, halo=halo).pixels.shape == (
+            1 + 2 * halo,
+            1 + 2 * halo,
+        )
+    with pytest.raises(ValueError):
+        _tile(raster, region=region, halo=3)
+
+
+def test_image_residual_workspace_preflight_happens_before_luminance_allocation():
+    tile = _tile(np.zeros((1, 1), dtype=np.uint8))
+    with pytest.raises(ValueError):
+        to_luminance(tile, policy=ForensicResourcePolicy(residual_workspace_bytes=15))
+    result = to_luminance(tile, policy=ForensicResourcePolicy(residual_workspace_bytes=16))
+    assert result.values.shape == (1, 1)
+
+
+def test_image_residual_tile_workspace_counts_retained_outputs_and_largest_temporary():
+    raster = np.zeros((1, 1), dtype=np.uint8)
+    region = TileRegion(0, 0, 1, 1)
+    with pytest.raises(ValueError):
+        extract_image_tiles(
+            raster,
+            (region,),
+            halo=0,
+            policy=ForensicResourcePolicy(residual_workspace_bytes=1),
+        )
+    result = extract_image_tiles(
+        raster,
+        (region,),
+        halo=0,
+        policy=ForensicResourcePolicy(residual_workspace_bytes=2),
+    )
+    assert result[0].pixels.shape == (1, 1)
+
+
+@pytest.mark.parametrize("kernel_size", [True, 1, 4, 6])
+def test_image_residual_smoothing_rejects_unsupported_kernel_sizes(kernel_size):
+    tile = _luminance(np.zeros((5, 5), dtype=np.uint8), halo=2)
+    with pytest.raises(ValueError):
+        smooth_luminance(tile, kernel_size=kernel_size)
+
+
+def test_image_residual_kernels_reject_insufficient_halo_and_wrong_input_types():
+    luminance = _luminance(np.zeros((3, 3), dtype=np.uint8), halo=0)
+    with pytest.raises(ValueError):
+        smooth_luminance(luminance)
+    with pytest.raises(ValueError):
+        high_pass_residual(luminance)
+    with pytest.raises(ValueError):
+        finite_differences(luminance)
+    with pytest.raises(TypeError):
+        to_luminance(object())
+    with pytest.raises(TypeError):
+        smooth_luminance(object())
+    with pytest.raises(TypeError):
+        robust_local_statistics(object())
+
+
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
+def test_image_residual_numeric_planes_reject_nan_and_infinity(value):
+    with pytest.raises(ValueError):
+        LuminanceTile(
+            values=_readonly_float64([[value]]),
+            region=TileRegion(0, 0, 1, 1),
+            halo=0,
+        )
+
+
+def test_image_residual_numeric_planes_reject_wrong_range_dtype_layout_and_mutable_backing():
+    region = TileRegion(0, 0, 2, 2)
+    with pytest.raises(ValueError):
+        LuminanceTile(values=_readonly_float64([[-1.0, 0.0], [1.0, 2.0]]), region=region, halo=0)
+    with pytest.raises(ValueError):
+        LuminanceTile(values=_readonly_float64([[256.0, 0.0], [1.0, 2.0]]), region=region, halo=0)
+    with pytest.raises(ValueError):
+        LuminanceTile(values=np.zeros((2, 2), dtype=np.float32), region=region, halo=0)
+    with pytest.raises(ValueError):
+        LuminanceTile(values=np.zeros((2, 2), dtype=np.float64), region=region, halo=0)
+    with pytest.raises(ValueError):
+        LuminanceTile(values=_readonly_float64([[1.0, 2.0], [3.0, 4.0]]).T, region=region, halo=0)
+
+
+def test_image_residual_internal_value_objects_reject_inconsistent_layouts():
+    region = TileRegion(0, 0, 1, 1)
+    pixels = np.frombuffer(b"\x00", dtype=np.uint8).reshape(1, 1)
+    with pytest.raises(ValueError):
+        ImageTile(pixels=pixels, region=region, halo=-1)
+    with pytest.raises(ValueError):
+        ImageTile(pixels=np.zeros((1, 1), dtype=np.uint8), region=region, halo=0)
+    with pytest.raises(ValueError):
+        KernelPlane(values=_readonly_float64([[1.0, 2.0]]), coverage=region, halo_used=0)
+    plane = _plane([[1.0]], halo_used=1)
+    with pytest.raises(ValueError):
+        GradientPlanes(horizontal=plane, vertical=replace(plane, halo_used=0))
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"sample_count": 0},
+        {"median": float("nan")},
+        {"median_absolute_deviation": -1.0},
+        {"lower_quartile": 2.0, "upper_quartile": 1.0},
+    ],
+)
+def test_image_residual_robust_statistics_value_object_rejects_invalid_values(updates):
+    values = {
+        "sample_count": 1,
+        "median": 0.0,
+        "median_absolute_deviation": 0.0,
+        "lower_quartile": 0.0,
+        "upper_quartile": 0.0,
+    }
+    values.update(updates)
+    with pytest.raises(ValueError):
+        RobustLocalStatistics(**values)
+
+
+def test_image_residual_policy_model_still_rejects_a_workspace_above_the_global_ceiling():
+    with pytest.raises(ValidationError):
+        ForensicResourcePolicy(residual_workspace_bytes=(32 << 20) + 1)
 
 
 def test_prepared_media_rejects_source_mismatch_and_conflicting_artifact_ids(
