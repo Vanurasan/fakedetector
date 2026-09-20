@@ -222,6 +222,7 @@ def test_manifest_covers_every_recipient_file_without_self_hash(
     assert "uncommitted changes may be present" in manifest["artifact_set_claim"]
     assert "tree_clean_at_certification" not in manifest["source"]
     assert manifest["manifest_self_hash"] is None
+    assert "LICENSE" in covered_names
     assert {item["path"] for item in manifest["covered_files"]} == covered_names
     assert {item["path"] for item in manifest["required_companion_files"]} == (
         covered_names - {wheel}
@@ -234,12 +235,25 @@ def test_kit_inventory_rejects_missing_and_excluded_content(
 ) -> None:
     wheel = "sample_product-7.8.9-py3-none-any.whl"
     expected = kit._expected_kit_names(wheel)
+    assert expected == {
+        wheel,
+        "runtime-constraints.txt",
+        "LICENSE",
+        "config.example.yaml",
+        ".env.example",
+        "generate_release_demo_media.py",
+        "MVP_HANDOFF.md",
+        "CHANGELOG.md",
+        "release-manifest.json",
+    }
 
     kit._validate_kit_inventory(set(expected), expected)
     with pytest.raises(common.ReleaseVerificationError, match="inventory"):
         kit._validate_kit_inventory(expected | {"runtime/results/result.json"}, expected)
     with pytest.raises(common.ReleaseVerificationError, match="inventory"):
         kit._validate_kit_inventory(expected - {"MVP_HANDOFF.md"}, expected)
+    with pytest.raises(common.ReleaseVerificationError, match="inventory"):
+        kit._validate_kit_inventory(expected - {"LICENSE"}, expected)
 
 
 @pytest.mark.parametrize(

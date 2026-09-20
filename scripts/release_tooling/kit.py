@@ -14,6 +14,7 @@ _MANIFEST_NAME = "release-manifest.json"
 
 
 _COMPANION_SOURCES = {
+    "LICENSE": Path("LICENSE"),
     "config.example.yaml": Path("config/config.example.yaml"),
     ".env.example": Path(".env.example"),
     "generate_release_demo_media.py": Path("scripts/generate_release_demo_media.py"),

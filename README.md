@@ -7,11 +7,12 @@ FakeDetector 0.1.0 — локальный CPU-only MVP для предварит
 
 FakeDetector MVP 0.1.0 существует; Stages 1–11 — `DONE / CLOSED`.
 Stage 11 — Post-MVP Normalization & Hardening — `DONE / CLOSED`;
-Macros 0–8 — `DONE / owner accepted`, текущего Macro нет.
+Macros 0–8 Stage 11 — `DONE / owner accepted`.
 Финальная независимая проверка GPT-6 Astra High и строгая сертификация
 установленного артефакта — `PASS`; замечаний, требующих исправления, нет,
-гарантии MVP A–R сохранены. Следующие работы: Stage 12+ —
-`AFTER_MVP / NOT_STARTED`, только по отдельному решению владельца.
+гарантии MVP A–R сохранены. Владелец открыл Stage 12 — Analyzer Expansion,
+Licensing & Product Validation: `IN_PROGRESS`, текущий Macro 0 — определение
+этапа и лицензионная политика; новые анализаторы ещё не реализованы.
 Подробные основания закрытия и принятая политика Graphify `REBUILD_POLICY` —
 в [ROADMAP](docs/ROADMAP.md).
 
@@ -48,7 +49,7 @@ uv run python scripts/verify_release.py --development
 uv run python scripts/verify_release.py
 ```
 
-В versioned ZIP находятся wheel, runtime constraints, canonical config,
+В versioned ZIP находятся wheel, runtime constraints, `LICENSE`, canonical config,
 `.env.example`, demo generator, `MVP_HANDOFF.md`, canonical `CHANGELOG.md` и
 `release-manifest.json`. SHA-256 самого manifest и ZIP записываются во внешнем
 verification report, поэтому circular self-hash не используется.
@@ -140,4 +141,11 @@ uv run fakedetector --help
 
 ## Лицензия
 
-Лицензия пока не выбрана. Все права сохранены.
+Собственный код FakeDetector распространяется по
+[Apache License 2.0](LICENSE). SPDX: `Apache-2.0`.
+
+Сторонние зависимости, внешние `ffmpeg`/`ffprobe`, а также будущие модели,
+веса и наборы данных сохраняют собственные лицензии и условия. Лицензия
+FakeDetector не перелицензирует их или реализации, цитируемые как
+исследовательские источники. Правила и результаты проверки — в
+[REFERENCES](docs/REFERENCES.md).
