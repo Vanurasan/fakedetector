@@ -120,12 +120,12 @@ AFTER_MVP
 Статус Macros 0–8 Stage 11: DONE / owner accepted
 Последний завершённый Macro: Stage 12 Macro 0 — Stage Definition, Licensing & Third-Party Policy (DONE)
 Статус Stage 12: IN_PROGRESS
-Текущий Macro: отсутствует; Macro 0 завершён, Macro 1 ещё не начат
+Текущий Macro: Macro 1 — Forensic Preprocessing Foundations (IN_PROGRESS; Pass 1)
 Статус Macro 0: DONE
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
-Следующее действие: отдельная задача Macro 1 — Forensic Preprocessing Foundations
-Следующий Macro: Macro 1 — Forensic Preprocessing Foundations (NOT_STARTED)
-Будущие работы: Stage 12 Macros 1–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
+Следующее действие: решения владельца по Macro 1 G1–G5, затем отдельная задача M1-A
+Следующий Macro: Macro 2 — Image Analyzer Expansion — Wave 1 (NOT_STARTED; после закрытия Macro 1)
+Будущие работы: Stage 12 Macros 2–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры: отсутствуют
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
 Документационная база: сформирована
@@ -150,9 +150,12 @@ Stage 12 явно разрешён владельцем 2026-09-20. Решени
 и уведомлениях находятся в `REFERENCES.md`. Оформление лицензии и изменения
 поставки проверены. После добавления `LICENSE` в Git владельцем повторные
 release-package/release-verification тесты прошли: **47 passed**.
-Macro 0 — `DONE`; блокеров владельца нет.
-Следующий Macro — Macro 1 — Forensic Preprocessing Foundations, `NOT_STARTED`;
-его реализация в текущую задачу не входит.
+Macro 0 — `DONE`. Macro 1 — Forensic Preprocessing Foundations — `IN_PROGRESS`:
+Pass 1 от 2026-09-20 изучает архитектуру, зависимости и план реализации.
+Код и действующие контракты в Pass 1 не меняются. Следующий implementation
+increment — **M1-A**, после рассмотрения владельцем предложений G1–G5 ниже.
+Новые зависимости пока не допущены в runtime проекта; проверка кандидата
+в отдельной исследовательской среде не является таким допуском.
 
 ---
 
@@ -172,7 +175,7 @@ Macro 0 — `DONE`; блокеров владельца нет.
 | 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
 | 10 | Сборка и демонстрация MVP | DONE / CLOSED | Macro 1–3 DONE / owner accepted; independent post-remediation audit — PASS; S10-A01–S10-A04 CLOSED |
 | 11 | Post-MVP Normalization & Hardening | DONE / CLOSED | Macros 0–8 DONE / owner accepted; финальная проверка и strict certification — PASS; actionable findings 0 |
-| 12 | Analyzer Expansion, Licensing & Product Validation | IN_PROGRESS | Macro 0 DONE; следующий Macro 1 NOT_STARTED; лицензия проекта Apache-2.0 |
+| 12 | Analyzer Expansion, Licensing & Product Validation | IN_PROGRESS | Macro 0 DONE; Macro 1 IN_PROGRESS, Pass 1; лицензия проекта Apache-2.0 |
 | 13+ | Дальнейшие расширения | AFTER_MVP / NOT_STARTED | ML, интеграции, история, масштабирование; отдельное решение владельца |
 
 ---
@@ -2334,7 +2337,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 | Macro | Название | Статус | Вход / результат и критерий перехода |
 |---:|---|---|---|
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
-| 1 | Forensic Preprocessing Foundations | NOT_STARTED | После 0: утверждённые общие представления и ядра с ограничениями ресурсов, контролируемым доступом и тестами |
+| 1 | Forensic Preprocessing Foundations | IN_PROGRESS | Pass 1: аудит и план M1-A–M1-H; реализация после owner gates G1–G5 |
 | 2 | Image Analyzer Expansion — Wave 1 | NOT_STARTED | После 1: согласованный набор image-методов, provenance, применимость, признаки и тесты |
 | 3 | Audio Analyzer Expansion — Wave 1 | NOT_STARTED | После 1 и планового закрытия 2: согласованный audio-набор на общих представлениях |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
@@ -2424,7 +2427,7 @@ CPU/resource budgets, применимость и ограничения, сем
 Macro 5 продвигает только прошедшие эти критерии методы; остальные остаются
 исследовательскими кандидатами с записанной причиной отсрочки.
 
-## Macro 1 — общая криминалистическая предобработка
+## Macro 1 — общая криминалистическая предобработка — IN_PROGRESS
 
 Текущие представления описаны в `CONTRACTS.md` §7: нормализованный PNG,
 16-bit PCM, необязательная спектрограмма и разреженные кадры с целевыми
@@ -2447,6 +2450,152 @@ Macro 1 должен определить необходимые расшире�
 времени, лимиты, контролируемый доступ и очистку. Контрактные изменения
 оформляются в задаче Macro 1 по мере необходимости, не придумываются в Macro 0.
 Парсинг, ffprobe, STFT и декодирование не размножаются внутри анализаторов.
+
+### Pass 1 — аудит и план реализации
+
+Baseline: `a66295ed8a7165d078f714fe4f212675ea8fffdc`, ветка
+`feat/stage12-macro1-forensic-preprocessing-foundations`, исходное рабочее дерево
+чистое. Ниже находятся **предложения и критерии будущих задач**, а не принятые
+контракты. Реализация анализаторов, новая публичная схема и повышение текущих
+лимитов этим проходом не разрешаются. Проверенные сведения о JPEG-кандидатах
+и отдельном installed-wheel smoke находятся в `REFERENCES.md`.
+
+Предлагается сохранить владельца подготовки `PreprocessingDispatcher` и
+существующий путь `PreparedMedia → private worker transport → AnalyzerRequest`.
+Небольшие immutable facts проходят строгую типизированную проекцию в существующую
+metadata-границу; большие числовые данные — зарегистрированные артефакты с
+ограниченными manifest и readers. Новые артефакты создаются только по объединённым
+требованиям активного закрытого каталога. Residual/STFT kernels могут вычислять
+числовые порции внутри существующего analyzer worker из этих представлений;
+постоянно сохранять каждую производную матрицу не требуется.
+
+### Решения владельца перед реализацией — OPEN
+
+| Gate | Рекомендуемый выбор | Что требует явного решения |
+|---|---|---|
+| G1 — native JPEG | `pyjpegio==0.3.0`, только через ограниченный private preprocessing process; собственный bounded marker/header parser для preflight и безопасных фактов | Допустить новую native runtime dependency после проверок M1-B/G; альтернатива без зависимости не даёт native coefficients без собственной entropy-decoder реализации и меняет объём Macro 1 |
+| G2 — численные зависимости | NumPy и существующий OpenCV; SciPy не добавлять | Подтвердить достаточность первой версии residual/STFT без нового численного пакета |
+| G3 — точность аудио | Гибрид: факты кодека/формата + дополнительные ограниченные окна декодированных samples с сохранённой точностью | Metadata-only недостаточно для quantization/effective-bit-depth; signed-16 WAV сохраняет прежнюю роль |
+| G4 — timing owner | Private typed timing producer/reader внутри preprocessing, использующий общий `run_bounded_process` | Утвердить получение stream/packet/frame facts и ограниченного sideband того же decode; узко расширить subprocess boundary для одновременного bounded stdout/stderr, сохранив reap/cleanup guarantees |
+| G5 — контракты | Менять только внутренние preprocessing/requirements/reader contracts; public API/domain/config schema versions сохранить | Утвердить typed facts/manifests и преобразования координат/времени; `CONTRACTS.md` §7–8 уточняется в M1-A, новые публичные поля не вводятся |
+
+Выбор G1 не разрешает прямой вызов native decoder в родительском процессе,
+передачу raw markers анализаторам или приём коэффициентов после предупреждений
+декодера. У проверенного wheel выявлены soft recovery отсутствующего EOI и
+ограничение Unicode absolute path; M1-B должен проверять строгий отказ и запуск
+из controlled source workspace с существующим фиксированным ASCII-именем
+`source`, без копирования исходника или изменения cwd родителя.
+
+### Последовательность M1-A–M1-H
+
+Все implementation increments пока `NOT_STARTED`; Pass 1 их не реализует.
+
+| Increment | Зависимости | Проверяемый результат |
+|---|---|---|
+| M1-A — contracts/models/limits | Решения G1–G5 | Типизированные immutable facts, manifest/readers, applicability/coverage, source identity, пределы чисел/размеров; общий demand plan и бюджет до записи; уточнение внутренних контрактов без public schema expansion |
+| M1-B — original image/JPEG | A, G1/G4 | Ограниченные исходные факты, EXIF mapping всех 8 ориентаций, thumbnail facts/контролируемый thumbnail, native quantized coefficients и таблицы с component/table IDs; изолированный decoder, общее bounded stderr для строгой обработки warnings, Unicode workspace и wheel smoke |
+| M1-C — residual kernels | A, mapping из B | Небольшие собственные детерминированные residual/filter kernels с явными dtype, границами, halo и областью покрытия; без Noiseprint и копирования чужих ограниченных реализаций |
+| M1-D — audio precision/STFT | A, G2/G3 | Source/decoded sample-format facts, точные sample indices и дополнительные окна; общий framing/window/rFFT/magnitude/power API, без чтения spectrogram PNG и без принудительного downmix/resample |
+| M1-E — bounded timing | A/B, G4 | Типизированные stream/packet/frame facts, signed PTS/DTS и rational time base; bounded ffprobe и переиспользование общей sideband-границы из B для timing; без raw JSON в analyzer inputs |
+| M1-F — dense windows/AV mapping | B/C/D/E | Ограниченные последовательные кадры из одного decode на окно с подтверждённой связью pixels/timestamps; mapping audio sample indices и video timeline, обработка offsets/discontinuities и неизвестных значений |
+| M1-G — integration/hardening | B–F | Совместные count/byte/CPU budgets, безопасная сериализация, timeout/overflow/crash/reap/cleanup matrix, существующие consumers без изменения поведения; sdist → wheel → внешняя runtime-среда без checkout и dev packages |
+| M1-H — independent closure audit | G | Отдельный независимый read-only аудит, отсутствие незакрытых findings, проверка критериев Macro 1 и решение о закрытии |
+
+Точный следующий шаг — отдельная задача **M1-A**, а не реализация первого
+анализатора. В A сразу задаются общие contracts/limits для B–F, чтобы последующие
+increments не переопределяли transport и ownership каждый отдельно. Численные
+профили ниже являются стартовыми ограничениями для проверки в A/G, не production
+defaults и не новыми YAML-полями.
+
+### Критерии ресурсов и достоверности для A/G
+
+- Сохранить общий предел **256** generated artifacts и
+  `B_m = limits.max_file_size_mb[m] * 1_048_576` на все созданные файлы задачи,
+  включая текущие normalized/fragments/frames. Дополнительного независимого
+  бюджета не вводить. Уменьшение precision ради помещения в бюджет запрещено;
+  превышение сохраняет существующий `stage5_resource_limit`.
+- Небольшие facts/manifests вместе с прежней metadata должны помещаться в
+  **32 768 байт**; file facts — **16 384**, settings — **8 192**.
+  Ответ analyzer worker — **65 536**, canonical result — **65 509 байт**.
+  Большие arrays и таблицы событий не входят в ответ или `raw_metrics`.
+- Каждый новый binary reader проверяет формат, shape, dtype/endian, длину,
+  арифметическое переполнение и принадлежность artifact ID до выделения памяти;
+  object arrays/pickle, произвольные пути и raw EXIF/XMP/ICC запрещены.
+- JPEG: стартовый профиль — input не больше `min(32 MiB, input limit)`, до
+  256 markers/scans и 1 MiB совокупных marker payload, до 4 компонентов/таблиц
+  и `2^22` коэффициентов всех компонентов суммарно. Это до **16 MiB int32**
+  перед расходом общего бюджета; учитывать также native buffers и полную копию
+  сжатого JPEG. Thumbnail: до 512 KiB encoded и 512×512 decoded pixels.
+  Предварительная оценка проверяется до native allocation; crop после decode
+  не считается memory bound. Необычные coding modes и переопределение таблиц
+  между scans требуют явной применимости, не приблизительных коэффициентов.
+- Residual: стартовый tile ≤512×512 с halo ≤2 для kernels ≤5×5, до 16 tiles;
+  вычисление float64 с оценкой временных массивов ≤32 MiB. Общий reader
+  допускает ≤`2^22` decoded raster pixels для этого профиля и учитывает память
+  целого RGB/RGBA raster отдельно: вырезание tile после полной загрузки
+  изображения само по себе не ограничивает память. Производные residual arrays
+  выдаются порциями, постоянная полная карта не создаётся автоматически.
+- Audio: до 3 окон по ≤10 секунд, каждое ≤`2^20` samples суммарно по каналам,
+  rate ≤192 kHz, channels ≤8. Float64 занимает до 8 MiB на окно; native integer
+  precision хранится без потерь в int32. Это дополнительные представления,
+  не новые условия Stage 3 admission. STFT: `n_fft ≤4096`, `hop ≥n_fft/4`,
+  до 8192 time/channel frames, batch ≤32, без полной STFT в памяти.
+  Учитывать complex128 workspace NumPy; границы окон и channel policy явные.
+- Timing: до 3 областей, на выбранный stream/область до 256 packets и
+  512 frame records; до 2 streams, общий предел 4608 records. Каждый ffprobe
+  output ≤256 KiB, общий typed timing artifact ≤1 MiB. Сохранять фактически
+  прочитанные границы: `read_intervals` seek не гарантирует запрошенный start.
+  Переполнение не превращать в успешно разобранный обрезанный JSON.
+- Dense video: до 3 окон, ≤32 последовательных кадров и ≤2 секунд на окно,
+  максимум 96 кадров; дополнительный RGB24 raster внутри 640×360 с сохранением
+  aspect ratio, без upscale. Максимум pixels output — **66 355 200 байт**
+  плюс manifests, всё внутри `B_video`; обрабатывать rolling batches, не весь
+  набор сразу. Native decode gate — до 3840×2160, включая изменение размеров
+  потока; resize после decode не гарантирует низкий native RSS. Размеры,
+  scaling/color conversion и фактическое покрытие всегда сохраняются.
+- Потолки дают проверяемые объёмы данных: 16 MiB coefficients, 8 MiB sample
+  window, примерно 63.3 MiB всех dense RGB frames. Их применимость и пиковый RSS
+  нужно измерить вместе с существующими артефактами и configured concurrency;
+  они не обещают hard OS RAM quota и не гарантируют покрытие всего входа.
+- Все операции получают `min(operation timeout, remaining overall budget)`.
+  Стартовые потолки для проверки: 15 s на probe, 30 s на native JPEG/window decode;
+  residual/STFT выполняются внутри существующего bounded analyzer invocation.
+  Seek/preroll, native allocation и задержка декодера учитываются отдельно от
+  числа выходных кадров; короткий output не означает короткую работу.
+
+### Критерии закрытия Macro 1
+
+- [ ] Решения G1–G5 рассмотрены и записаны в соответствующих источниках истины.
+- [ ] A–G выполнены; first-wave consumers имеют конкретные входные представления,
+  но сами новые анализаторы в Macro 1 не реализованы.
+- [ ] EXIF 1–8, non-square image, component subsampling/padding и преобразование
+  native bbox в normalized coordinates проверены; native JPEG DCT не вычисляется
+  из PNG и не меняет координатную систему молча.
+- [ ] Проверены baseline/progressive/grayscale JPEG, non-contiguous quant table
+  IDs, malformed/truncated/oversized input, native warnings/crash/timeout и
+  Unicode workspace. Source markers не попадают в logs/results.
+- [ ] Проверены integer PCM 8/16/24/32, float samples, silence/impulse/tone,
+  stereo/channels, последние неполные окна и отсутствие потери >16-bit evidence;
+  ffprobe sample format не выдаётся за effective bit depth или историю монтажа.
+- [ ] Проверены CFR/VFR, B-frame reorder, missing/negative/duplicate timestamps,
+  discontinuities, ненулевые разные stream starts, отсутствие audio, короткий
+  EOF и long-GOP seek. Timing и dense frames связаны одним decode, не только
+  совпадением порядковых номеров двух независимых запусков.
+- [ ] Derived duration/drift отличается от metadata/decoder facts; разрывы между
+  отдельными окнами не выдаются за наблюдавшиеся discontinuities. Ни `avg_frame_rate`,
+  ни совпадение длительностей не доказывают CFR/AV synchronization.
+- [ ] Все новые файлы зарегистрированы до записи и очищаются существующим lifecycle;
+  одновременный stdout/stderr ограничен, overflow/timeout подтверждают reap,
+  unresolved reader сохраняет cleanup safety barrier.
+- [ ] Требования активного каталога объединяются до подготовки, каждый общий
+  артефакт создаётся один раз; текущие четыре analyzers и public semantics сохранены.
+- [ ] Проверены installed-wheel execution, import origin и lock-derived runtime
+  constraints; лицензии точных native artifacts оформлены; нет checkout dependency,
+  моделей, ML runtime, новых конфигурационных полей или параллельного storage.
+- [ ] M1-H завершён без незакрытых findings; Macro 1 закрывается отдельным решением.
+
+В Pass 1 не запускались project test suite, release certification и пересборка
+Graphify. Изменения реализации и Git mutations не выполнялись.
 
 ## Macro 6 — корреляция и смысл результата
 
