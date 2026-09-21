@@ -120,11 +120,11 @@ AFTER_MVP
 Статус Macros 0–8 Stage 11: DONE / owner accepted
 Последний завершённый Macro: Stage 12 Macro 0 — Stage Definition, Licensing & Third-Party Policy (DONE)
 Статус Stage 12: IN_PROGRESS
-Текущий Macro: Macro 1 — Forensic Preprocessing Foundations (IN_PROGRESS; M1-A–M1-E DONE)
+Текущий Macro: Macro 1 — Forensic Preprocessing Foundations (IN_PROGRESS; M1-A–M1-F DONE)
 Статус Macro 0: DONE
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
-Последний завершённый increment: M1-E — Bounded Media Timing Facts (DONE)
-Следующее действие: M1-F — dense windows/AV mapping
+Последний завершённый increment: M1-F — Dense Video Windows & A/V Timing Mapping (DONE)
+Следующее действие: M1-G — integration/hardening
 Следующий Macro: Macro 2 — Image Analyzer Expansion — Wave 1 (NOT_STARTED; после закрытия Macro 1)
 Будущие работы: Stage 12 Macros 2–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры: отсутствуют
@@ -153,9 +153,10 @@ Stage 12 явно разрешён владельцем 2026-09-20. Решени
 release-package/release-verification тесты прошли: **47 passed**.
 Macro 0 — `DONE`. Macro 1 — Forensic Preprocessing Foundations — `IN_PROGRESS`.
 M1-A (contracts/limits), M1-B (original image/JPEG), M1-C (deterministic image
-residual kernels), M1-D (audio precision/STFT) и M1-E (bounded timing) завершены.
-Следующий отдельный increment — **M1-F: dense windows/AV mapping**.
-Решения G1–G5 закрыты; в M1-E новые
+residual kernels), M1-D (audio precision/STFT), M1-E (bounded timing) и M1-F
+(dense windows/AV mapping) завершены.
+Следующий отдельный increment — **M1-G: integration/hardening**.
+Решения G1–G5 закрыты; в M1-F новые
 runtime dependencies, публичные схемы и конфигурационные поля не вводились.
 
 ---
@@ -2338,7 +2339,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 | Macro | Название | Статус | Вход / результат и критерий перехода |
 |---:|---|---|---|
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
-| 1 | Forensic Preprocessing Foundations | IN_PROGRESS | M1-A–M1-E DONE; следующий increment M1-F, owner blockers отсутствуют |
+| 1 | Forensic Preprocessing Foundations | IN_PROGRESS | M1-A–M1-F DONE; следующий increment M1-G, owner blockers отсутствуют |
 | 2 | Image Analyzer Expansion — Wave 1 | NOT_STARTED | После 1: согласованный набор image-методов, provenance, применимость, признаки и тесты |
 | 3 | Audio Analyzer Expansion — Wave 1 | NOT_STARTED | После 1 и планового закрытия 2: согласованный audio-набор на общих представлениях |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
@@ -2493,7 +2494,7 @@ metadata-границу; большие числовые данные — зар
 
 ### Последовательность M1-A–M1-H
 
-M1-A, M1-B, M1-C, M1-D и M1-E — `DONE`; F–H остаются `NOT_STARTED`.
+M1-A, M1-B, M1-C, M1-D, M1-E и M1-F — `DONE`; G–H остаются `NOT_STARTED`.
 Macro 1 — `IN_PROGRESS`.
 
 | Increment | Зависимости | Проверяемый результат |
@@ -2503,12 +2504,12 @@ Macro 1 — `IN_PROGRESS`.
 | M1-C — residual kernels — DONE | A, mapping из B | Небольшие собственные детерминированные residual/filter kernels с явными dtype, границами, halo и областью покрытия; без Noiseprint и копирования чужих ограниченных реализаций |
 | M1-D — audio precision/STFT — DONE | A, G2/G3 | Source/decoded sample-format facts, точные sample indices и дополнительные окна; общий framing/window/rFFT/magnitude/power API, без чтения spectrogram PNG и без принудительного downmix/resample |
 | M1-E — bounded timing — DONE | A/B, G4 | Типизированные stream/packet/frame facts, signed PTS/DTS и rational time base; bounded ffprobe и переиспользование общей sideband-границы из B для timing; без raw JSON в analyzer inputs |
-| M1-F — dense windows/AV mapping | B/C/D/E | Ограниченные последовательные кадры из одного decode на окно с подтверждённой связью pixels/timestamps; mapping audio sample indices и video timeline, обработка offsets/discontinuities и неизвестных значений |
+| M1-F — dense windows/AV mapping — DONE | B/C/D/E | Ограниченные последовательные RGB frames и timing из одного decode; exact региональные audio packet/video frame endpoints и offsets, явные coverage/unknown states без глобальной continuity и precision audio/STFT demand |
 | M1-G — integration/hardening | B–F | Совместные count/byte/CPU budgets, безопасная сериализация, timeout/overflow/crash/reap/cleanup matrix, существующие consumers без изменения поведения; sdist → wheel → внешняя runtime-среда без checkout и dev packages |
 | M1-H — independent closure audit | G | Отдельный независимый read-only аудит, отсутствие незакрытых findings, проверка критериев Macro 1 и решение о закрытии |
 
 Точный следующий implementation increment — отдельная задача
-**M1-F: dense windows/AV mapping**. A задаёт общие contracts/limits для B–F;
+**M1-G: integration/hardening**. A задаёт общие contracts/limits для B–F;
 точные реализованные ограничения принадлежат `CONTRACTS.md` §7.5. Предложения
 Pass 1 ниже сохраняются как критерии дальнейшей проверки A/G, не production
 sampling defaults и не новые YAML-поля.
@@ -2670,6 +2671,42 @@ Focused suite после коррекций: **492 passed**. Итоговый `u
 ограничен packets; dense RGB и AV mapping не реализованы. Общий native
 RSS/concurrency остаётся предметом M1-G. Owner blockers отсутствуют.
 Stage 12 и Macro 1 остаются `IN_PROGRESS`. Следующий increment — **M1-F**.
+
+### M1-F — dense video windows и A/V timing mapping — DONE
+
+Baseline: `0223ad8e38c40daa369d6a1e7bed80769e7bb995`, ветка
+`feat/stage12-macro1-forensic-preprocessing-foundations`, начальное дерево чистое.
+Dense producer и региональное A/V mapping подключены к существующему demand plan.
+Семантика, same-decode гарантия, geometry, artifact/process bounds и ограничения
+принадлежат `CONTRACTS.md` §7.5. Samples/STFT не активируются timing/mapping demand.
+Текущие четыре анализатора и sampled-video путь, их версии, public API/config,
+зависимости, Findings, risk/completeness не изменены.
+
+Проверены generated CFR/VFR/B-frame video, H.264/RGB, small/odd/scaled geometry,
+high-FPS/frame boundary, независимый temporal limit при low FPS, merged regions,
+begin/middle/end и ненулевой start. Проверены pixel/timing identity/count/checksum,
+malformed/partial output, timeout, реальные stdout/stderr overflow с reap,
+artifact ownership/cleanup/barrier и preflight. A/V тесты покрывают независимые
+time bases, большие signed ticks, offsets, resets, partial/empty/unknown regions,
+missing streams и отсутствие ложной глобальной continuity.
+
+После owner review generic M1-E timing и dense same-decode timing разделены
+типизированной ролью. Восстановлены role-specific provenance checks; AV mapping
+всегда использует generic observations. Добавлены проверки неизменности таблиц
+при совместном demand и отказов при подмене provenance/role/artifact binding.
+Существующие resource ceilings сохранены; oversized composition отклоняется
+preflight, без молчаливого уменьшения generic timing coverage.
+
+После targeted remediation focused suite: **664 passed**. `uv run poe check`:
+**2436 passed, 17 skipped, coverage 90%**; pre-commit, Ruff, mypy (65 source files)
+и CLI smoke — PASS. `git diff --check` — PASS.
+
+CHANGELOG фиксирует смену внутреннего AV контракта; REFERENCES — интерфейсы
+showinfo/trim без копирования внешнего кода. Реализация остаётся в существующих
+tracked файлах. Git mutations, Graphify rebuild и strict release certification
+не выполнялись. Native decoder RSS/concurrency и общий hardening остаются M1-G.
+Owner blockers отсутствуют. Stage 12 и Macro 1 остаются `IN_PROGRESS`.
+Следующий increment — **M1-G**.
 
 ### Критерии ресурсов и достоверности для A/G
 

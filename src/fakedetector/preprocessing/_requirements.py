@@ -67,11 +67,8 @@ _DEPENDENCIES = {
     ForensicCapability.AUDIO_SAMPLES: (ForensicCapability.AUDIO_PRECISION,),
     ForensicCapability.AUDIO_SPECTRAL: (ForensicCapability.AUDIO_SAMPLES,),
     ForensicCapability.TIMING_RECORDS: (ForensicCapability.STREAM_TIMING,),
-    ForensicCapability.DENSE_VIDEO: (ForensicCapability.TIMING_RECORDS,),
-    ForensicCapability.AV_TIMELINE: (
-        ForensicCapability.TIMING_RECORDS,
-        ForensicCapability.AUDIO_SAMPLES,
-    ),
+    ForensicCapability.DENSE_VIDEO: (ForensicCapability.STREAM_TIMING,),
+    ForensicCapability.AV_TIMELINE: (ForensicCapability.TIMING_RECORDS,),
 }
 
 

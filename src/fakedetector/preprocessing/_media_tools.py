@@ -10,6 +10,7 @@ import mmap
 import os
 import re
 import sys
+import zlib
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -37,6 +38,7 @@ from fakedetector.core._bounded_process import (
 from fakedetector.preprocessing._errors import PreprocessingError
 from fakedetector.preprocessing._models import (
     AudioPrecisionFacts,
+    DenseVideoWindowDescriptor,
     IndexRange,
     JpegComponent,
     JpegHeader,
@@ -528,6 +530,28 @@ class _FFmpegPreprocessingTool:
             requested,
             region,
             kind,
+            timeout=self._effective_timeout(timeout_seconds),
+        )
+
+    def dense_window(
+        self,
+        source: Path,
+        target: Path,
+        facts: StreamTimingFacts,
+        requested: TimingInterval,
+        region: int,
+        *,
+        artifact_budget: _GeneratedArtifactBudget,
+        timeout_seconds: float | None,
+    ) -> tuple[DenseVideoWindowDescriptor, TimingRecordsDescriptor, NDArray[np.int64]]:
+        return decode_dense_window(
+            source,
+            target,
+            facts,
+            requested,
+            region,
+            executable=self._executable,
+            artifact_budget=artifact_budget,
             timeout=self._effective_timeout(timeout_seconds),
         )
 
@@ -1842,6 +1866,8 @@ def probe_timing_stream(
             duration_ticks=_timing_integer(stream.get("duration_ts")),
             declared_start=_timing_decimal(stream.get("start_time")),
             declared_duration=_timing_decimal(stream.get("duration")),
+            native_width=_timing_integer(stream.get("width")) if kind == "video" else None,
+            native_height=_timing_integer(stream.get("height")) if kind == "video" else None,
             avg_frame_rate=_timing_rate(stream.get("avg_frame_rate")),
             r_frame_rate=_timing_rate(stream.get("r_frame_rate")),
         )
@@ -2023,3 +2049,280 @@ def validate_timing_values(
         or _timing_coverage(values, descriptor.requested) != descriptor.coverage
     ):
         raise ValueError("timing coverage does not match observed records")
+
+
+_DENSE_LINE = re.compile(
+    rb"n:\s*(\d+) pts:\s*(-?\d+|NOPTS) pts_time:\S+\s+"
+    rb"(?:duration:\s*(-?\d+|NOPTS) duration_time:\S+\s+)?"
+    rb"fmt:([a-zA-Z0-9_]+) (?:cl:\S+ )?sar:\d+/\d+ s:(\d+)x(\d+) "
+    rb"i:[PTB?] iskey:([01]) type:([A-Z?]+) checksum:([0-9A-Fa-f]{8}) "
+    rb"plane_checksum:\[[0-9A-Fa-f ]+\] mean:\[[0-9. ]+\] stdev:\[[0-9. ]+\]"
+)
+
+
+def dense_geometry(facts: StreamTimingFacts) -> tuple[int, int]:
+    width, height = facts.native_width, facts.native_height
+    policy = _FORENSIC_POLICY
+    if (
+        facts.stream_kind != "video"
+        or width is None
+        or height is None
+        or not 0 < width <= policy.native_video_width
+        or not 0 < height <= policy.native_video_height
+    ):
+        raise PreprocessingError("decode", "dense_unsupported_geometry")
+    scale = min(
+        Fraction(1), Fraction(policy.dense_width, width), Fraction(policy.dense_height, height)
+    )
+    return max(1, int(width * scale)), max(1, int(height * scale))
+
+
+def _dense_records(
+    stderr: bytes,
+    facts: StreamTimingFacts,
+    requested: TimingInterval,
+    region: int,
+    geometry: tuple[int, int],
+    operation: str,
+) -> tuple[TimingRecordsDescriptor, NDArray[np.int64], tuple[int, ...]]:
+    observations: dict[str, list[tuple[bytes | None, ...]]] = {"native": [], "dense": []}
+    bases: dict[str, list[TimeBase]] = {"native": [], "dense": []}
+    try:
+        for line in stderr.splitlines():
+            tagged = re.fullmatch(rb"\[showinfo@(native|dense) @ [0-9a-fA-Fx]+\] (.*)", line)
+            if tagged is None:
+                continue
+            label = tagged[1].decode("ascii")
+            body = tagged[2].strip()
+            if body.startswith(b"config in time_base:"):
+                match = re.fullmatch(rb"config in time_base: (\d+/\d+), frame_rate: \d+/\d+", body)
+                if match is None:
+                    raise ValueError
+                bases[label].append(_timing_base(match[1].decode("ascii")))
+            elif (
+                not body
+                or re.fullmatch(rb"User Data=[0-9A-Fa-f]*", body)
+                or body.startswith((b"config out time_base:", b"color_range:", b"side data -"))
+            ):
+                continue
+            else:
+                match = _DENSE_LINE.fullmatch(body)
+                if match is None:
+                    raise ValueError
+                observations[label].append(match.groups())
+                if len(observations[label]) > _FORENSIC_POLICY.dense_frames:
+                    raise PreprocessingError("resource_limit", "dense_frame_count")
+        if any(len(bases[label]) != 1 for label in bases):
+            raise ValueError
+        if any(bases[label] != [facts.time_base] for label in bases):
+            raise PreprocessingError("decode", "dense_unsupported_time_base")
+        native, output = observations["native"], observations["dense"]
+        if len(native) != len(output):
+            raise PreprocessingError("decode", "dense_timing_count")
+        values = np.zeros((len(output), 9), dtype="<i8")
+        checksums = []
+        for ordinal, (raw, retained) in enumerate(zip(native, output, strict=True)):
+            n, pts, duration, fmt, width, height, key, picture, checksum = retained
+            if (
+                int(n or b"-1") != ordinal
+                or raw[:3] != retained[:3]
+                or raw[6:8] != retained[6:8]
+                or (int(raw[4] or b"0"), int(raw[5] or b"0"))
+                != (facts.native_width, facts.native_height)
+                or fmt != b"rgb24"
+                or (int(width or b"0"), int(height or b"0")) != geometry
+            ):
+                raise ValueError
+            if pts == b"NOPTS":
+                raise PreprocessingError("decode", "dense_unsupported_timestamp")
+            tick = int(pts or b"0")
+            values[ordinal, 0] = tick
+            values[ordinal, 3] = ordinal
+            values[ordinal, 4] = 1 | 32
+            values[ordinal, 7] = int(key or b"0")
+            if duration not in (None, b"NOPTS"):
+                values[ordinal, 2] = int(duration)
+                values[ordinal, 4] |= 4
+            kind = _TIMING_PICTURES.get((picture or b"").decode("ascii"))
+            if kind is not None:
+                values[ordinal, 8] = kind
+                values[ordinal, 4] |= 64
+            checksums.append(int(checksum or b"0", 16))
+        if len(values):
+            span = facts.time_base.seconds(int(values[:, 0].max()) - int(values[:, 0].min()))
+            if span > _FORENSIC_POLICY.dense_window_seconds:
+                raise ValueError
+        descriptor = TimingRecordsDescriptor(
+            stream_index=facts.stream_index,
+            region=region,
+            record_kind="frame",
+            purpose="dense",
+            first_tick=int(values[0, 0]) if len(values) else None,
+            last_tick=int(values[-1, 0]) if len(values) else None,
+            requested=requested,
+            coverage=_timing_coverage(values, requested),
+            stop_reason="dense_limits_or_eof",
+            decode_operation_id=operation,
+            data=NumericArtifact(
+                artifact_id=f"dense_timing_{facts.stream_index}_{region}_frame",
+                dtype="<i8",
+                shape=values.shape,
+            )
+            if len(values)
+            else None,
+        )
+        validate_timing_values(descriptor, values)
+        return (
+            descriptor,
+            np.frombuffer(values.tobytes(), dtype="<i8").reshape(values.shape),
+            tuple(checksums),
+        )
+    except (ValueError, TypeError, OverflowError, UnicodeError):
+        raise PreprocessingError("decode", "dense_malformed_timing") from None
+
+
+def decode_dense_window(
+    source: Path,
+    target: Path,
+    facts: StreamTimingFacts,
+    requested: TimingInterval,
+    region: int,
+    *,
+    executable: str,
+    artifact_budget: _GeneratedArtifactBudget,
+    timeout: float,
+) -> tuple[DenseVideoWindowDescriptor, TimingRecordsDescriptor, NDArray[np.int64]]:
+    width, height = dense_geometry(facts)
+    policy = _FORENSIC_POLICY
+    frame_bytes = width * height * 3
+    maximum = policy.dense_frames * frame_bytes
+    try:
+        artifact_budget.ensure_feasible(maximum)
+    except _GeneratedArtifactLimitError:
+        raise PreprocessingError("resource_limit", "dense_artifacts") from None
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise PreprocessingError("invariant", "execution_budget")
+    base = facts.time_base
+    stop = min(
+        requested.stop,
+        requested.start + max(1, policy.dense_window_seconds * base.denominator // base.numerator),
+    )
+    operation = uuid4().hex
+    # Separate trim filters enforce BOTH timestamp and frame limits and signal EOF.
+    # Input -t would include keyframe preroll and can erase a late requested window.
+    filters = (
+        f"trim=start_pts={requested.start}:end_pts={stop},trim=end_frame={policy.dense_frames},"
+        f"showinfo@native,scale={width}:{height}:flags=bilinear,format=rgb24,showinfo@dense"
+    )
+    arguments = [
+        executable,
+        "-hide_banner",
+        "-nostats",
+        "-v",
+        "info",
+        "-nostdin",
+        "-xerror",
+        "-err_detect",
+        "explode",
+        "-copyts",
+        "-protocol_whitelist",
+        "file",
+        "-threads",
+        "1",
+        "-filter_threads",
+        "1",
+        "-noautorotate",
+        "-seek_timestamp",
+        "1",
+        "-noaccurate_seek",
+        "-ss",
+        _timing_seek(requested.start, base),
+        "-i",
+        str(source.absolute()),
+        "-map",
+        f"0:{facts.stream_index}",
+        "-an",
+        "-sn",
+        "-dn",
+        "-vf",
+        filters,
+        "-frames:v",
+        str(policy.dense_frames),
+        "-fps_mode",
+        "passthrough",
+        "-c:v",
+        "rawvideo",
+        "-threads:v",
+        "1",
+        "-pix_fmt",
+        "rgb24",
+        "-f",
+        "rawvideo",
+        "pipe:1",
+    ]
+    try:
+        with artifact_budget.open_output(target) as output:
+            result = run_bounded_process(
+                arguments,
+                cwd=source.parent,
+                timeout_seconds=min(timeout, 30.0),
+                stdout_limit_bytes=maximum,
+                stdout_sink=output,
+                stderr_limit_bytes=policy.timing_probe_bytes,
+            )
+    except ProcessOutputLimitError as error:
+        raise PreprocessingError("resource_limit", f"dense_{error.stream}_overflow") from None
+    except ProcessTimeoutError:
+        raise PreprocessingError("media_tool", "dense_timeout") from None
+    except ProcessInfrastructureError as error:
+        if error.phase == "stdout_write":
+            raise PreprocessingError("artifact_write", "dense_pixels") from None
+        raise PreprocessingError(
+            "infrastructure", "dense_process", _cleanup_safety_barrier=error._cleanup_safety_barrier
+        ) from None
+    except _GeneratedArtifactLimitError:
+        raise PreprocessingError("resource_limit", "dense_artifacts") from None
+    except _GeneratedArtifactWriteError:
+        raise PreprocessingError("artifact_write", "dense_pixels") from None
+    if result.return_code != 0:
+        phase = (
+            "dense_malformed_media"
+            if b"Invalid data found when processing input" in (result.stderr or b"")
+            else "dense_decoder"
+        )
+        raise PreprocessingError("decode", phase)
+    records, values, checksums = _dense_records(
+        result.stderr or b"", facts, requested, region, (width, height), operation
+    )
+    try:
+        size = target.stat().st_size
+        if size % frame_bytes:
+            raise PreprocessingError("decode", "dense_partial_frame")
+        if size // frame_bytes != records.record_count:
+            raise PreprocessingError("decode", "dense_pixel_timing_count")
+        if not size:
+            raise PreprocessingError("decode", "dense_empty_coverage")
+        with target.open("rb") as stream:
+            for checksum in checksums:
+                if zlib.adler32(stream.read(frame_bytes), 0) != checksum:
+                    raise PreprocessingError("decode", "dense_pixel_timing_checksum")
+    except OSError:
+        raise PreprocessingError("artifact_write", "dense_pixels") from None
+    pixels = NumericArtifact(
+        artifact_id=f"dense_{facts.stream_index}_{region}",
+        dtype="|u1",
+        shape=(records.record_count, height, width, 3),
+    )
+    assert (
+        records.data is not None
+        and facts.native_width is not None
+        and facts.native_height is not None
+    )
+    dense = DenseVideoWindowDescriptor(
+        timing_artifact_id=records.data.artifact_id,
+        decode_operation_id=operation,
+        pixels=pixels,
+        native_width=facts.native_width,
+        native_height=facts.native_height,
+    )
+    return dense, records, values

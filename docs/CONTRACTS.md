@@ -1326,7 +1326,7 @@ transport сохраняют прежнее владение. M1-A реализ�
 проверки размеров и координат; M1-B — original image/JPEG producer и numeric reader;
 M1-C — общие bounded deterministic image residual kernels; M1-D — source-precision
 audio windows и numeric framing/STFT; M1-E — bounded stream/packet/frame timing.
-Dense извлечение относится к M1-F.
+M1-F реализует dense RGB windows и региональное A/V timing mapping.
 Новые требования отсутствуют у четырёх текущих анализаторов версии `1.0.0`.
 Публичные схемы, локализация, риск, полнота и YAML не изменяются.
 
@@ -1341,14 +1341,13 @@ Dense извлечение относится к M1-F.
 - audio и video: `audio_precision`, `audio_samples → audio_precision`,
   `audio_spectral → audio_samples`, `stream_timing`,
   `timing_records → stream_timing`;
-- только video: `dense_video → timing_records`,
-  `av_timeline → timing_records + audio_samples`.
+- только video: `dense_video → stream_timing`,
+  `av_timeline → timing_records`.
 
 Старые `audio_spectrogram`/`video_audio_track` сохраняют семантику. Неподходящий
 media route отклоняется. Dispatcher принимает original image/coordinates/JPEG
-и audio precision/samples/spectral, stream timing/timing records demand; остальные
-producers отклоняет до I/O с внутренним
-`forensic_producer_unavailable`. Профили реализованных производителей определены
+и audio precision/samples/spectral, stream timing/timing records, dense video
+и AV timeline demand. Профили реализованных производителей определены
 ниже; объединение capabilities не меняет их параметры.
 
 **Факты и идентичность.** В существующем `metadata["forensic"]` резервируется
@@ -1371,7 +1370,8 @@ PNG/WAV или другой формат не принимается как raw 
 Они не содержат выводов о подделке. Original image facts уникальны; координаты
 растра и SOF коэффициентов согласуются с ними. Sample windows ссылаются на
 precision facts по stream index, spectral windows — на sample artifact ID,
-timing records — на stream/time base, dense/AV — на соответствующие artifacts.
+timing records — на stream/time base, dense — на frame artifact того же decode,
+AV — на выбранные streams и региональные packet/frame descriptors.
 Такие ссылки не являются путями или разрешением произвольного чтения.
 
 **Числовые данные.** `NumericArtifact` описывает opaque ID, положительную shape
@@ -1402,10 +1402,10 @@ Timing использует signed ticks, положительный рацио�
 для неизвестных фактов. Формат таблиц и покрытие M1-E определены ниже. Dense
 RGB24 имеет `(frame, y, x, 3)` и ссылается на frame records **того же decode**:
 `decode_operation_id` у pixels и timing обязан совпадать; одного совпадения
-ordinal недостаточно. M1-F обязан подтвердить это происхождение и каждый timestamp.
-AV-таблица содержит audio sample start/stop и video tick start/stop для каждой
-наблюдавшейся непрерывной области. Межоконные пробелы не являются наблюдавшимися
-разрывами; рассуждений о drift/synchronization эти дескрипторы не делают.
+ordinal недостаточно. Проверки M1-F определены ниже.
+AV mapping содержит точные региональные endpoints в секундах, не sample indices
+и не утверждение о непрерывности. Межоконные пробелы не являются наблюдавшимися
+разрывами; выводов о drift/synchronization эти дескрипторы не делают.
 
 **Координаты.** `ImageCoordinates` фиксирует native размеры и EXIF 1–8.
 Для ориентаций 5–8 oriented width/height меняются местами. Координаты обозначают
@@ -1464,10 +1464,18 @@ Rates не доказывают CFR. Оба типа имеют положите
 по модулю и положительный denominator до `2^63-1`. `TimeBase.seconds(ticks)`
 возвращает `Fraction(ticks * numerator, denominator)` без float arithmetic.
 SHA-256 source проверяется повторно потоково; manifest связывает записи с source,
-а provenance timing records обязан совпадать с provenance соответствующего stream.
+generic records обязаны сохранять provenance соответствующего stream.
+Dense records имеют отдельную роль; их provenance обязан совпадать с привязанными
+pixels и профилем `ffmpeg_dense/1`, `rgb24_bilinear/1`.
 Raw probe JSON, tags и stderr не сохраняются.
 
 `TimingRecordsDescriptor` ссылается на таблицу `<i8`, `(record_count, 9)`:
+
+`purpose=generic` обозначает обычный M1-E producer с
+`stop_reason=packet_budget_or_eof`. `purpose=dense` разрешён только для frame rows
+до 32 записей с `stop_reason=dense_limits_or_eof`. Роль входит в ключ уникальности
+`(stream_index, region, record_kind, purpose)`, поэтому записи обоих producers
+могут сосуществовать. Несогласованные role/stop semantics отклоняются.
 
 | Столбец | Наблюдение |
 |---|---|
@@ -1542,6 +1550,97 @@ record count/preflight/artifact resource rejection и process infrastructure fai
 Неподтверждённый reap сохраняет существующий cleanup barrier. Неполное покрытие —
 типизированный факт, не Finding и не изменение risk/completeness. Анализаторы
 `video_timestamp_consistency` и `video_audio_timing_consistency` не реализованы.
+
+**Dense video и A/V timing M1-F.** Производитель `ffmpeg_dense/1`, профиль
+`rgb24_bilinear/1`, создаёт один FFmpeg decode на объединённую область M1-E.
+`DenseVideoWindowDescriptor` хранит opaque pixel ID, shape, native dimensions,
+`pixel_format=rgb24`, `geometry_profile=coded_grid_bilinear_no_upscale`, ссылку
+на frame table и общий `decode_operation_id`. Source SHA-256 и producer/profile
+принадлежат representation/manifest. Requested interval, observed endpoints,
+число кадров, ordinals, time base и coverage доступны через связанные timing facts.
+Dense-only demand не запускает generic packet/frame probes. Если одновременно
+запрошены `timing_records` или `av_timeline`, обычные M1-E probes выполняются
+независимо и сохраняют прежние budgets, coverage и профиль. Они не используются
+для привязки pixels. Dense records используют отдельные IDs `dense_timing_*`;
+manifest запрещает generic pixel binding, provenance swaps и orphan dense timing.
+
+Raw RGB24 — C-order `(frame, height, width, 3)`, `|u1`, без заголовка/padding.
+До процесса рассчитывается `32 * width * height * 3` для stdout. Registry владеет
+pixel artifact до открытия writer; запись потоковая через общий artifact budget.
+Существующий immutable numeric reader проверяет точную длину, source binding и
+opaque ID; pixels и raw stderr не попадают в metadata/worker JSON.
+
+Выбираются до трёх объединённых областей M1-E, без дублирования labels/probes.
+Объединённый requested interval сохраняется целиком; dense decode ограничивает
+его начальный участок двумя секундами и первыми 32 последовательными frames.
+Поэтому `[0, 3s)` остаётся одним запросом с честным частичным покрытием.
+Unknown duration даёт только начало. Start сохраняется в signed ticks.
+Seek округлён до микросекунды; `-copyts`, `-seek_timestamp 1`, `-noaccurate_seek`
+сохраняют исходную шкалу, preroll отбрасывается по ticks. Последовательные `trim`
+ограничивают время и число кадров до showinfo/rawvideo, `-frames:v 32`
+дополнительно ограничивает muxer. Предел времени округляется вниз до целых ticks
+(минимум один tick для грубой базы).
+
+Native header ограничен 3840×2160. Масштаб `min(1, 640/W, 360/H)` вычисляется
+рационально; выходные размеры округляются вниз, минимум один pixel. Bilinear
+resize сохраняет пропорции coded pixel grid с округлением меньше pixel,
+без upscale, autorotate и произвольного stretch. Display aspect/SAR и rotation
+не применяются. Соответствие границ output/native задаётся отношениями `W/w`
+и `H/h`; выходные координаты не выдаются за native. Размеры каждого decoded
+кадра проверяются по native showinfo, изменившаяся geometry отклоняется.
+
+Два именованных showinfo в **одном** filtergraph наблюдают кадр до и после resize.
+Строгий allowlist проверяет базу времени, ordinal, PTS, доступную duration,
+key/picture, geometry и RGB format; timing поля обязаны совпадать до/после.
+База FFmpeg обязана совпадать с M1-E stream time base, без округления timestamps
+через float/rescale. DTS, отдельные best-effort/pkt-duration не сообщаются showinfo
+и остаются отсутствующими; PTS — наблюдение output AVFrame этого decode.
+B-frame reordering не является ошибкой. Для каждого RGB frame сверяется Adler-32
+с checksum showinfo (начальное значение 0); это проверка соответствия байтов,
+не криптографическая идентичность. Длина rawvideo должна точно совпасть с числом
+принятых records; partial bytes, missing/extra/malformed diagnostics отклоняются.
+
+Переиспользуется bounded runner: argv без shell, `file` protocol, один decoder/
+filter/output thread, timeout `min(30s, remaining budget)`, concurrent stdout/
+stderr drain, terminate/reap и прежний unresolved-process cleanup barrier.
+Stderr ограничен 256 KiB и не сохраняется; allowlisted служебные строки
+отбрасываются. Всего до 96 RGB frames (66 355 200 bytes при 640×360), плюс timing
+tables; действуют прежние 256 artifacts, 16 representations, 16 KiB manifest и
+оставшийся общий byte budget. Preflight учитывает pixels, generic и dense timing
+вместе. Слишком большой совместный demand отклоняется до record/decode операций,
+без сокращения generic observations: например, три региона обоих streams плюс
+dense и AV mapping требуют 18 representations при потолке 16.
+Checksum reader держит один RGB frame, parser — ограниченный stderr и максимум
+64 showinfo observations, Nx9 table до 32 строк. Native decoder RSS и keyframe
+preroll CPU не объявляются hard-limited Python accounting; общий deadline действует,
+дополнительный RSS/concurrency hardening остаётся M1-G.
+
+Безопасные phases различают `dense_unsupported_stream`, geometry/time-base/timestamp,
+`dense_malformed_media`, `dense_decoder`, `dense_timeout`, stdout/stderr overflow,
+partial frame, pixel/timing count, checksum, malformed timing и resource rejection.
+Пустое dense окно даёт `dense_empty_coverage`; неполное непустое окно сохраняет
+M1-E coverage и `stop_reason=dense_limits_or_eof`, без выдуманной причины остановки.
+Частичные файлы сохраняют lifecycle ownership для штатной cleanup/barrier логики.
+
+`AVTimelineDescriptor` (`av_timing/1`, `regional_endpoints/1`) не создаёт numeric
+artifact. По stream index он связывает независимые time bases и declared starts
+из `StreamTimingFacts`, отдельно от наблюдаемых endpoints. До трёх `AVTimingRegion`
+сопоставляют только `purpose=generic` audio packet и video frame descriptors по
+номеру области; добавление dense demand не меняет mapping. Интервалы
+каждого stream остаются независимыми и явно доступны в descriptors.
+`TimelineTime` хранит exact seconds через Fraction: signed numerator до `2^127-1`,
+положительный denominator до `2^62-1`. Это вмещает произведения M1-E ticks/base.
+Offsets — `audio_first - video_first` и `audio_last - video_last`; это разницы
+независимо выбранных endpoints, **не** измеренный lip-sync или одновременность.
+Manifest повторно вычисляет mapping и отвергает несогласованные факты.
+
+Applicability различает `available` (оба stream), `missing_audio`, `missing_video`,
+`missing_both`; отсутствие нужной дорожки для mapping не является failure.
+Coverage каждого региона сохраняет `empty`/`unknown`/`partial`/`envelope`, отсутствие
+регионального descriptor — `None`; неизвестный endpoint/offset остаётся `None`.
+Timestamp resets и раздельные окна не сортируются в глобальную временную шкалу.
+Интерполяции, глобального affine mapping, continuity/sync verdict и Findings нет.
+Dense и AV demand не активируют precision audio, sample windows или STFT.
 
 **Residual kernels.** M1-C добавляет только private числовой слой в
 `preprocessing/_media_tools.py`; producer `residual_raster`, новый analyzer,

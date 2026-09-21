@@ -277,8 +277,6 @@ def test_forensic_demand_is_closed_deduplicated_and_current_catalog_remains_inac
             cap.AV_TIMELINE,
             cap.TIMING_RECORDS,
             cap.STREAM_TIMING,
-            cap.AUDIO_SAMPLES,
-            cap.AUDIO_PRECISION,
         }
     )
     av.validate_media(MediaType.VIDEO)

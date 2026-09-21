@@ -344,6 +344,14 @@ YYYY-MM-DD
 
 ### Изменено
 
+- **[Stage 12/Macro 1/M1-F] Реализованы dense video windows и региональные A/V timing facts.**
+  Pixels и timestamps связаны одним bounded FFmpeg decode и проверкой RGB checksum.
+  Прежняя заготовка sample-index mapping заменена точными региональными endpoints:
+  AV demand зависит от timing, без precision audio/STFT и без предположения
+  непрерывности между окнами. Причина — исключить ложную связь независимых decode
+  и ненужную обработку audio samples. Внутренний контракт принадлежит §7.5
+  `CONTRACTS.md`; public API, зависимости и текущие анализаторы не изменены.
+
 - **[Stage 12/Macro 1/M1-D] Реализованы source-precision audio windows и numeric STFT.**
   Hybrid facts отделяют stream declarations от наблюдений того же bounded decode;
   фактическое покрытие подтверждается PTS/sample counts, integer codes сохраняются

@@ -604,6 +604,20 @@ DFT; forensic detector, PSD или статистическая калибров
 Тестовые данные создаются собственными deterministic PCM codes/тонами и локальным
 FFmpeg; внешние recordings, datasets, models и weights не применяются.
 
+### Dense video foundations M1-F — 2026-09-21
+
+Dense producer, strict diagnostic parser и региональное A/V mapping — собственный
+`FIRST_PARTY_CODE`, Apache-2.0 проекта. Используются прежние FFmpeg/ffprobe,
+NumPy и стандартный `zlib.adler32`; внешние исходники не копировались,
+зависимости и способ поставки не меняются. Fixtures создаются локально FFmpeg.
+Семантика ограничений и диагностики сверяется с первичными интерфейсами:
+[FFmpeg showinfo](https://ffmpeg.org/ffmpeg-filters.html#showinfo),
+[FFmpeg trim](https://ffmpeg.org/ffmpeg-filters.html#trim),
+[реализация EOF в trim](https://github.com/FFmpeg/FFmpeg/blob/master/libavfilter/trim.c).
+Исходник используется только для проверки семантики остановки filtergraph.
+Точные локальные contracts принадлежат `CONTRACTS.md` §7.5; forensic detector
+или внешний метод оценки синхронизации не заимствуется и не заявляется.
+
 ## Происхождение политики оценки Stage 7
 
 - Политика: `score_model_v1@0.1.0`, включая полноту, корреляцию, `score`,

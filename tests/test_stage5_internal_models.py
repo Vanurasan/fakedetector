@@ -110,9 +110,17 @@ def _manifest(*facts, media_type=MediaType.IMAGE):
         representations=tuple(
             ForensicRepresentation(
                 provenance=RepresentationProvenance(
-                    producer="preprocessing",
+                    producer="ffmpeg_dense"
+                    if isinstance(fact, DenseVideoWindowDescriptor)
+                    or isinstance(fact, TimingRecordsDescriptor)
+                    and fact.purpose == "dense"
+                    else "preprocessing",
                     producer_version="1",
-                    profile="bounded",
+                    profile="rgb24_bilinear"
+                    if isinstance(fact, DenseVideoWindowDescriptor)
+                    or isinstance(fact, TimingRecordsDescriptor)
+                    and fact.purpose == "dense"
+                    else "bounded",
                     profile_version="1",
                 ),
                 facts=fact,
@@ -373,6 +381,8 @@ def _video_facts():
             stream_index=0,
             region=0,
             record_kind="frame",
+            purpose="dense",
+            stop_reason="dense_limits_or_eof",
             first_tick=-10,
             last_tick=40,
             requested=TimingInterval(start=-10, stop=40),
@@ -420,11 +430,7 @@ def test_all_forensic_representation_families_roundtrip_without_media_payloads()
         data=_numeric("spectral", (3, 2, 257), "<c16"),
     )
     audio = _manifest(_audio_facts(), _sample_window(), spectral, media_type=MediaType.AUDIO)
-    av = AVTimelineDescriptor(
-        samples_artifact_id="samples",
-        timing_artifact_id="timing",
-        data=_numeric("av_map", (2, 4), "<i8"),
-    )
+    av = AVTimelineDescriptor.from_timing((_video_facts()[0],), (_video_facts()[1],))
     video = _manifest(
         *_video_facts(), _audio_facts(), _sample_window(), av, media_type=MediaType.VIDEO
     )
@@ -566,7 +572,7 @@ def test_forensic_manifest_rejects_missing_or_conflicting_references():
         ("timing", {"data": _numeric("timing", (513, 5), "<i8")}),
         ("dense", {"pixels": _numeric("dense", (33, 180, 320, 3), "|u1")}),
         ("dense", {"pixels": _numeric("dense", (2, 180, 640, 3), "|u1")}),
-        ("av", {"data": _numeric("av", (1, 5), "<i8")}),
+        ("av", {"audio_stream_index": 256}),
     ],
 )
 def test_each_forensic_descriptor_validates_layout_and_coverage(family, changes):
@@ -599,11 +605,7 @@ def test_each_forensic_descriptor_validates_layout_and_coverage(family, changes)
         ),
         "timing": _video_facts()[1],
         "dense": _video_facts()[2],
-        "av": AVTimelineDescriptor(
-            samples_artifact_id="samples",
-            timing_artifact_id="timing",
-            data=_numeric("av", (1, 4), "<i8"),
-        ),
+        "av": AVTimelineDescriptor.from_timing((_video_facts()[0],), (_video_facts()[1],)),
     }
     valid = fixtures[family]
     with pytest.raises(ValidationError):
@@ -1615,3 +1617,183 @@ def test_analysis_task_rejects_artifact_id_that_does_not_match_ref(tmp_path: Pat
         )
 
     cleanup_prepared(accepted_source, registry)
+
+
+@pytest.mark.parametrize(
+    ("audio", "video", "state"),
+    [
+        (True, True, "available"),
+        (False, True, "missing_audio"),
+        (True, False, "missing_video"),
+        (False, False, "missing_both"),
+    ],
+)
+def test_av_mapping_missing_streams_are_explicit(audio, video, state):
+    streams = []
+    if video:
+        streams.append(_video_facts()[0])
+    if audio:
+        streams.append(
+            _video_facts()[0].model_copy(update={"stream_kind": "audio", "stream_index": 1})
+        )
+    mapping = AVTimelineDescriptor.from_timing(tuple(streams), ())
+    assert mapping.applicability == state
+    assert mapping.regions == ()
+    assert mapping.audio_stream_index == (1 if audio else None)
+    assert mapping.video_stream_index == (0 if video else None)
+    assert AVTimelineDescriptor.model_validate_json(mapping.model_dump_json()) == mapping
+
+
+@pytest.mark.parametrize("tick", [0, -90001, (1 << 62) + 1])
+def test_av_regional_mapping_exact_independent_time_bases_and_resets(tick):
+    from fractions import Fraction
+
+    video, frame, _ = _video_facts()
+    frame = frame.model_copy(update={"purpose": "generic", "stop_reason": "packet_budget_or_eof"})
+    video = video.model_copy(update={"time_base": TimeBase(numerator=1, denominator=90000)})
+    audio = video.model_copy(
+        update={
+            "stream_index": 1,
+            "stream_kind": "audio",
+            "time_base": TimeBase(numerator=1, denominator=48000),
+            "start_tick": 123,
+        }
+    )
+    records = []
+    for region, offset in enumerate((tick, tick + 1000000, -1000)):
+        records.append(
+            frame.model_copy(
+                update={
+                    "region": region,
+                    "first_tick": offset,
+                    "last_tick": offset + 90000,
+                    "coverage": "partial",
+                }
+            )
+        )
+        records.append(
+            frame.model_copy(
+                update={
+                    "region": region,
+                    "stream_index": 1,
+                    "record_kind": "packet",
+                    "decode_operation_id": None,
+                    "first_tick": offset + 7,
+                    "last_tick": offset + 48007,
+                    "coverage": "partial",
+                }
+            )
+        )
+    mapping = AVTimelineDescriptor.from_timing((audio, video), tuple(records))
+    assert len(mapping.regions) == 3
+    for region, offset in zip(mapping.regions, (tick, tick + 1000000, -1000), strict=True):
+        assert region.video_first.seconds == Fraction(offset, 90000)
+        assert region.audio_first.seconds == Fraction(offset + 7, 48000)
+        assert region.first_offset_seconds == Fraction(offset + 7, 48000) - Fraction(offset, 90000)
+        assert region.last_offset_seconds == region.first_offset_seconds
+        assert region.audio_coverage == region.video_coverage == "partial"
+    assert mapping.regions[2].video_first.seconds == Fraction(-1, 90)
+    assert not hasattr(mapping, "slope") and not hasattr(mapping, "continuous")
+    assert AVTimelineDescriptor.model_validate_json(mapping.model_dump_json()) == mapping
+
+
+def test_av_empty_or_missing_regional_observations_stay_unknown():
+    video, frame, _ = _video_facts()
+    frame = frame.model_copy(update={"purpose": "generic", "stop_reason": "packet_budget_or_eof"})
+    audio = video.model_copy(update={"stream_index": 1, "stream_kind": "audio"})
+    empty = TimingRecordsDescriptor(
+        stream_index=1,
+        region=0,
+        record_kind="packet",
+        first_tick=None,
+        last_tick=None,
+        requested=frame.requested,
+        coverage="empty",
+        decode_operation_id=None,
+        data=None,
+    )
+    unknown = frame.model_copy(
+        update={
+            "region": 1,
+            "first_tick": None,
+            "last_tick": None,
+            "coverage": "unknown",
+            "data": _numeric("unknown", (2, 9), "<i8"),
+        }
+    )
+    mapping = AVTimelineDescriptor.from_timing((audio, video), (frame, empty, unknown))
+    assert mapping.regions[0].audio_coverage == "empty"
+    assert mapping.regions[0].audio_first is None
+    assert mapping.regions[0].first_offset_seconds is None
+    assert mapping.regions[1].audio_coverage is None
+    assert mapping.regions[1].video_coverage == "unknown"
+    assert mapping.regions[1].last_offset_seconds is None
+    manifest = _manifest(video, audio, frame, empty, unknown, mapping, media_type=MediaType.VIDEO)
+    payload = manifest.model_dump()
+    payload["representations"][-1]["facts"]["regions"][0]["audio_first"] = {
+        "numerator": 0,
+        "denominator": 1,
+    }
+    with pytest.raises(ValueError, match="AV mapping"):
+        ForensicManifest.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "generic_provenance",
+        "dense_provenance",
+        "pixel_provenance",
+        "generic_role",
+        "dense_role",
+        "generic_binding",
+        "artifact_collision",
+        "dense_orphan",
+        "dense_pair_provenance",
+        "dense_as_generic",
+        "generic_as_dense",
+    ],
+)
+def test_timing_roles_and_provenance_cannot_be_swapped(corruption):
+    stream, dense_timing, pixels = _video_facts()
+    generic = TimingRecordsDescriptor.model_validate(
+        dense_timing.model_dump()
+        | {
+            "purpose": "generic",
+            "stop_reason": "packet_budget_or_eof",
+            "decode_operation_id": "generic_decode",
+            "data": _numeric("generic_timing", (2, 9), "<i8"),
+        }
+    )
+    manifest = _manifest(stream, generic, dense_timing, pixels, media_type=MediaType.VIDEO)
+    payload = manifest.model_dump()
+    _, generic_row, dense_row, pixel_row = payload["representations"]
+    if corruption == "generic_provenance":
+        generic_row["provenance"] = dense_row["provenance"]
+    elif corruption == "dense_provenance":
+        dense_row["provenance"] = generic_row["provenance"]
+    elif corruption == "pixel_provenance":
+        pixel_row["provenance"] = generic_row["provenance"]
+    elif corruption == "dense_pair_provenance":
+        dense_row["provenance"] = pixel_row["provenance"] = generic_row["provenance"]
+    elif corruption == "dense_as_generic":
+        dense_row["facts"]["purpose"] = "generic"
+        dense_row["facts"]["stop_reason"] = "packet_budget_or_eof"
+    elif corruption == "generic_as_dense":
+        generic_row["facts"]["purpose"] = "dense"
+        generic_row["facts"]["stop_reason"] = "dense_limits_or_eof"
+        pixel_row["facts"]["timing_artifact_id"] = "generic_timing"
+        pixel_row["facts"]["decode_operation_id"] = "generic_decode"
+    elif corruption == "generic_role":
+        generic_row["facts"]["purpose"] = "dense"
+    elif corruption == "dense_role":
+        dense_row["facts"]["purpose"] = "generic"
+    elif corruption == "generic_binding":
+        pixel_row["facts"]["timing_artifact_id"] = "generic_timing"
+        pixel_row["facts"]["decode_operation_id"] = "generic_decode"
+    elif corruption == "artifact_collision":
+        dense_row["facts"]["data"]["artifact_id"] = "generic_timing"
+    else:
+        payload["representations"] = payload["representations"][:-1]
+    with pytest.raises(ValueError):
+        ForensicManifest.model_validate(payload)

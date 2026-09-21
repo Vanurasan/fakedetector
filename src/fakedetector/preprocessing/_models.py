@@ -499,6 +499,8 @@ class StreamTimingFacts(_BoundedValue):
     duration_ticks: _NonnegativeIndex | None
     declared_start: TimingRational | None = None
     declared_duration: TimingRational | None = None
+    native_width: Annotated[int, Field(gt=0, le=(1 << 31) - 1)] | None = None
+    native_height: Annotated[int, Field(gt=0, le=(1 << 31) - 1)] | None = None
     avg_frame_rate: TimingRate | None = None
     r_frame_rate: TimingRate | None = None
 
@@ -518,6 +520,7 @@ class TimingRecordsDescriptor(_BoundedValue):
     """
 
     kind: Literal["timing_records"] = "timing_records"
+    purpose: Literal["generic", "dense"] = "generic"
     stream_index: Annotated[int, Field(ge=0, le=255)]
     region: Annotated[int, Field(ge=0, lt=_FORENSIC_POLICY.timing_regions)]
     record_kind: Literal["packet", "frame"]
@@ -525,7 +528,7 @@ class TimingRecordsDescriptor(_BoundedValue):
     last_tick: _Tick | None
     requested: TimingInterval
     coverage: Literal["envelope", "partial", "unknown", "empty"]
-    stop_reason: Literal["packet_budget_or_eof"] = "packet_budget_or_eof"
+    stop_reason: Literal["packet_budget_or_eof", "dense_limits_or_eof"] = "packet_budget_or_eof"
     decode_operation_id: _Token | None
     data: NumericArtifact | None
 
@@ -535,6 +538,12 @@ class TimingRecordsDescriptor(_BoundedValue):
 
     @model_validator(mode="after")
     def layout(self) -> Self:
+        if (self.purpose == "dense") != (self.stop_reason == "dense_limits_or_eof"):
+            raise ValueError("timing purpose must match its producer stop semantics")
+        if self.purpose == "dense" and (
+            self.record_kind != "frame" or self.record_count > _FORENSIC_POLICY.dense_frames
+        ):
+            raise ValueError("dense timing requires bounded decoded frames")
         if (self.record_kind == "frame") != (self.decode_operation_id is not None):
             raise ValueError("frame records require their own decode operation identity")
         if self.data is None:
@@ -570,6 +579,12 @@ class DenseVideoWindowDescriptor(_BoundedValue):
     native_width: Annotated[int, Field(gt=0, le=_FORENSIC_POLICY.native_video_width)]
     native_height: Annotated[int, Field(gt=0, le=_FORENSIC_POLICY.native_video_height)]
     pixels: NumericArtifact
+    pixel_format: Literal["rgb24"] = "rgb24"
+    geometry_profile: Literal["coded_grid_bilinear_no_upscale"] = "coded_grid_bilinear_no_upscale"
+
+    @property
+    def bytes_per_frame(self) -> int:
+        return self.pixels.shape[1] * self.pixels.shape[2] * 3
 
     @model_validator(mode="after")
     def layout(self) -> Self:
@@ -588,28 +603,114 @@ class DenseVideoWindowDescriptor(_BoundedValue):
         return self
 
 
-class AVTimelineDescriptor(_BoundedValue):
-    """Measured piecewise anchors; no inferred synchronization/drift conclusion.
+class TimelineTime(_BoundedValue):
+    """Exact seconds; bounds include products of int63 ticks and int31 time bases."""
 
-    Rows: audio sample start/stop, video tick start/stop. Each row covers only
-    observed continuous data; gaps between rows are not observed discontinuities.
+    numerator: Annotated[int, Field(ge=-((1 << 127) - 1), le=(1 << 127) - 1)]
+    denominator: Annotated[int, Field(gt=0, le=(1 << 62) - 1)]
+
+    @property
+    def seconds(self) -> Fraction:
+        return Fraction(self.numerator, self.denominator)
+
+
+class AVTimingRegion(_BoundedValue):
+    region: Annotated[int, Field(ge=0, lt=_FORENSIC_POLICY.timing_regions)]
+    audio_first: TimelineTime | None
+    audio_last: TimelineTime | None
+    video_first: TimelineTime | None
+    video_last: TimelineTime | None
+    audio_coverage: Literal["envelope", "partial", "unknown", "empty"] | None
+    video_coverage: Literal["envelope", "partial", "unknown", "empty"] | None
+
+    @property
+    def first_offset_seconds(self) -> Fraction | None:
+        if self.audio_first is None or self.video_first is None:
+            return None
+        return self.audio_first.seconds - self.video_first.seconds
+
+    @property
+    def last_offset_seconds(self) -> Fraction | None:
+        if self.audio_last is None or self.video_last is None:
+            return None
+        return self.audio_last.seconds - self.video_last.seconds
+
+
+class AVTimelineDescriptor(_BoundedValue):
+    """Regional endpoints only; no interpolation or claim of continuous synchronization.
+
+    Stream indices and region identify the bound packet/audio and frame/video tables.
+    Offsets compare independently sampled endpoints, not simultaneous media content.
     """
 
     kind: Literal["av_timeline"] = "av_timeline"
-    samples_artifact_id: _ArtifactId
-    timing_artifact_id: _ArtifactId
-    data: NumericArtifact
+    audio_stream_index: Annotated[int, Field(ge=0, le=255)] | None
+    video_stream_index: Annotated[int, Field(ge=0, le=255)] | None
+    applicability: Literal["available", "missing_audio", "missing_video", "missing_both"]
+    regions: Annotated[
+        tuple[AVTimingRegion, ...], Field(max_length=_FORENSIC_POLICY.timing_regions)
+    ]
 
-    @model_validator(mode="after")
-    def layout(self) -> Self:
-        if (
-            self.data.dtype != "<i8"
-            or len(self.data.shape) != 2
-            or self.data.shape[1] != 4
-            or self.data.shape[0] > _FORENSIC_POLICY.timing_frames
-        ):
-            raise ValueError("AV mapping exceeds the typed anchor layout")
-        return self
+    @classmethod
+    def from_timing(
+        cls, streams: tuple[StreamTimingFacts, ...], records: tuple[TimingRecordsDescriptor, ...]
+    ) -> Self:
+        audio = next((f for f in streams if f.stream_kind == "audio"), None)
+        video = next((f for f in streams if f.stream_kind == "video"), None)
+        state: Literal["available", "missing_audio", "missing_video", "missing_both"] = (
+            "available"
+            if audio and video
+            else "missing_audio"
+            if video
+            else "missing_video"
+            if audio
+            else "missing_both"
+        )
+        regions: list[AVTimingRegion] = []
+        if audio is not None and video is not None:
+            audio_records = {
+                r.region: r
+                for r in records
+                if r.purpose == "generic"
+                and r.stream_index == audio.stream_index
+                and r.record_kind == "packet"
+            }
+            video_records = {
+                r.region: r
+                for r in records
+                if r.purpose == "generic"
+                and r.stream_index == video.stream_index
+                and r.record_kind == "frame"
+            }
+            for region in sorted(audio_records.keys() | video_records.keys()):
+                ar, vr = audio_records.get(region), video_records.get(region)
+
+                def endpoint(
+                    stream: StreamTimingFacts, record: TimingRecordsDescriptor | None, last: bool
+                ) -> TimelineTime | None:
+                    tick = (record.last_tick if last else record.first_tick) if record else None
+                    if tick is None:
+                        return None
+                    value = stream.time_base.seconds(tick)
+                    return TimelineTime(numerator=value.numerator, denominator=value.denominator)
+
+                regions.append(
+                    AVTimingRegion(
+                        region=region,
+                        audio_first=endpoint(audio, ar, False),
+                        audio_last=endpoint(audio, ar, True),
+                        video_first=endpoint(video, vr, False),
+                        video_last=endpoint(video, vr, True),
+                        audio_coverage=ar.coverage if ar else None,
+                        video_coverage=vr.coverage if vr else None,
+                    )
+                )
+        return cls(
+            audio_stream_index=audio.stream_index if audio else None,
+            video_stream_index=video.stream_index if video else None,
+            applicability=state,
+            regions=tuple(regions),
+        )
 
 
 _ForensicFacts = Annotated[
@@ -643,7 +744,6 @@ class ForensicRepresentation(_BoundedValue):
                 AudioWindowDescriptor,
                 SpectralWindowDescriptor,
                 TimingRecordsDescriptor,
-                AVTimelineDescriptor,
             ),
         ):
             return (facts.data,) if facts.data is not None else ()
@@ -684,11 +784,22 @@ class ForensicManifest(_BoundedValue):
             if isinstance(r.facts, StreamTimingFacts)
         }
         for representation in self.representations:
-            if isinstance(representation.facts, TimingRecordsDescriptor) and (
-                representation.provenance
-                != stream_provenance.get(representation.facts.stream_index)
-            ):
-                raise ValueError("timing records must retain stream provenance identity")
+            record = representation.facts
+            if isinstance(record, TimingRecordsDescriptor):
+                if record.purpose == "generic":
+                    if representation.provenance != stream_provenance.get(record.stream_index):
+                        raise ValueError("generic timing must retain stream provenance identity")
+                elif not any(
+                    isinstance(r.facts, DenseVideoWindowDescriptor)
+                    and record.data is not None
+                    and r.facts.timing_artifact_id == record.data.artifact_id
+                    and r.provenance == representation.provenance
+                    and r.provenance.producer == "ffmpeg_dense"
+                    and r.provenance.profile == "rgb24_bilinear"
+                    and r.provenance.producer_version == r.provenance.profile_version == "1"
+                    for r in self.representations
+                ):
+                    raise ValueError("dense timing must retain bound pixel provenance identity")
         samples = {f.data.artifact_id: f for f in facts if isinstance(f, AudioWindowDescriptor)}
         regions = tuple(f for f in facts if isinstance(f, TimingRecordsDescriptor))
         timing = {f.data.artifact_id: f for f in regions if f.data is not None}
@@ -696,7 +807,8 @@ class ForensicManifest(_BoundedValue):
         if len(originals) > 1:
             raise ValueError("original image facts must have a single source identity")
         if (
-            len(audio) != sum(isinstance(f, AudioPrecisionFacts) for f in facts)
+            sum(isinstance(f, AVTimelineDescriptor) for f in facts) > 1
+            or len(audio) != sum(isinstance(f, AudioPrecisionFacts) for f in facts)
             or len(streams) != sum(isinstance(f, StreamTimingFacts) for f in facts)
             or len(streams) > _FORENSIC_POLICY.timing_streams
             or len(audio) > _FORENSIC_POLICY.timing_streams
@@ -712,10 +824,16 @@ class ForensicManifest(_BoundedValue):
             or sum(f.record_count for f in regions) > _FORENSIC_POLICY.timing_records
             or sum(f.data.nbytes for f in regions if f.data is not None)
             > _FORENSIC_POLICY.timing_artifact_bytes
-            or len({(f.stream_index, f.region, f.record_kind) for f in regions}) != len(regions)
+            or len({(f.stream_index, f.region, f.record_kind, f.purpose) for f in regions})
+            != len(regions)
         ):
             raise ValueError("duplicate facts or aggregate representation limits exceeded")
         for fact in facts:
+            if isinstance(fact, AVTimelineDescriptor) and (
+                self.media_type is not MediaType.VIDEO
+                or fact != AVTimelineDescriptor.from_timing(tuple(streams.values()), regions)
+            ):
+                raise ValueError("AV mapping must match bound regional timing observations")
             if isinstance(
                 fact, (OriginalImageFacts, ImageRasterDescriptor, JpegCoefficientsDescriptor)
             ):
@@ -761,31 +879,31 @@ class ForensicManifest(_BoundedValue):
                 self.media_type is MediaType.AUDIO and fact.stream_kind != "audio"
             ):
                 raise ValueError("audio route cannot have a video stream")
-            if isinstance(fact, (DenseVideoWindowDescriptor, AVTimelineDescriptor)):
+            if isinstance(fact, DenseVideoWindowDescriptor):
                 records = timing.get(fact.timing_artifact_id)
                 if (
                     self.media_type is not MediaType.VIDEO
                     or records is None
                     or records.record_kind != "frame"
+                    or records.purpose != "dense"
                     or records.stream_index not in streams
                     or streams[records.stream_index].stream_kind != "video"
                 ):
                     raise ValueError("video mapping requires video frame records")
-                if isinstance(fact, DenseVideoWindowDescriptor):
-                    base = streams[records.stream_index].time_base
-                    if (
-                        records.data is None
-                        or records.decode_operation_id != fact.decode_operation_id
-                        or records.record_count != fact.pixels.shape[0]
-                        or records.first_tick is None
-                        or records.last_tick is None
-                        or not 0
-                        <= (records.last_tick - records.first_tick) * base.numerator
-                        <= _FORENSIC_POLICY.dense_window_seconds * base.denominator
-                    ):
-                        raise ValueError("dense pixels require bounded measured frame timing")
-                elif fact.samples_artifact_id not in samples:
-                    raise ValueError("AV mapping requires known precision samples")
+                base = streams[records.stream_index].time_base
+                if (
+                    records.data is None
+                    or next(r.provenance for r in self.representations if r.facts == fact)
+                    != next(r.provenance for r in self.representations if r.facts == records)
+                    or records.decode_operation_id != fact.decode_operation_id
+                    or records.record_count != fact.pixels.shape[0]
+                    or records.first_tick is None
+                    or records.last_tick is None
+                    or not 0
+                    <= (records.last_tick - records.first_tick) * base.numerator
+                    <= _FORENSIC_POLICY.dense_window_seconds * base.denominator
+                ):
+                    raise ValueError("dense pixels require bounded measured frame timing")
         if len(self.model_dump_json().encode("utf-8")) > _MAX_FORENSIC_MANIFEST_BYTES:
             raise ValueError("forensic manifest exceeds its metadata allowance")
         return self

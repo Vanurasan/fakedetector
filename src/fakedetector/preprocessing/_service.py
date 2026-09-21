@@ -47,12 +47,14 @@ from fakedetector.preprocessing._media_tools import (
     _decode_jpeg_coefficients,
     _FFmpegPreprocessingTool,
     _parse_jpeg,
+    dense_geometry,
     select_audio_windows,
     select_timing_regions,
     stft_batches,
 )
 from fakedetector.preprocessing._models import (
     AudioWindowDescriptor,
+    AVTimelineDescriptor,
     ForensicManifest,
     ForensicRepresentation,
     ImageCoordinates,
@@ -66,6 +68,7 @@ from fakedetector.preprocessing._models import (
     SpectralWindowDescriptor,
     StreamTimingFacts,
     TimingInterval,
+    TimingRecordsDescriptor,
 )
 from fakedetector.preprocessing._requirements import (
     _FORENSIC_POLICY,
@@ -596,6 +599,8 @@ class PreprocessingDispatcher:
             ForensicCapability.AUDIO_SPECTRAL,
             ForensicCapability.STREAM_TIMING,
             ForensicCapability.TIMING_RECORDS,
+            ForensicCapability.DENSE_VIDEO,
+            ForensicCapability.AV_TIMELINE,
         }:
             raise PreprocessingError("invariant", "forensic_producer_unavailable")
         if not request.artifact_budget.matches(
@@ -680,6 +685,22 @@ def _prepare_av_forensic(
                 existing_representations=len(representations),
             )
         )
+    if ForensicCapability.AV_TIMELINE in requirements.forensic:
+        mapping = AVTimelineDescriptor.from_timing(
+            tuple(r.facts for r in representations if isinstance(r.facts, StreamTimingFacts)),
+            tuple(r.facts for r in representations if isinstance(r.facts, TimingRecordsDescriptor)),
+        )
+        representations.append(
+            ForensicRepresentation(
+                provenance=RepresentationProvenance(
+                    producer="av_timing",
+                    producer_version="1",
+                    profile="regional_endpoints",
+                    profile_version="1",
+                ),
+                facts=mapping,
+            )
+        )
     try:
         return ForensicManifest(
             source_sha256=request.validated_file.sha256,
@@ -706,8 +727,15 @@ def _prepare_timing_forensic(
         profile_version="1",
     )
     records_demand = ForensicCapability.TIMING_RECORDS in requirements.forensic
+    dense_demand = ForensicCapability.DENSE_VIDEO in requirements.forensic
+    mapping_demand = ForensicCapability.AV_TIMELINE in requirements.forensic
+    dense_provenance = RepresentationProvenance(
+        producer="ffmpeg_dense", producer_version="1", profile="rgb24_bilinear", profile_version="1"
+    )
     representations: list[ForensicRepresentation] = []
-    plan: list[tuple[StreamTimingFacts, TimingInterval, int, Literal["packet", "frame"]]] = []
+    plan: list[
+        tuple[StreamTimingFacts, TimingInterval, int, Literal["packet", "frame", "dense"]]
+    ] = []
     try:
         with request.source_file_ref.open_for_read() as stream:
             hasher = hashlib.sha256()
@@ -726,49 +754,100 @@ def _prepare_timing_forensic(
                 partial(
                     tool.timing_stream,
                     kind=kind,
-                    frames=records_demand,
+                    frames=records_demand or dense_demand,
                     timeout_seconds=_operation_timeout(remaining),
                 )
             )
             if facts is None:
                 continue
             representations.append(ForensicRepresentation(provenance=provenance, facts=facts))
-            if records_demand:
+            if records_demand or dense_demand:
                 for region, interval in enumerate(select_timing_regions(facts)):
-                    plan.append((facts, interval, region, "packet"))
-                    if kind == "video":
-                        plan.append((facts, interval, region, "frame"))
-        if not representations:
+                    if records_demand:
+                        plan.append((facts, interval, region, "packet"))
+                        if kind == "video":
+                            plan.append((facts, interval, region, "frame"))
+                    if dense_demand and kind == "video":
+                        plan.append((facts, interval, region, "dense"))
+        if not representations and not mapping_demand:
             raise PreprocessingError("decode", "timing_unsupported_streams")
+        if dense_demand and not any(
+            r.facts.stream_kind == "video"
+            for r in representations
+            if isinstance(r.facts, StreamTimingFacts)
+        ):
+            raise PreprocessingError("decode", "dense_unsupported_stream")
+        dense_plan = [item for item in plan if item[3] == "dense"]
+        dense_bytes = sum(
+            _FORENSIC_POLICY.dense_frames * w * h * 3
+            for item in dense_plan
+            for w, h in (dense_geometry(item[0]),)
+        )
         count = sum(
             _FORENSIC_POLICY.timing_packets
             if item[3] == "packet"
+            else _FORENSIC_POLICY.dense_frames
+            if item[3] == "dense"
             else _FORENSIC_POLICY.timing_frames
             for item in plan
         )
         if (
             count > _FORENSIC_POLICY.timing_records
             or count * 72 > _FORENSIC_POLICY.timing_artifact_bytes
-            or existing_representations + len(representations) + len(plan)
+            or len(dense_plan) > _FORENSIC_POLICY.dense_windows
+            or existing_representations
+            + len(representations)
+            + len(plan)
+            + len(dense_plan)
+            + int(mapping_demand)
             > _MAX_FORENSIC_REPRESENTATIONS
         ):
             raise PreprocessingError("resource_limit", "timing_preflight")
         _FORENSIC_POLICY.check_artifacts(
             request.artifact_budget,
-            total_count=len(artifacts) + len(plan),
-            additional_bytes=count * 72,
+            total_count=len(artifacts) + len(plan) + len(dense_plan),
+            additional_bytes=count * 72 + dense_bytes,
         )
         for facts, interval, region, record_kind in plan:
-            descriptor, values = request.source_file_ref.with_local_source_path(
-                partial(
-                    tool.timing_records,
-                    facts=facts,
-                    requested=interval,
-                    region=region,
-                    kind=record_kind,
-                    timeout_seconds=_operation_timeout(remaining),
+            record_provenance = provenance
+            if record_kind == "dense":
+                pixel_id = f"dense_{facts.stream_index}_{region}"
+                pixel_ref = _register(request.artifact_registry, pixel_id, f"{pixel_id}.raw")
+                dense, descriptor, values = _with_source_and_artifact(
+                    request,
+                    pixel_ref,
+                    partial(
+                        tool.dense_window,
+                        facts=facts,
+                        requested=interval,
+                        region=region,
+                        artifact_budget=request.artifact_budget,
+                        timeout_seconds=_operation_timeout(remaining),
+                    ),
                 )
-            )
+                artifacts.append(
+                    PreparedArtifact(
+                        artifact_id=pixel_id,
+                        artifact_type="dense_rgb",
+                        artifact_ref=pixel_ref,
+                        format="forensic_raw",
+                    )
+                )
+                representations.append(
+                    ForensicRepresentation(provenance=dense_provenance, facts=dense)
+                )
+                record_provenance = dense_provenance
+            else:
+                descriptor, values = request.source_file_ref.with_local_source_path(
+                    partial(
+                        tool.timing_records,
+                        facts=facts,
+                        requested=interval,
+                        region=region,
+                        kind=record_kind,
+                        timeout_seconds=_operation_timeout(remaining),
+                    )
+                )
             if descriptor.data is not None:
                 _write_numeric(
                     request,
@@ -778,7 +857,9 @@ def _prepare_timing_forensic(
                     remaining,
                     artifact_type="timing_numeric",
                 )
-            representations.append(ForensicRepresentation(provenance=provenance, facts=descriptor))
+            representations.append(
+                ForensicRepresentation(provenance=record_provenance, facts=descriptor)
+            )
         return tuple(representations)
     except IntakeSystemError:
         raise PreprocessingError("source_read", "timing_source") from None

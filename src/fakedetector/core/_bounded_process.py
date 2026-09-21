@@ -59,8 +59,9 @@ class ProcessTimeoutError(Exception):
 class ProcessOutputLimitError(Exception):
     """Report bounded output overflow only after the child has been reaped."""
 
-    def __init__(self) -> None:
+    def __init__(self, stream: Literal["stdout", "stderr"] = "stdout") -> None:
         super().__init__("Subprocess output exceeded its limit.")
+        self.stream = stream
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,6 +347,8 @@ def _capture_until_complete(
             assert process.stderr is not None and stderr_output is not None
             try:
                 stderr_eof = _read_available_stdout(process.stderr, output=stderr_output)
+            except ProcessOutputLimitError:
+                raise ProcessOutputLimitError("stderr") from None
             except ProcessInfrastructureError:
                 raise ProcessInfrastructureError("stderr_read") from None
 
