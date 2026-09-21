@@ -68,6 +68,7 @@ from fakedetector.preprocessing._models import (
     SpectralWindowDescriptor,
     StreamTimingFacts,
     TimeBase,
+    TimingInterval,
     TimingRecordsDescriptor,
     _forensic_manifest,
 )
@@ -374,10 +375,14 @@ def _video_facts():
             record_kind="frame",
             first_tick=-10,
             last_tick=40,
-            data=_numeric("timing", (2, 5), "<i8"),
+            requested=TimingInterval(start=-10, stop=40),
+            coverage="envelope",
+            decode_operation_id="test_decode",
+            data=_numeric("timing", (2, 9), "<i8"),
         ),
         DenseVideoWindowDescriptor(
             timing_artifact_id="timing",
+            decode_operation_id="test_decode",
             native_width=640,
             native_height=360,
             pixels=_numeric("dense", (2, 180, 320, 3), "|u1"),

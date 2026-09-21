@@ -321,6 +321,13 @@ class AnalyzerRequest:
         values = np.frombuffer(data, dtype=descriptor.dtype).reshape(descriptor.shape)
         if values.dtype.kind in "fc" and not np.isfinite(values).all():
             raise ValueError("numeric artifact contains nonfinite values")
+        from fakedetector.preprocessing._media_tools import validate_timing_values
+        from fakedetector.preprocessing._models import TimingRecordsDescriptor
+
+        for representation in manifest.representations:
+            facts = representation.facts
+            if isinstance(facts, TimingRecordsDescriptor) and facts.data == descriptor:
+                validate_timing_values(facts, values)
         return values
 
 

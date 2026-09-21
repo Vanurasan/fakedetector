@@ -1325,7 +1325,8 @@ ownership semantics.
 transport сохраняют прежнее владение. M1-A реализует типы, декларации,
 проверки размеров и координат; M1-B — original image/JPEG producer и numeric reader;
 M1-C — общие bounded deterministic image residual kernels; M1-D — source-precision
-audio windows и numeric framing/STFT. Timing/dense извлечение относится к M1-E–F.
+audio windows и numeric framing/STFT; M1-E — bounded stream/packet/frame timing.
+Dense извлечение относится к M1-F.
 Новые требования отсутствуют у четырёх текущих анализаторов версии `1.0.0`.
 Публичные схемы, локализация, риск, полнота и YAML не изменяются.
 
@@ -1345,7 +1346,8 @@ audio windows и numeric framing/STFT. Timing/dense извлечение отн�
 
 Старые `audio_spectrogram`/`video_audio_track` сохраняют семантику. Неподходящий
 media route отклоняется. Dispatcher принимает original image/coordinates/JPEG
-и audio precision/samples/spectral demand; остальные producers отклоняет до I/O с внутренним
+и audio precision/samples/spectral, stream timing/timing records demand; остальные
+producers отклоняет до I/O с внутренним
 `forensic_producer_unavailable`. Профили реализованных производителей определены
 ниже; объединение capabilities не меняет их параметры.
 
@@ -1397,13 +1399,10 @@ Spectral имеет `(frame, channel, rFFT-bin)`, явные FFT/hop/window/scal
 frame range относительно sample window и только полные окна без padding.
 
 Timing использует signed ticks, положительный рациональный `TimeBase` и `None`
-для неизвестных фактов. Внешняя таблица `<i8` имеет столбцы PTS, DTS, duration,
-decode ordinal, validity mask: биты 0–2 означают наличие первых трёх полей,
-отсутствующие значения хранятся нулём. Строки сохраняют decode order; отрицательные,
-повторяющиеся и немонотонные PTS не исправляются. `first_tick`/`last_tick` —
-наблюдаемые endpoints, а не requested seek boundaries или доказательство
-непрерывности. Dense RGB24 имеет `(frame, y, x, 3)` и ссылается на frame records
-того же decode; M1-F обязан подтвердить это происхождение и каждый timestamp.
+для неизвестных фактов. Формат таблиц и покрытие M1-E определены ниже. Dense
+RGB24 имеет `(frame, y, x, 3)` и ссылается на frame records **того же decode**:
+`decode_operation_id` у pixels и timing обязан совпадать; одного совпадения
+ordinal недостаточно. M1-F обязан подтвердить это происхождение и каждый timestamp.
 AV-таблица содержит audio sample start/stop и video tick start/stop для каждой
 наблюдавшейся непрерывной области. Межоконные пробелы не являются наблюдавшимися
 разрывами; рассуждений о drift/synchronization эти дескрипторы не делают.
@@ -1441,6 +1440,108 @@ safety envelope, не production sampling defaults и не YAML. Значени�
 recursive metadata/raw EXIF/raw ffprobe JSON, путей и массивов; ответы worker
 по-прежнему ограничены 65 536 байтами. Числовые данные не входят в response или
 `raw_metrics`. Потолки данных не заменяют remaining timeout и контроль native RSS.
+
+**Bounded media timing (M1-E).** Производитель `ffprobe_timing/1`, профиль
+`bounded_packets_frames/1`, реализован в private `_media_tools.py` и подключён через
+существующий `_FFmpegPreprocessingTool`. `stream_timing` запрашивает только факты;
+`timing_records` дополнительно создаёт packet records и video decoded-frame
+records. На video route выбираются первые video и audio streams; на audio route —
+первый audio stream. Отсутствующая audio track не является ошибкой. Audio frame
+records этим профилем не создаются. Аудио sample windows остаются представлением
+M1-D; timing-only demand не вызывает `audio_precision`/`precision_window`.
+
+`StreamTimingFacts` сохраняет stream index, media kind, `time_base`,
+`start_pts`/`duration_ts` как `start_tick`/`duration_ticks`, а также отдельные
+`declared_start`/`declared_duration` из decimal seconds в виде точных рациональных
+чисел. Declared seconds не заполняют неизвестные наблюдаемые timestamps.
+`avg_frame_rate`/`r_frame_rate` используют отдельный `TimingRate`: точную
+рациональную частоту в кадрах в секунду без метода `seconds(ticks)`. `TimeBase`
+остаётся типом секунд на tick и не принимается вместо `TimingRate` или наоборот.
+`0/0`, `0/1`, `N/A` и отсутствующие rates дают `None`; отрицательные и прочие
+невалидные rates отклоняются. Невалидный time base также отклоняется.
+Rates не доказывают CFR. Оба типа имеют положительные целочисленные компоненты до
+`2^31-1`; остальные рациональные значения — signed numerator до `2^63-1`
+по модулю и положительный denominator до `2^63-1`. `TimeBase.seconds(ticks)`
+возвращает `Fraction(ticks * numerator, denominator)` без float arithmetic.
+SHA-256 source проверяется повторно потоково; manifest связывает записи с source,
+а provenance timing records обязан совпадать с provenance соответствующего stream.
+Raw probe JSON, tags и stderr не сохраняются.
+
+`TimingRecordsDescriptor` ссылается на таблицу `<i8`, `(record_count, 9)`:
+
+| Столбец | Наблюдение |
+|---|---|
+| 0 | PTS ticks |
+| 1 | DTS ticks; у frames — `pkt_dts`, если ffprobe его сообщил |
+| 2 | `duration`: packet duration для packet rows, frame duration для frame rows |
+| 3 | Локальный ordinal в выбранной области и stream |
+| 4 | Validity mask, биты 0–6 соответствуют столбцам 0, 1, 2, 5, 6, 7, 8 |
+| 5 | Отдельный `best_effort_timestamp` у frame rows |
+| 6 | Отдельный `pkt_duration` у frame rows |
+| 7 | Наблюдение `key_frame`: 0 или 1 при установленном validity bit |
+| 8 | Picture type: I=1, P=2, B=3, S=4, SI=5, SP=6, BI=7; иные неизвестны |
+
+При отсутствии значения хранится 0 с очищенным validity bit. PTS не подменяется
+DTS или best-effort timestamp. Packet ordinal — порядок demux выбранного stream
+в данном probe, не глобальный ordinal файла. Frame ordinal — порядок **выдачи**
+декодером, не утверждение о coded-picture decode order. B-frame reordering,
+немонотонные/повторные PTS и DTS != PTS сохраняются без исправления и без выводов.
+Packet flags не сохраняются. Frame records получают отдельный
+`decode_operation_id`; их нельзя связывать с существующими sampled PNG,
+полученными другим decode. Writer и `AnalyzerRequest.read_numeric` проверяют
+форму, маски, отсутствие значений при сброшенном бите, ordinal, длительности,
+allowlist key/picture и соответствие endpoints/coverage данным. Reader сохраняет
+immutable bytes backing; malformed typed artifact отклоняется через `ValueError`.
+
+План содержит до трёх номинальных двухсекундных интервалов в stream ticks:
+начало, середина и конец по declared duration. При неизвестной duration выбирается
+только начало. Совпадающие и перекрывающиеся кандидаты объединяются в их
+интервальное объединение, включая транзитивные перекрытия; объединённая область
+может быть длиннее номинальных двух секунд. Например, при duration 3000 ticks
+и nominal window 2000 ticks результат — один интервал `[0, 3000)`. Для него
+создаётся одна пара packet/frame probes, без дополнительных областей ради
+сохранения меток кандидатов. Пределы числа записей, байтов и процессов не меняются.
+Неизвестный start даёт нулевую **запрошенную** позицию, не нулевой измеренный
+timestamp.
+`requested` сохраняет точные `[start, stop)` ticks. В argv seek округляется вниз
+до микросекунды; фактический seek не считается точным.
+
+Каждый probe использует `-read_intervals start%+#N`: N=256 для packets,
+N=512 для video frames. Это ограничение числа **входных пакетов**, а не обещание
+числа кадров или конца временного интервала. Выходные frame records отдельно
+проверяются на предел 512. Все полученные записи сохраняются, включая seek
+preroll и записи за nominal stop; таблица не обрезается молча. `first_tick` и
+`last_tick` — PTS первой и последней строки, включая `None` при неизвестном PTS;
+их порядок не исправляется. `record_count` выводится из shape, для пустого
+результата равен 0: `data=None`, без фиктивного numeric artifact.
+
+`coverage=empty` означает отсутствие записей, `unknown` — неизвестный PTS хотя бы
+одной строки, `partial` — наблюдаемый временной envelope не охватывает весь
+requested interval. `envelope` означает только охват границ через min PTS и max
+PTS+известная duration; он **не доказывает полноту, отсутствие внутренних пробелов
+или непрерывность**. Точные строки позволяют потребителю оценивать покрытие
+отдельно. `stop_reason=packet_budget_or_eof` честно сохраняет неоднозначность:
+ffprobe не сообщает, достигнут ли лимит входных пакетов или EOF. Более точная
+причина не выдумывается. Разница requested/observed start доступна явно;
+межоконные пробелы не становятся наблюдениями разрыва и не дают full-file verdict.
+
+Используется прежний `run_bounded_process`: argv без shell, протокол `file`,
+allowlist полей, один decoder thread, timeout `min(15 s, remaining budget)`,
+stdout/stderr до 256 KiB каждый, concurrent drain, reap и cleanup safety barrier.
+Проверка count, worst-case bytes и оставшегося общего artifact budget выполняется
+до packet/frame probes; каждая запись идёт через прежний registry/open_output.
+Потолки `ForensicResourcePolicy` не меняются. Также действует предел 16 manifest
+representations, включая M1-D; слишком большой объединённый demand отклоняется,
+не расширяет лимиты. Native geometry проверяется по stream header до frame probe;
+это не hard OS RSS quota и не защита от всех изменений геометрии внутри codec.
+
+Безопасные внутренние phases различают `timing_unsupported_*`,
+`timing_malformed_rational`, malformed stream/probe/records/artifact,
+`timing_probe_malformed_media`, decoder/diagnostic failure, timeout, overflow,
+record count/preflight/artifact resource rejection и process infrastructure failure.
+Неподтверждённый reap сохраняет существующий cleanup barrier. Неполное покрытие —
+типизированный факт, не Finding и не изменение risk/completeness. Анализаторы
+`video_timestamp_consistency` и `video_audio_timing_consistency` не реализованы.
 
 **Residual kernels.** M1-C добавляет только private числовой слой в
 `preprocessing/_media_tools.py`; producer `residual_raster`, новый analyzer,

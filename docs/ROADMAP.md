@@ -120,11 +120,11 @@ AFTER_MVP
 Статус Macros 0–8 Stage 11: DONE / owner accepted
 Последний завершённый Macro: Stage 12 Macro 0 — Stage Definition, Licensing & Third-Party Policy (DONE)
 Статус Stage 12: IN_PROGRESS
-Текущий Macro: Macro 1 — Forensic Preprocessing Foundations (IN_PROGRESS; M1-A–M1-D DONE)
+Текущий Macro: Macro 1 — Forensic Preprocessing Foundations (IN_PROGRESS; M1-A–M1-E DONE)
 Статус Macro 0: DONE
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
-Последний завершённый increment: M1-D — Source-Precision Audio & Numeric STFT Foundations (DONE)
-Следующее действие: M1-E — bounded timing
+Последний завершённый increment: M1-E — Bounded Media Timing Facts (DONE)
+Следующее действие: M1-F — dense windows/AV mapping
 Следующий Macro: Macro 2 — Image Analyzer Expansion — Wave 1 (NOT_STARTED; после закрытия Macro 1)
 Будущие работы: Stage 12 Macros 2–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры: отсутствуют
@@ -153,8 +153,9 @@ Stage 12 явно разрешён владельцем 2026-09-20. Решени
 release-package/release-verification тесты прошли: **47 passed**.
 Macro 0 — `DONE`. Macro 1 — Forensic Preprocessing Foundations — `IN_PROGRESS`.
 M1-A (contracts/limits), M1-B (original image/JPEG), M1-C (deterministic image
-residual kernels) и M1-D (audio precision/STFT) завершены. Следующий отдельный
-implementation increment — **M1-E: bounded timing**. Решения G1–G5 закрыты; в M1-D новые
+residual kernels), M1-D (audio precision/STFT) и M1-E (bounded timing) завершены.
+Следующий отдельный increment — **M1-F: dense windows/AV mapping**.
+Решения G1–G5 закрыты; в M1-E новые
 runtime dependencies, публичные схемы и конфигурационные поля не вводились.
 
 ---
@@ -175,7 +176,7 @@ runtime dependencies, публичные схемы и конфигурацио�
 | 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
 | 10 | Сборка и демонстрация MVP | DONE / CLOSED | Macro 1–3 DONE / owner accepted; independent post-remediation audit — PASS; S10-A01–S10-A04 CLOSED |
 | 11 | Post-MVP Normalization & Hardening | DONE / CLOSED | Macros 0–8 DONE / owner accepted; финальная проверка и strict certification — PASS; actionable findings 0 |
-| 12 | Analyzer Expansion, Licensing & Product Validation | IN_PROGRESS | Macro 0 DONE; Macro 1 IN_PROGRESS, M1-A–M1-D DONE; лицензия проекта Apache-2.0 |
+| 12 | Analyzer Expansion, Licensing & Product Validation | IN_PROGRESS | Macro 0 DONE; Macro 1 IN_PROGRESS, M1-A–M1-E DONE; лицензия проекта Apache-2.0 |
 | 13+ | Дальнейшие расширения | AFTER_MVP / NOT_STARTED | ML, интеграции, история, масштабирование; отдельное решение владельца |
 
 ---
@@ -2337,7 +2338,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 | Macro | Название | Статус | Вход / результат и критерий перехода |
 |---:|---|---|---|
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
-| 1 | Forensic Preprocessing Foundations | IN_PROGRESS | M1-A–M1-D DONE; следующий increment M1-E, owner blockers отсутствуют |
+| 1 | Forensic Preprocessing Foundations | IN_PROGRESS | M1-A–M1-E DONE; следующий increment M1-F, owner blockers отсутствуют |
 | 2 | Image Analyzer Expansion — Wave 1 | NOT_STARTED | После 1: согласованный набор image-методов, provenance, применимость, признаки и тесты |
 | 3 | Audio Analyzer Expansion — Wave 1 | NOT_STARTED | После 1 и планового закрытия 2: согласованный audio-набор на общих представлениях |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
@@ -2492,7 +2493,7 @@ metadata-границу; большие числовые данные — зар
 
 ### Последовательность M1-A–M1-H
 
-M1-A, M1-B, M1-C и M1-D — `DONE`; E–H остаются `NOT_STARTED`.
+M1-A, M1-B, M1-C, M1-D и M1-E — `DONE`; F–H остаются `NOT_STARTED`.
 Macro 1 — `IN_PROGRESS`.
 
 | Increment | Зависимости | Проверяемый результат |
@@ -2501,13 +2502,13 @@ Macro 1 — `IN_PROGRESS`.
 | M1-B — original image/JPEG — DONE | A, G1/G4 | Ограниченные исходные факты, EXIF mapping всех 8 ориентаций, native quantized coefficients и таблицы с component/table IDs; изолированный decoder, общее bounded stderr для строгой обработки warnings, Unicode workspace и installed-wheel smoke |
 | M1-C — residual kernels — DONE | A, mapping из B | Небольшие собственные детерминированные residual/filter kernels с явными dtype, границами, halo и областью покрытия; без Noiseprint и копирования чужих ограниченных реализаций |
 | M1-D — audio precision/STFT — DONE | A, G2/G3 | Source/decoded sample-format facts, точные sample indices и дополнительные окна; общий framing/window/rFFT/magnitude/power API, без чтения spectrogram PNG и без принудительного downmix/resample |
-| M1-E — bounded timing | A/B, G4 | Типизированные stream/packet/frame facts, signed PTS/DTS и rational time base; bounded ffprobe и переиспользование общей sideband-границы из B для timing; без raw JSON в analyzer inputs |
+| M1-E — bounded timing — DONE | A/B, G4 | Типизированные stream/packet/frame facts, signed PTS/DTS и rational time base; bounded ffprobe и переиспользование общей sideband-границы из B для timing; без raw JSON в analyzer inputs |
 | M1-F — dense windows/AV mapping | B/C/D/E | Ограниченные последовательные кадры из одного decode на окно с подтверждённой связью pixels/timestamps; mapping audio sample indices и video timeline, обработка offsets/discontinuities и неизвестных значений |
 | M1-G — integration/hardening | B–F | Совместные count/byte/CPU budgets, безопасная сериализация, timeout/overflow/crash/reap/cleanup matrix, существующие consumers без изменения поведения; sdist → wheel → внешняя runtime-среда без checkout и dev packages |
 | M1-H — independent closure audit | G | Отдельный независимый read-only аудит, отсутствие незакрытых findings, проверка критериев Macro 1 и решение о закрытии |
 
 Точный следующий implementation increment — отдельная задача
-**M1-E: bounded timing**. A задаёт общие contracts/limits для B–F;
+**M1-F: dense windows/AV mapping**. A задаёт общие contracts/limits для B–F;
 точные реализованные ограничения принадлежат `CONTRACTS.md` §7.5. Предложения
 Pass 1 ниже сохраняются как критерии дальнейшей проверки A/G, не production
 sampling defaults и не новые YAML-поля.
@@ -2626,7 +2627,49 @@ tracked файлах, release provenance policy не менялась. Git mutat
 неподтверждённой непрерывности PTS; короткое окно без полного FFT frame не создаёт
 spectral artifact. Общий native RSS/concurrency остаётся предметом M1-G.
 Owner blockers отсутствуют. Stage 12 и Macro 1 остаются `IN_PROGRESS`.
-Следующий increment — **M1-E: bounded timing**.
+Следующим increment был M1-E.
+
+### M1-E — bounded media timing facts — DONE
+
+Baseline: `c20183c58d525329229898bc436414db1624cea6`, ветка
+`feat/stage12-macro1-forensic-preprocessing-foundations`, начальное дерево чистое.
+Реализованы bounded stream/packet/video-frame timing facts, exact rational time,
+типизированные numeric tables и проверка их чтения, requested/observed coverage
+и связь будущих pixels/timestamps через идентичность decode operation.
+Семантика и ограничения принадлежат `CONTRACTS.md` §7.5.
+
+Timing подключён к существующему demand plan; исправлена чрезмерно широкая
+активация M1-D: timing-only video demand не вызывает source-precision audio decode.
+Существующие четыре анализатора не запрашивают новые capabilities; PCM16 и
+sampled-video поведение сохранено. Новые анализаторы, Findings, public API,
+AnalysisResult, YAML/config, зависимости и risk/completeness не менялись.
+
+Проверены сгенерированные CFR, B-frame, VFR, short/non-zero-start video,
+video с audio и без него, missing PTS/DTS, точность больших ticks, rational
+validation, begin/middle/end, неточный seek, partial/empty coverage, count/byte
+preflight, malformed/truncated media, malformed tables, timeout, реальные
+stdout/stderr overflow с reap и передача unresolved-process cleanup barrier.
+Первичная проверка с существующими contracts/runner/registry и packaging
+regression: **584 passed**. После замечаний владельца выполнены две точечные
+коррекции: частоты кадров получили отдельный тип `TimingRate`, перекрывающиеся
+регионы объединяются без дополнительных probes/artifacts. Семантика закреплена
+в `CONTRACTS.md` §7.5. Проверки типов, границ рациональных чисел, объединения
+регионов и сохранения положительного/отрицательного start добавлены в тесты.
+Focused suite после коррекций: **492 passed**. Итоговый `uv run poe check`:
+**2374 passed, 17 skipped, coverage 90%**; pre-commit, Ruff, mypy (65 source files)
+и CLI smoke — PASS.
+
+Реализация и тесты находятся в существующих tracked файлах; provenance policy
+пакета не ослаблялась. `git diff --check` — PASS. Git mutations, Graphify rebuild
+и отдельная strict release certification не выполнялись. CHANGELOG и REFERENCES
+не менялись: новые архитектурные решения и внешние зависимости не вводились.
+
+Ограничения: выборочные области не доказывают full-file continuity; наблюдаемый
+временной envelope не доказывает отсутствие внутренних пробелов. Причина
+завершения probe сохраняет неоднозначность packet budget/EOF. Audio timing
+ограничен packets; dense RGB и AV mapping не реализованы. Общий native
+RSS/concurrency остаётся предметом M1-G. Owner blockers отсутствуют.
+Stage 12 и Macro 1 остаются `IN_PROGRESS`. Следующий increment — **M1-F**.
 
 ### Критерии ресурсов и достоверности для A/G
 

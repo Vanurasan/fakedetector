@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import PurePath
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Annotated, Literal, Self
@@ -460,6 +461,34 @@ class TimeBase(_BoundedValue):
     numerator: Annotated[int, Field(gt=0, le=(1 << 31) - 1)]
     denominator: Annotated[int, Field(gt=0, le=(1 << 31) - 1)]
 
+    def seconds(self, ticks: int) -> Fraction:
+        if type(ticks) is not int or abs(ticks) > _MAX_INDEX:
+            raise ValueError("invalid timestamp ticks")
+        return Fraction(ticks * self.numerator, self.denominator)
+
+
+class TimingRate(_BoundedValue):
+    """Declared frames per second, distinct from seconds per timestamp tick."""
+
+    numerator: Annotated[int, Field(gt=0, le=(1 << 31) - 1)]
+    denominator: Annotated[int, Field(gt=0, le=(1 << 31) - 1)]
+
+
+class TimingRational(_BoundedValue):
+    numerator: _Tick
+    denominator: _PositiveIndex
+
+
+class TimingInterval(_BoundedValue):
+    start: _Tick
+    stop: _Tick
+
+    @model_validator(mode="after")
+    def ordered(self) -> Self:
+        if self.stop <= self.start:
+            raise ValueError("timing interval must have positive extent")
+        return self
+
 
 class StreamTimingFacts(_BoundedValue):
     kind: Literal["stream_timing"] = "stream_timing"
@@ -468,13 +497,24 @@ class StreamTimingFacts(_BoundedValue):
     time_base: TimeBase
     start_tick: _Tick | None
     duration_ticks: _NonnegativeIndex | None
+    declared_start: TimingRational | None = None
+    declared_duration: TimingRational | None = None
+    avg_frame_rate: TimingRate | None = None
+    r_frame_rate: TimingRate | None = None
+
+    @model_validator(mode="after")
+    def declared_times(self) -> Self:
+        if self.declared_duration is not None and self.declared_duration.numerator < 0:
+            raise ValueError("declared duration must be nonnegative")
+        return self
 
 
 class TimingRecordsDescriptor(_BoundedValue):
-    """Rows: PTS, DTS, duration, decode ordinal, validity mask (bits 0..2).
+    """PTS, DTS, duration, ordinal, mask, best-effort, packet duration, key, picture.
 
-    Missing tick fields use zero plus a cleared validity bit. Records preserve
-    decode order, including signed/repeated PTS; endpoints do not prove continuity.
+    Mask bits 0..6 cover columns 0,1,2,5,6,7,8; missing values are zero.
+    Packet ordinal is selected-stream demux order. Frame ordinal is decoder OUTPUT
+    order, not coded-picture decode order. Endpoints use PTS only.
     """
 
     kind: Literal["timing_records"] = "timing_records"
@@ -483,10 +523,30 @@ class TimingRecordsDescriptor(_BoundedValue):
     record_kind: Literal["packet", "frame"]
     first_tick: _Tick | None
     last_tick: _Tick | None
-    data: NumericArtifact
+    requested: TimingInterval
+    coverage: Literal["envelope", "partial", "unknown", "empty"]
+    stop_reason: Literal["packet_budget_or_eof"] = "packet_budget_or_eof"
+    decode_operation_id: _Token | None
+    data: NumericArtifact | None
+
+    @property
+    def record_count(self) -> int:
+        return self.data.shape[0] if self.data is not None else 0
 
     @model_validator(mode="after")
     def layout(self) -> Self:
+        if (self.record_kind == "frame") != (self.decode_operation_id is not None):
+            raise ValueError("frame records require their own decode operation identity")
+        if self.data is None:
+            if (
+                self.coverage != "empty"
+                or self.first_tick is not None
+                or self.last_tick is not None
+            ):
+                raise ValueError("empty timing coverage cannot contain observations")
+            return self
+        if self.coverage == "empty":
+            raise ValueError("nonempty timing data cannot claim empty coverage")
         limit = (
             _FORENSIC_POLICY.timing_packets
             if self.record_kind == "packet"
@@ -495,7 +555,7 @@ class TimingRecordsDescriptor(_BoundedValue):
         if (
             self.data.dtype != "<i8"
             or len(self.data.shape) != 2
-            or self.data.shape[1] != 5
+            or self.data.shape[1] != 9
             or self.data.shape[0] > limit
             or self.data.nbytes > _FORENSIC_POLICY.timing_artifact_bytes
         ):
@@ -506,6 +566,7 @@ class TimingRecordsDescriptor(_BoundedValue):
 class DenseVideoWindowDescriptor(_BoundedValue):
     kind: Literal["dense_video"] = "dense_video"
     timing_artifact_id: _ArtifactId
+    decode_operation_id: _Token
     native_width: Annotated[int, Field(gt=0, le=_FORENSIC_POLICY.native_video_width)]
     native_height: Annotated[int, Field(gt=0, le=_FORENSIC_POLICY.native_video_height)]
     pixels: NumericArtifact
@@ -585,7 +646,7 @@ class ForensicRepresentation(_BoundedValue):
                 AVTimelineDescriptor,
             ),
         ):
-            return (facts.data,)
+            return (facts.data,) if facts.data is not None else ()
         return ()
 
 
@@ -617,8 +678,20 @@ class ForensicManifest(_BoundedValue):
             ):
                 raise ValueError("audio samples must retain precision provenance identity")
         streams = {f.stream_index: f for f in facts if isinstance(f, StreamTimingFacts)}
+        stream_provenance = {
+            r.facts.stream_index: r.provenance
+            for r in self.representations
+            if isinstance(r.facts, StreamTimingFacts)
+        }
+        for representation in self.representations:
+            if isinstance(representation.facts, TimingRecordsDescriptor) and (
+                representation.provenance
+                != stream_provenance.get(representation.facts.stream_index)
+            ):
+                raise ValueError("timing records must retain stream provenance identity")
         samples = {f.data.artifact_id: f for f in facts if isinstance(f, AudioWindowDescriptor)}
-        timing = {f.data.artifact_id: f for f in facts if isinstance(f, TimingRecordsDescriptor)}
+        regions = tuple(f for f in facts if isinstance(f, TimingRecordsDescriptor))
+        timing = {f.data.artifact_id: f for f in regions if f.data is not None}
         originals = tuple(f for f in facts if isinstance(f, OriginalImageFacts))
         if len(originals) > 1:
             raise ValueError("original image facts must have a single source identity")
@@ -636,10 +709,10 @@ class ForensicManifest(_BoundedValue):
             > _FORENSIC_POLICY.spectral_frames
             or sum(isinstance(f, DenseVideoWindowDescriptor) for f in facts)
             > _FORENSIC_POLICY.dense_windows
-            or sum(f.data.shape[0] for f in timing.values()) > _FORENSIC_POLICY.timing_records
-            or sum(f.data.nbytes for f in timing.values()) > _FORENSIC_POLICY.timing_artifact_bytes
-            or len({(f.stream_index, f.region, f.record_kind) for f in timing.values()})
-            != len(timing)
+            or sum(f.record_count for f in regions) > _FORENSIC_POLICY.timing_records
+            or sum(f.data.nbytes for f in regions if f.data is not None)
+            > _FORENSIC_POLICY.timing_artifact_bytes
+            or len({(f.stream_index, f.region, f.record_kind) for f in regions}) != len(regions)
         ):
             raise ValueError("duplicate facts or aggregate representation limits exceeded")
         for fact in facts:
@@ -701,7 +774,9 @@ class ForensicManifest(_BoundedValue):
                 if isinstance(fact, DenseVideoWindowDescriptor):
                     base = streams[records.stream_index].time_base
                     if (
-                        records.data.shape[0] != fact.pixels.shape[0]
+                        records.data is None
+                        or records.decode_operation_id != fact.decode_operation_id
+                        or records.record_count != fact.pixels.shape[0]
                         or records.first_tick is None
                         or records.last_tick is None
                         or not 0

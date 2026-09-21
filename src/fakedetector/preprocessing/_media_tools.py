@@ -12,9 +12,11 @@ import re
 import sys
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import Path
 from time import monotonic
 from typing import BinaryIO, Literal, cast
+from uuid import uuid4
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
@@ -39,6 +41,13 @@ from fakedetector.preprocessing._models import (
     JpegComponent,
     JpegHeader,
     JpegQuantizationTable,
+    NumericArtifact,
+    StreamTimingFacts,
+    TimeBase,
+    TimingInterval,
+    TimingRate,
+    TimingRational,
+    TimingRecordsDescriptor,
 )
 from fakedetector.preprocessing._requirements import (
     _FORENSIC_POLICY,
@@ -490,6 +499,37 @@ class _FFmpegPreprocessingTool:
             raise ValueError("timeout_seconds must be greater than zero")
         self._executable = executable
         self._timeout_seconds = timeout_seconds
+
+    def timing_stream(
+        self,
+        source: Path,
+        kind: Literal["audio", "video"],
+        *,
+        frames: bool,
+        timeout_seconds: float | None,
+    ) -> StreamTimingFacts | None:
+        return probe_timing_stream(
+            source, kind, frames=frames, timeout=self._effective_timeout(timeout_seconds)
+        )
+
+    def timing_records(
+        self,
+        source: Path,
+        facts: StreamTimingFacts,
+        requested: TimingInterval,
+        region: int,
+        kind: Literal["packet", "frame"],
+        *,
+        timeout_seconds: float | None,
+    ) -> tuple[TimingRecordsDescriptor, NDArray[np.int64]]:
+        return probe_timing_records(
+            source,
+            facts,
+            requested,
+            region,
+            kind,
+            timeout=self._effective_timeout(timeout_seconds),
+        )
 
     def audio_precision(
         self, source: Path, *, timeout_seconds: float | None
@@ -1673,3 +1713,313 @@ def stft_batches(
             )
 
     return batches()
+
+
+_TIMING_COLUMNS = (0, 1, 2, 5, 6, 7, 8)
+_TIMING_PICTURES = {name: i + 1 for i, name in enumerate(("I", "P", "B", "S", "SI", "SP", "BI"))}
+
+
+def _timing_integer(value: object) -> int | None:
+    if value is None or value == "N/A":
+        return None
+    if isinstance(value, str) and re.fullmatch(r"-?\d{1,19}", value):
+        value = int(value)
+    if type(value) is not int or abs(value) >= 1 << 63:
+        raise ValueError("invalid bounded integer")
+    return value
+
+
+def _timing_positive_rational(value: object) -> tuple[int, int]:
+    try:
+        if not isinstance(value, str) or not re.fullmatch(r"\d{1,10}/\d{1,10}", value):
+            raise ValueError
+        num, den = map(int, value.split("/"))
+        if not 0 < num < 1 << 31 or not 0 < den < 1 << 31:
+            raise ValueError
+        return num, den
+    except ValueError:
+        raise PreprocessingError("decode", "timing_malformed_rational") from None
+
+
+def _timing_base(value: object) -> TimeBase:
+    num, den = _timing_positive_rational(value)
+    return TimeBase(numerator=num, denominator=den)
+
+
+def _timing_rate(value: object) -> TimingRate | None:
+    if value in (None, "N/A", "0/0", "0/1"):
+        return None
+    num, den = _timing_positive_rational(value)
+    return TimingRate(numerator=num, denominator=den)
+
+
+def _timing_decimal(value: object) -> TimingRational | None:
+    if value is None or value == "N/A":
+        return None
+    if not isinstance(value, str) or not re.fullmatch(r"-?\d{1,19}(\.\d{1,9})?", value):
+        raise ValueError("invalid declared time")
+    exact = Fraction(value)
+    return TimingRational(numerator=exact.numerator, denominator=exact.denominator)
+
+
+def _probe_timing(
+    source: Path, selection: str, entries: str, timeout: float, interval: str | None = None
+) -> dict[str, object]:
+    arguments = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file",
+        "-threads",
+        "1",
+        "-select_streams",
+        selection,
+        "-show_entries",
+        entries,
+        "-of",
+        "json",
+    ]
+    if interval is not None:
+        arguments.extend(["-read_intervals", interval])
+    arguments.append(str(source.absolute()))
+    result = _process(
+        arguments, source, min(timeout, 15.0), _FORENSIC_POLICY.timing_probe_bytes, "timing_probe"
+    )
+    try:
+        payload = json.loads(result.stdout or b"")
+        if not isinstance(payload, dict):
+            raise ValueError
+    except (ValueError, RecursionError):
+        raise PreprocessingError("decode", "timing_malformed_probe") from None
+    if result.stderr:
+        raise PreprocessingError("decode", "timing_probe_diagnostic")
+    return payload
+
+
+def probe_timing_stream(
+    source: Path, kind: Literal["audio", "video"], *, frames: bool, timeout: float
+) -> StreamTimingFacts | None:
+    payload = _probe_timing(
+        source,
+        "a:0" if kind == "audio" else "v:0",
+        "stream=index,codec_type,time_base,start_pts,duration_ts,start_time,"
+        "duration,avg_frame_rate,r_frame_rate,width,height",
+        timeout,
+    )
+    try:
+        streams = payload.get("streams")
+        if not isinstance(streams, list) or len(streams) > 1:
+            raise ValueError
+        if not streams:
+            return None
+        stream = streams[0]
+        if not isinstance(stream, dict) or stream.get("codec_type") != kind:
+            raise ValueError
+        if stream.get("time_base") in (None, "N/A"):
+            raise PreprocessingError("decode", "timing_unsupported_time_base")
+        base = _timing_base(stream["time_base"])
+        if frames and kind == "video":
+            width, height = (
+                _timing_integer(stream.get("width")),
+                _timing_integer(stream.get("height")),
+            )
+            if (
+                width is None
+                or height is None
+                or not 0 < width <= _FORENSIC_POLICY.native_video_width
+                or not 0 < height <= _FORENSIC_POLICY.native_video_height
+            ):
+                raise PreprocessingError("resource_limit", "timing_frame_geometry")
+        index = _timing_integer(stream.get("index"))
+        if index is None:
+            raise ValueError
+        return StreamTimingFacts(
+            stream_index=index,
+            stream_kind=kind,
+            time_base=base,
+            start_tick=_timing_integer(stream.get("start_pts")),
+            duration_ticks=_timing_integer(stream.get("duration_ts")),
+            declared_start=_timing_decimal(stream.get("start_time")),
+            declared_duration=_timing_decimal(stream.get("duration")),
+            avg_frame_rate=_timing_rate(stream.get("avg_frame_rate")),
+            r_frame_rate=_timing_rate(stream.get("r_frame_rate")),
+        )
+    except (ValueError, TypeError):
+        raise PreprocessingError("decode", "timing_malformed_stream") from None
+
+
+def select_timing_regions(facts: StreamTimingFacts) -> tuple[TimingInterval, ...]:
+    """Nominal two-second beginning/middle/end windows in stream ticks.
+
+    Unknown duration selects the beginning only. No declared duration is promoted
+    to observed coverage. Overlapping candidates are merged into their interval union.
+    """
+    base = facts.time_base
+    start = facts.start_tick
+    if start is None and facts.declared_start is not None:
+        start = (
+            facts.declared_start.numerator
+            * base.denominator
+            // (facts.declared_start.denominator * base.numerator)
+        )
+    start = start or 0
+    duration = facts.duration_ticks
+    if duration is None and facts.declared_duration is not None:
+        duration = (
+            facts.declared_duration.numerator
+            * base.denominator
+            // (facts.declared_duration.denominator * base.numerator)
+        )
+    size = max(1, 2 * base.denominator // base.numerator)
+    total = max(1, duration) if duration is not None else size
+    size = min(size, total)
+    starts = sorted({start, start + (total - size) // 2, start + total - size})
+    result: list[TimingInterval] = []
+    for offset in starts[: _FORENSIC_POLICY.timing_regions]:
+        stop = offset + size
+        if result and offset < result[-1].stop:
+            result[-1] = TimingInterval(start=result[-1].start, stop=max(result[-1].stop, stop))
+        else:
+            result.append(TimingInterval(start=offset, stop=stop))
+    return tuple(result)
+
+
+def _timing_seek(ticks: int, base: TimeBase) -> str:
+    # ffprobe accepts microsecond precision. Floor the request explicitly; stored
+    # requested ticks remain exact and observed seek position remains independent.
+    microseconds = ticks * base.numerator * 1_000_000 // base.denominator
+    sign = "-" if microseconds < 0 else ""
+    seconds, fraction = divmod(abs(microseconds), 1_000_000)
+    return f"{sign}{seconds}.{fraction:06d}"
+
+
+def _timing_coverage(
+    values: NDArray[np.generic], requested: TimingInterval
+) -> Literal["envelope", "partial", "unknown", "empty"]:
+    if not len(values):
+        return "empty"
+    if not all(int(row[4]) & 1 for row in values):
+        return "unknown"
+    # Python ints avoid overflow of signed int64 when adding durations.
+    first = min(int(row[0]) for row in values)
+    end = max(int(row[0]) + (int(row[2]) if int(row[4]) & 4 else 0) for row in values)
+    return "envelope" if first <= requested.start and end >= requested.stop else "partial"
+
+
+def probe_timing_records(
+    source: Path,
+    facts: StreamTimingFacts,
+    requested: TimingInterval,
+    region: int,
+    record_kind: Literal["packet", "frame"],
+    *,
+    timeout: float,
+) -> tuple[TimingRecordsDescriptor, NDArray[np.int64]]:
+    limit = (
+        _FORENSIC_POLICY.timing_packets
+        if record_kind == "packet"
+        else _FORENSIC_POLICY.timing_frames
+    )
+    fields = (
+        "stream_index,pts,dts,duration"
+        if record_kind == "packet"
+        else "stream_index,pts,pkt_dts,duration,best_effort_timestamp,"
+        "pkt_duration,key_frame,pict_type"
+    )
+    # The # limit bounds input packets even when frame output is absent. Frame
+    # output has an independent record cap (one packet need not mean one frame).
+    interval = f"{_timing_seek(requested.start, facts.time_base)}%+#{limit}"
+    payload = _probe_timing(
+        source,
+        str(facts.stream_index),
+        f"{record_kind}={fields}:frame_side_data=",
+        timeout,
+        interval,
+    )
+    try:
+        rows = payload.get(f"{record_kind}s")
+        if not isinstance(rows, list):
+            raise ValueError
+        if len(rows) > limit:
+            raise PreprocessingError("resource_limit", "timing_record_count")
+        values = np.zeros((len(rows), 9), dtype="<i8")
+        for ordinal, row in enumerate(rows):
+            if (
+                not isinstance(row, dict)
+                or _timing_integer(row.get("stream_index")) != facts.stream_index
+            ):
+                raise ValueError
+            fields_values = [
+                row.get("pts"),
+                row.get("dts" if record_kind == "packet" else "pkt_dts"),
+                row.get("duration"),
+                row.get("best_effort_timestamp"),
+                row.get("pkt_duration"),
+                row.get("key_frame"),
+                _TIMING_PICTURES.get(row.get("pict_type", "")),
+            ]
+            values[ordinal, 3] = ordinal
+            for bit, (column, value) in enumerate(zip(_TIMING_COLUMNS, fields_values, strict=True)):
+                parsed = _timing_integer(value)
+                if parsed is not None:
+                    values[ordinal, column] = parsed
+                    values[ordinal, 4] |= 1 << bit
+        descriptor = TimingRecordsDescriptor(
+            stream_index=facts.stream_index,
+            region=region,
+            record_kind=record_kind,
+            first_tick=int(values[0, 0]) if len(rows) and values[0, 4] & 1 else None,
+            last_tick=int(values[-1, 0]) if len(rows) and values[-1, 4] & 1 else None,
+            requested=requested,
+            coverage=_timing_coverage(values, requested),
+            decode_operation_id=uuid4().hex if record_kind == "frame" else None,
+            data=NumericArtifact(
+                artifact_id=f"timing_{facts.stream_index}_{region}_{record_kind}",
+                dtype="<i8",
+                shape=values.shape,
+            )
+            if rows
+            else None,
+        )
+        validate_timing_values(descriptor, values)
+        immutable = np.frombuffer(values.tobytes(), dtype="<i8").reshape(values.shape)
+        return descriptor, immutable
+    except (ValueError, TypeError, KeyError, OverflowError):
+        raise PreprocessingError("decode", "timing_malformed_records") from None
+
+
+def validate_timing_values(
+    descriptor: TimingRecordsDescriptor, values: NDArray[np.generic]
+) -> None:
+    """Validate typed storage again on the analyzer read boundary."""
+    if values.dtype != np.dtype("<i8") or values.shape != (descriptor.record_count, 9):
+        raise ValueError("malformed typed timing artifact")
+    for ordinal, row in enumerate(values):
+        mask = int(row[4])
+        if row[3] != ordinal or not 0 <= mask <= 127:
+            raise ValueError("malformed timing ordinal/mask")
+        for bit, column in enumerate(_TIMING_COLUMNS):
+            if not mask & (1 << bit) and row[column] != 0:
+                raise ValueError("missing timing value must be zero")
+            if int(row[column]) == -(1 << 63):
+                raise ValueError("timing value exceeds signed bound")
+        if (
+            row[2] < 0
+            or row[6] < 0
+            or row[7] not in (0, 1)
+            or not 0 <= row[8] <= 7
+            or mask & 64
+            and row[8] == 0
+        ):
+            raise ValueError("malformed timing duration/key/picture")
+        if descriptor.record_kind == "packet" and (mask & ~7 or any(row[5:])):
+            raise ValueError("packet cannot contain decoded-frame facts")
+    first = int(values[0, 0]) if len(values) and values[0, 4] & 1 else None
+    last = int(values[-1, 0]) if len(values) and values[-1, 4] & 1 else None
+    if (
+        first != descriptor.first_tick
+        or last != descriptor.last_tick
+        or _timing_coverage(values, descriptor.requested) != descriptor.coverage
+    ):
+        raise ValueError("timing coverage does not match observed records")
