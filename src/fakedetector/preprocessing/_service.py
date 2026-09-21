@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import warnings
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
+from threading import BoundedSemaphore, Lock
 from typing import Literal, Protocol, cast
 
 import numpy as np
@@ -28,6 +31,7 @@ from fakedetector.config.models import (
     ImagePreprocessingConfig,
     VideoPreprocessingConfig,
 )
+from fakedetector.core._cleanup_safety import _CleanupSafetyBarrier, _CleanupSafetyInterruption
 from fakedetector.domain import (
     AudioTechnicalParameters,
     ImageTechnicalParameters,
@@ -72,6 +76,7 @@ from fakedetector.preprocessing._models import (
 )
 from fakedetector.preprocessing._requirements import (
     _FORENSIC_POLICY,
+    _MAX_FORENSIC_METADATA_BYTES,
     _MAX_FORENSIC_REPRESENTATIONS,
     ForensicCapability,
     PreprocessingRequirements,
@@ -111,6 +116,55 @@ class PreprocessingRequest:
             raise ValueError("preprocessing source identity does not match request")
         if self.artifact_budget.media_type is not self.validated_file.media_type:
             raise ValueError("artifact budget media type does not match request")
+
+
+class _ForensicAdmission:
+    """Two forensic dispatches per interpreter; unresolved children retain admission."""
+
+    def __init__(self) -> None:
+        self._slots = BoundedSemaphore(2)
+
+    @contextmanager
+    def enter(self) -> Iterator[None]:
+        if not self._slots.acquire(blocking=False):
+            raise PreprocessingError("resource_limit", "forensic_concurrency")
+        release = True
+        try:
+            yield
+        except BaseException as error:
+            if (
+                isinstance(error, (PreprocessingError, _CleanupSafetyInterruption))
+                and error._cleanup_safety_barrier is not None
+            ):
+                error._cleanup_safety_barrier = _AdmissionBarrier(
+                    error._cleanup_safety_barrier, self._slots
+                )
+                release = False
+            raise
+        finally:
+            if release:
+                self._slots.release()
+
+
+class _AdmissionBarrier:
+    def __init__(self, barrier: _CleanupSafetyBarrier, slots: BoundedSemaphore) -> None:
+        self._barrier = barrier
+        self._slots = slots
+        self._released = False
+        self._lock = Lock()
+
+    def try_confirm_safe(self) -> bool:
+        with self._lock:
+            if self._released:
+                return True
+            if not self._barrier.try_confirm_safe():
+                return False
+            self._released = True
+            self._slots.release()
+            return True
+
+
+_FORENSIC_ADMISSION = _ForensicAdmission()
 
 
 class Preprocessor(Protocol):
@@ -613,11 +667,12 @@ class PreprocessingDispatcher:
         except KeyError:
             raise PreprocessingError("invariant", "media_type") from None
         _check_remaining(remaining_timeout_seconds)
-        prepared_media = preprocessor.prepare(
-            request,
-            active_requirements,
-            remaining_timeout_seconds=remaining_timeout_seconds,
-        )
+        with _FORENSIC_ADMISSION.enter() if active_requirements.forensic else nullcontext():
+            prepared_media = preprocessor.prepare(
+                request,
+                active_requirements,
+                remaining_timeout_seconds=remaining_timeout_seconds,
+            )
         _check_remaining(remaining_timeout_seconds)
         return prepared_media
 
@@ -701,6 +756,8 @@ def _prepare_av_forensic(
                 facts=mapping,
             )
         )
+    if len(representations) > _MAX_FORENSIC_REPRESENTATIONS:
+        raise PreprocessingError("resource_limit", "forensic_manifest_limit")
     try:
         return ForensicManifest(
             source_sha256=request.validated_file.sha256,
@@ -708,7 +765,7 @@ def _prepare_av_forensic(
             representations=tuple(representations),
         )
     except ValueError:
-        raise PreprocessingError("resource_limit", "forensic_manifest_limit") from None
+        raise PreprocessingError("invariant", "forensic_manifest_invariant") from None
 
 
 def _prepare_timing_forensic(
@@ -902,11 +959,17 @@ def _prepare_audio_forensic(
                 source, timeout_seconds=_operation_timeout(remaining)
             )
         )
-        windows = select_audio_windows(
-            max(1, math.ceil((facts.declared_duration_seconds or duration) * facts.sample_rate)),
-            facts.sample_rate,
-            facts.channels,
+        total_samples = max(
+            1, math.ceil((facts.declared_duration_seconds or duration) * facts.sample_rate)
         )
+        # Only explicit policy validation is a resource failure; model construction is not.
+        try:
+            _FORENSIC_POLICY.check_audio(1, facts.channels, facts.sample_rate)
+        except ValueError:
+            raise PreprocessingError("resource_limit", "audio_precision_preflight") from None
+        if total_samples >= 1 << 63:
+            raise PreprocessingError("resource_limit", "audio_precision_preflight")
+        windows = select_audio_windows(total_samples, facts.sample_rate, facts.channels)
         samples_demand = ForensicCapability.AUDIO_SAMPLES in requirements.forensic
         spectral_demand = ForensicCapability.AUDIO_SPECTRAL in requirements.forensic
         if not samples_demand:
@@ -919,7 +982,7 @@ def _prepare_audio_forensic(
             spectral_demand
             and sum(frame_counts) * facts.channels > _FORENSIC_POLICY.spectral_frames
         ):
-            raise ValueError("aggregate spectral frames exceed policy")
+            raise PreprocessingError("resource_limit", "audio_precision_preflight")
         _FORENSIC_POLICY.check_artifacts(
             request.artifact_budget,
             total_count=len(artifacts)
@@ -1011,7 +1074,7 @@ def _prepare_audio_forensic(
     except _GeneratedArtifactWriteError:
         raise PreprocessingError("artifact_write", "audio_precision_artifacts") from None
     except ValueError:
-        raise PreprocessingError("resource_limit", "audio_precision_preflight") from None
+        raise PreprocessingError("invariant", "audio_precision_invariant") from None
 
 
 def _write_numeric(
@@ -1368,6 +1431,16 @@ def _prepared_media(
     metadata: dict[str, object],
     media_warnings: tuple[str, ...] = (),
 ) -> PreparedMedia:
+    if (
+        "forensic" in metadata
+        and len(
+            json.dumps(metadata, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        )
+        > _MAX_FORENSIC_METADATA_BYTES
+    ):
+        raise PreprocessingError("resource_limit", "forensic_metadata_limit")
     return PreparedMedia(
         analysis_id=request.analysis_id,
         media_type=media_type,

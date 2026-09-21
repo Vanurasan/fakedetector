@@ -1612,8 +1612,8 @@ tables; действуют прежние 256 artifacts, 16 representations, 16 
 dense и AV mapping требуют 18 representations при потолке 16.
 Checksum reader держит один RGB frame, parser — ограниченный stderr и максимум
 64 showinfo observations, Nx9 table до 32 строк. Native decoder RSS и keyframe
-preroll CPU не объявляются hard-limited Python accounting; общий deadline действует,
-дополнительный RSS/concurrency hardening остаётся M1-G.
+preroll CPU не объявляются hard-limited Python accounting; общий deadline действует.
+Правила допуска совместной forensic работы определены ниже в разделе M1-G.
 
 Безопасные phases различают `dense_unsupported_stream`, geometry/time-base/timestamp,
 `dense_malformed_media`, `dense_decoder`, `dense_timeout`, stdout/stderr overflow,
@@ -1641,6 +1641,66 @@ Coverage каждого региона сохраняет `empty`/`unknown`/`par
 Timestamp resets и раздельные окна не сортируются в глобальную временную шкалу.
 Интерполяции, глобального affine mapping, continuity/sync verdict и Findings нет.
 Dense и AV demand не активируют precision audio, sample windows или STFT.
+
+**M1-G: совместные ресурсы и допуск.** Потолок 16 representations сохраняется
+как независимый предел размера графа и количества производимых представлений,
+а не как оценка RSS. Для длинного A/V источника: 2 stream facts +
+3 × (video packet + video frame + audio packet) + 3 × (dense timing + RGB) +
+1 AV mapping = **18**. Generic и dense timing не являются устранимым дубликатом:
+у них разные decode, purpose и coverage. Эта комбинация отклоняется
+`resource_limit/timing_preflight` до generic record probes и dense decode;
+автоматического удаления окон или изменения generic coverage нет.
+При дополнительном audio spectral demand верхняя композиция достигает
+18 + 1 precision + 3 samples + 3 spectra = 25 и также не поддерживается.
+Сохранение 16 намеренно ограничивает совместную работу; транспорт сам по себе
+не вынуждает менять этот предел. Замеры layout и памяти приведены в M1-G ROADMAP.
+
+Счётчик representations не заменяет остальные проверки: 256 generated artifacts,
+16 KiB JSON manifest, размеры каждого numeric descriptor, aggregate timing rows,
+remaining task byte budget и workspace preflight проверяются независимо.
+Три максимальных dense окна требуют 66 355 200 RGB bytes, дополнительно к timing
+и уже созданным legacy/audio artifacts. Каждая запись повторно проверяет общий
+byte ledger; предварительная оценка не является резервированием. Ledger учитывает
+максимальные записанные extents монотонно: truncate, failed write и cleanup не
+возвращают бюджет для повторного расходования внутри той же задачи. После cleanup
+файлы удалены; ledger заканчивает жизнь вместе с задачей, это не общий пул памяти.
+Audio и timing producers выполняются последовательно, поэтому отказ следующего
+producer может следовать за уже завершённой bounded работой предыдущего.
+
+При непустом forensic demand `PreprocessingDispatcher.prepare` допускает максимум
+**две** одновременно активные операции на Python interpreter. Политика фиксирована,
+внутренняя, без YAML и очереди ожидания: третий вызов получает
+`resource_limit/forensic_concurrency` до вызова preprocessor. Внутри каждого dispatch
+native children запускаются последовательно. Слот освобождается при success,
+обычной ошибке, timeout и `BaseException`, если child safety подтверждена.
+Неподтверждённый child переносит владение слотом в cleanup barrier; слот удерживается
+до успешного `try_confirm_safe`, повторное подтверждение не освобождает его дважды.
+Если barrier больше не обслуживается, слот остаётся занят ради безопасности.
+Допуск не ждёт свободного слота; подтверждение barrier использует прежнюю bounded
+terminate/kill/reap процедуру. Это не межпроцессный или системный semaphore.
+Прямые вызовы private kernels/tools и legacy dispatch без forensic demand этим
+механизмом не ограничены. Текущий production catalog forensic demand не запрашивает.
+Жёсткой OS RSS quota нет; process isolation, deadlines, размеры и этот допуск
+не дают гарантии общего native working set для нескольких Python processes.
+
+После сборки forensic manifest preprocessing проверяет **весь** metadata envelope
+в UTF-8 compact JSON (`ensure_ascii=False`, `allow_nan=False`) до возврата
+`PreparedMedia`: не более **32 768 bytes**, включая escaping вложенного manifest,
+legacy fields и timestamps. Ровно предел допустим; превышение даёт
+`resource_limit/forensic_metadata_limit`, сохраняя lifecycle ownership файлов.
+Это исключает поздний отказ только на worker transport для такого результата.
+Особенно важно, что legacy codec/container strings не имеют отдельной длины в
+domain model. Предел manifest 16 384 bytes сам по себе не доказывает размер envelope.
+Worker response 65 536 bytes и canonical result 65 509 bytes остаются отдельными
+ограничениями: preprocessing metadata не копируется в результат анализа.
+
+Shared runner требует конечный положительный timeout до создания child.
+При одновременных failures execution interruption сохраняет приоритет; interruption
+при close переносит unresolved barrier. Затем приоритет имеют termination и
+stdout/stderr read либо sink write failures; далее close failure, затем прочая
+execution failure (timeout/overflow/wait). Обе трубы закрываются, stdout/stderr
+phase сохраняется, private output в текст ошибки не переносится. Runner не
+перепроектирован; исходный cleanup barrier по-прежнему запрещает unsafe cleanup.
 
 **Residual kernels.** M1-C добавляет только private числовой слой в
 `preprocessing/_media_tools.py`; producer `residual_raster`, новый analyzer,
@@ -1773,6 +1833,16 @@ Seek/preroll и native allocations не являются hard OS RAM quota.
 `audio_precision_empty_window`. Malformed numeric artifact отклоняется reader
 по identity/shape/dtype/exact length/finite values. Findings не создаются.
 
+В audio producer `resource_limit/audio_precision_preflight` относится только к
+явным проверкам audio policy, диапазона planned sample count и aggregate spectral
+frames. Count/byte ledger сохраняет `resource_limit/audio_precision_artifacts`.
+Неожиданный `ValueError` при построении окон, descriptors, STFT или audio manifest
+даёт `invariant/audio_precision_invariant` с очищенным текстом ошибки.
+При окончательной сборке AV manifest превышение representation count сохраняет
+`resource_limit/forensic_manifest_limit`; остальные ошибки его валидации дают
+`invariant/forensic_manifest_invariant`. Зарегистрированные файлы сохраняют
+lifecycle ownership; классификация timing/dense producer не меняется.
+
 **Preflight JPEG.** `JpegHeader.preflight` работает только с малыми
 типизированными SOF facts, до вызова native decoder: размеры 1–65535, 8-bit
 baseline/progressive, 1–4 уникальных components, sampling factors 1–4,
@@ -1784,7 +1854,7 @@ Native оценка округляет оба измерения до полно
 Ограничение применяется к padded allocation, а не только к выдаваемым planes;
 int32 output bytes и native 16-bit coefficient bytes учитываются отдельно.
 Это не оценка всего RSS: source copy, markers, native overhead и временные
-копии измерены отдельно в M1-B; совместный бюджет concurrency остаётся в M1-G.
+копии измерены отдельно в M1-B; совместные измерения и допуск описаны в M1-G.
 
 M1-B реализует минимальный bounded marker/header parser: проверяет SOI,
 длины сегментов, SOF0/SOF2 и component/table IDs, лимиты scans/markers/payload,

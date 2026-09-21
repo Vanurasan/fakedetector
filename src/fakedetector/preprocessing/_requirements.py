@@ -133,6 +133,7 @@ class _BoundedValue(BaseModel):
 
 _MAX_INDEX = (1 << 63) - 1
 _MAX_FORENSIC_MANIFEST_BYTES = 16_384
+_MAX_FORENSIC_METADATA_BYTES = 32_768
 _MAX_FORENSIC_REPRESENTATIONS = 16
 _MAX_NUMERIC_BYTES = 64 * 1_048_576
 _PositiveIndex = Annotated[int, Field(gt=0, le=_MAX_INDEX)]

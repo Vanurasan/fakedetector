@@ -345,6 +345,50 @@ def _installed_probe(python: Path, *, cwd: Path, env: dict[str, str]) -> dict[st
                 accepted.cleanup()
                 assert not (jpeg_root / analysis_id).exists()
         jpeg_root.rmdir()
+        import subprocess
+        import wave
+        import numpy as np
+        from fakedetector.preprocessing import _media_tools as mt
+        from fakedetector.preprocessing._models import IndexRange, AVTimelineDescriptor
+        audio_path = Path.cwd() / "macro1.wav"
+        video_path = Path.cwd() / "macro1.mp4"
+        pixel_path = Path.cwd() / "macro1.rgb"
+        with wave.open(str(audio_path), "wb") as stream:
+            stream.setparams((1, 4, 8000, 0, "NONE", "none"))
+            stream.writeframes(np.arange(8000, dtype="<i4").tobytes())
+        tool = mt._FFmpegPreprocessingTool(executable="ffmpeg", timeout_seconds=30)
+        precision = tool.audio_precision(audio_path, timeout_seconds=30)
+        samples = tool.precision_window(audio_path, precision, IndexRange(start=0, stop=8000),
+                                        timeout_seconds=30)
+        assert np.array_equal(samples.values[:, 0], np.arange(8000))
+        spectra = list(mt.stft_batches(samples.values, sample_rate=8000, n_fft=4096, hop=1024))
+        assert spectra and not spectra[0].values.flags.writeable
+        subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i",
+                        "testsrc2=size=64x48:rate=25:duration=1", "-i", str(audio_path),
+                        "-c:v", "mpeg4", "-c:a", "aac", str(video_path)],
+                       check=True, capture_output=True, timeout=30)
+        video = tool.timing_stream(video_path, kind="video", frames=True, timeout_seconds=30)
+        audio = tool.timing_stream(video_path, kind="audio", frames=False, timeout_seconds=30)
+        interval = mt.select_timing_regions(video)[0]
+        generic, gv = tool.timing_records(
+            video_path, video, interval, 0, "frame", timeout_seconds=30)
+        packets, pv = tool.timing_records(video_path, audio, mt.select_timing_regions(audio)[0],
+                                          0, "packet", timeout_seconds=30)
+        dense, timing, tv = tool.dense_window(video_path, pixel_path, video, interval, 0,
+            artifact_budget=_GeneratedArtifactBudget(
+                _ConfigSnapshot.capture(config), MediaType.VIDEO),
+            timeout_seconds=30)
+        assert dense.decode_operation_id == timing.decode_operation_id
+        assert generic.purpose == "generic" and timing.purpose == "dense"
+        assert generic.data.artifact_id != timing.data.artifact_id
+        assert pixel_path.stat().st_size == dense.pixels.nbytes
+        assert len(gv) == len(tv) == 25
+        mapping = AVTimelineDescriptor.from_timing((video, audio), (generic, packets, timing))
+        assert mapping.applicability == "available" and len(mapping.regions) == 1
+        macro1_probe = {{"audio_precision_stft": "passed", "generic_timing": "passed",
+                        "dense_same_decode": "passed", "av_mapping": "passed"}}
+        for path in (audio_path, video_path, pixel_path):
+            path.unlink()
         app = create_app(config)
         print(json.dumps({{
             "package_version": distribution.version,
@@ -360,6 +404,7 @@ def _installed_probe(python: Path, *, cwd: Path, env: dict[str, str]) -> dict[st
             "python_version": platform.python_version(),
             "sys_path": sys.path,
             "user_site_enabled": bool(__import__("site").ENABLE_USER_SITE),
+            "macro1_probe": macro1_probe,
             "jpeg_probe": {{"version": metadata.version("pyjpegio"), "origin": str(jpeg_origin),
                             "outcomes": jpeg_results, "unicode_workspace": True,
                             "cleanup": "passed"}},
@@ -561,6 +606,7 @@ def verify(output_directory: Path | None = None) -> dict[str, Any]:
         "editable_install": False,
         "dependency_check": "passed",
         "jpeg_preprocessing": probe["jpeg_probe"],
+        "macro1_preprocessing": probe["macro1_probe"],
         "runtime_dependency_comparison": comparison,
         "cli_help": "passed",
         "source_checkout_on_sys_path": False,

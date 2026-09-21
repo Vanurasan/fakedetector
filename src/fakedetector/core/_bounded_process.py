@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -127,8 +128,8 @@ def run_bounded_process(
 ) -> ProcessResult:
     """Run trusted argv with bounded stdout and optional concurrently drained stderr."""
     argv = _validated_argv(arguments)
-    if timeout_seconds <= 0:
-        raise ValueError("timeout_seconds must be greater than zero")
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be finite and greater than zero")
     if stdout_limit_bytes is not None and stdout_limit_bytes < 0:
         raise ValueError("stdout_limit_bytes must not be negative")
     if stdout_sink is not None and stdout_limit_bytes is None:

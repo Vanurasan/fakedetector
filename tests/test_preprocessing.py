@@ -2668,8 +2668,9 @@ def test_audio_precision_budget_preflight_precedes_decode(tmp_path):
             100.0,
             None,
         )
-    assert error.value.kind == "resource_limit"
+    assert (error.value.kind, error.value.phase) == ("resource_limit", "audio_precision_artifacts")
     assert case.registry.events == []
+    case.cleanup()
 
 
 def test_audio_producer_retains_incomplete_requested_coverage(tmp_path):
@@ -3847,6 +3848,11 @@ def test_dense_real_overflow_reaps_child(tmp_path, monkeypatch, pipe):
 
 @pytest.mark.parametrize("barrier", [None, True])
 def test_dense_failed_artifact_lifecycle_and_barrier(tmp_path, monkeypatch, barrier):
+    class SafeBarrier:
+        def try_confirm_safe(self):
+            return True
+
+    barrier = SafeBarrier() if barrier else None
     source = tmp_path / "source.mp4"
     _timing_fixture_video(source)
     descriptor = _video_descriptor(duration_seconds=1, width=64, height=48, fps=25, has_audio=False)
@@ -3873,7 +3879,10 @@ def test_dense_failed_artifact_lifecycle_and_barrier(tmp_path, monkeypatch, barr
             case.request,
             PreprocessingRequirements(forensic=frozenset({ForensicCapability.DENSE_VIDEO})),
         )
-    assert error.value._cleanup_safety_barrier is barrier
+    if barrier is None:
+        assert error.value._cleanup_safety_barrier is None
+    else:
+        assert error.value._cleanup_safety_barrier.try_confirm_safe()
     events = case.registry.events
     assert any(event[0] == "register" for event in events)
     case.cleanup()
@@ -4044,3 +4053,571 @@ def test_combined_generic_dense_mapping_preflight_preserves_existing_limits(tmp_
         artifact_id.startswith(("timing_", "dense_")) for _, artifact_id, _ in case.registry.events
     )
     case.cleanup()
+
+
+@pytest.mark.parametrize("outcome", [None, ValueError, KeyboardInterrupt, ProcessTimeoutError])
+def test_forensic_admission_releases_on_every_completion(outcome):
+    from fakedetector.preprocessing._service import _ForensicAdmission
+
+    admission = _ForensicAdmission()
+    for _ in range(3):
+        try:
+            with admission.enter(), admission.enter():
+                with pytest.raises(PreprocessingError) as caught, admission.enter():
+                    pytest.fail("third operation admitted")
+                assert (caught.value.kind, caught.value.phase) == (
+                    "resource_limit",
+                    "forensic_concurrency",
+                )
+                if outcome is not None:
+                    raise outcome()
+        except BaseException as error:
+            assert outcome is not None and isinstance(error, outcome)
+
+
+@pytest.mark.parametrize("interruption", [False, True])
+def test_unresolved_child_retains_admission_until_idempotent_confirmation(interruption):
+    from fakedetector.core._cleanup_safety import _CleanupSafetyInterruption
+    from fakedetector.preprocessing._service import _ForensicAdmission
+
+    class Barrier:
+        safe = False
+
+        def try_confirm_safe(self):
+            return self.safe
+
+    admission = _ForensicAdmission()
+    barrier = Barrier()
+    error = (
+        _CleanupSafetyInterruption(KeyboardInterrupt(), barrier)
+        if interruption
+        else PreprocessingError("infrastructure", "test", _cleanup_safety_barrier=barrier)
+    )
+    with pytest.raises(type(error)), admission.enter():
+        raise error
+    with admission.enter():
+        with pytest.raises(PreprocessingError), admission.enter():
+            pytest.fail("unresolved child lost admission")
+        assert not error._cleanup_safety_barrier.try_confirm_safe()
+        barrier.safe = True
+        assert error._cleanup_safety_barrier.try_confirm_safe()
+        assert error._cleanup_safety_barrier.try_confirm_safe()
+        with admission.enter(), pytest.raises(PreprocessingError), admission.enter():
+            pytest.fail("double release")
+
+
+@pytest.mark.parametrize(
+    "media,caps",
+    [
+        ("image", ("jpeg_structure",)),
+        ("image", ("jpeg_coefficients",)),
+        ("audio", ("audio_precision",)),
+        ("audio", ("audio_precision", "audio_spectral")),
+        ("audio", ("timing_records",)),
+        ("audio", ("timing_records", "audio_precision")),
+        ("audio", ("timing_records", "audio_spectral")),
+        ("video", ("stream_timing",)),
+        ("video", ("timing_records",)),
+        ("video", ("dense_video",)),
+        ("video", ("av_timeline",)),
+        ("video", ("timing_records", "dense_video")),
+        ("video", ("av_timeline", "dense_video")),
+        ("video", ("dense_video", "timing_records", "av_timeline")),
+    ],
+)
+def test_macro1_combination_matrix_is_deterministic_and_deduplicated(tmp_path, media, caps):
+    import json
+
+    from fakedetector.analyzers._orchestrator import _plain_json_value
+
+    class EmptySettings(BaseModel):
+        pass
+
+    source = tmp_path / ("source." + {"image": "jpg", "audio": "wav", "video": "mp4"}[media])
+    if media == "image":
+        Image.new("RGB", (32, 24), (17, 83, 201)).save(source)
+        descriptor = _image_descriptor(width=32, height=24, image_format="JPEG", color_mode="RGB")
+    elif media == "audio":
+        pcm(source, 24)
+        descriptor = _audio_descriptor(
+            duration_seconds=1, sample_rate_hz=8000, channels=1, codec="pcm_s24le"
+        )
+    else:
+        _timing_fixture_video(source, duration=1, audio=True)
+        descriptor = _video_descriptor(
+            duration_seconds=1, width=64, height=48, fps=25, has_audio=True
+        )
+    descriptor = descriptor.model_copy(
+        update={
+            "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "size_bytes": source.stat().st_size,
+        }
+    )
+    config = AppConfig.model_validate(
+        yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+    )
+    declarations = [
+        PreprocessingRequirements(forensic=frozenset({ForensicCapability(cap)})) for cap in caps
+    ]
+    forward = PreprocessingRequirements.aggregate(declarations)
+    reverse = PreprocessingRequirements.aggregate(reversed(declarations * 2))
+    assert forward == reverse
+    snapshots = []
+    for index, demand in enumerate((forward, reverse)):
+        case = _case(tmp_path / str(index), source, descriptor)
+        try:
+            prepared = PreprocessingDispatcher(config).prepare(case.request, demand)
+            manifest = prepared.forensic
+            assert manifest is not None
+            assert len({a.artifact_id for a in prepared.artifacts}) == len(prepared.artifacts)
+            metadata = json.dumps(
+                _plain_json_value(prepared.metadata), ensure_ascii=False, separators=(",", ":")
+            ).encode()
+            assert len(metadata) <= 32768
+            _assert_registered_before_first_access(prepared, case.registry)
+            if media == "image":
+                # M1-C consumes a raster; it does not activate an unimplemented producer.
+                with Image.open(source) as decoded:
+                    raster = np.array(decoded.convert("RGB"))
+                tile = decoder.extract_image_tiles(
+                    raster, (decoder.TileRegion(x=0, y=0, width=32, height=24),), halo=2
+                )[0]
+                luminance = decoder.to_luminance(tile)
+                residual = decoder.high_pass_residual(luminance, kernel_size=5)
+                repeated = decoder.high_pass_residual(luminance, kernel_size=5)
+                np.testing.assert_array_equal(residual.values, repeated.values)
+                assert not residual.values.flags.writeable
+            reader = AnalyzerRequest(
+                analysis_id=prepared.analysis_id,
+                media_type=prepared.media_type,
+                file_facts=_AnalyzerFileFacts.from_validated_file(descriptor),
+                source=_ReadOnlyAnalyzerInput(source),
+                settings=EmptySettings(),
+                timeout_seconds=5,
+                metadata=prepared.metadata,
+                artifacts=tuple(
+                    AnalyzerArtifactInput(
+                        artifact_id=a.artifact_id,
+                        artifact_type=a.artifact_type,
+                        content=_ReadOnlyAnalyzerInput(_artifact_path(case.registry, a)),
+                        format=a.format,
+                    )
+                    for a in prepared.artifacts
+                ),
+            )
+            for representation in manifest.representations:
+                for numeric in representation.numeric_artifacts():
+                    values = reader.read_numeric(numeric)
+                    assert not values.flags.writeable
+                    artifact = next(
+                        a for a in prepared.artifacts if a.artifact_id == numeric.artifact_id
+                    )
+                    path = _artifact_path(case.registry, artifact)
+                    original = path.read_bytes()
+                    for corrupted in (original[:-1], original + b"x"):
+                        path.write_bytes(corrupted)
+                        with pytest.raises(ValueError, match="byte length"):
+                            reader.read_numeric(numeric)
+                    path.write_bytes(original)
+                    with pytest.raises(ValueError, match="not bound"):
+                        reader.read_numeric(numeric.model_copy(update={"artifact_id": "foreign"}))
+            payload = manifest.model_dump(mode="json")
+            for representation in payload["representations"]:
+                representation["facts"].pop("decode_operation_id", None)
+            snapshots.append(
+                (
+                    payload,
+                    tuple(
+                        (
+                            a.artifact_id,
+                            hashlib.sha256(
+                                _artifact_path(case.registry, a).read_bytes()
+                            ).hexdigest(),
+                        )
+                        for a in prepared.artifacts
+                    ),
+                )
+            )
+        finally:
+            case.cleanup()
+            assert case.registry.cleanup_once().completed
+    assert snapshots[0] == snapshots[1]
+
+
+def test_dispatcher_concurrent_admission_precedes_io_and_legacy_bypasses(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Event
+
+    from fakedetector.preprocessing import _service as service
+
+    monkeypatch.setattr(service, "_FORENSIC_ADMISSION", service._ForensicAdmission())
+    source = tmp_path / "source.jpg"
+    Image.new("RGB", (8, 8)).save(source)
+    descriptor = _image_descriptor(width=8, height=8, image_format="JPEG", color_mode="RGB")
+    config = AppConfig.model_validate(
+        yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+    )
+    dispatcher = PreprocessingDispatcher(config)
+    cases = [_case(tmp_path / str(i), source, descriptor) for i in range(4)]
+    ready, release = Barrier(3), Event()
+    calls = []
+    result = object()
+
+    def prepare(self, request, requirements, **kwargs):
+        calls.append(request)
+        if requirements.forensic:
+            ready.wait(timeout=5)
+            assert release.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(ImagePreprocessor, "prepare", prepare)
+    demand = PreprocessingRequirements(forensic=frozenset({ForensicCapability.ORIGINAL_IMAGE}))
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(dispatcher.prepare, c.request, demand) for c in cases[:2]]
+            try:
+                ready.wait(timeout=5)
+                with pytest.raises(PreprocessingError) as error:
+                    dispatcher.prepare(cases[2].request, demand)
+                assert error.value.phase == "forensic_concurrency"
+                assert len(calls) == 2 and not cases[2].registry.events
+                assert dispatcher.prepare(cases[3].request) is result
+            finally:
+                release.set()
+            assert all(f.result(timeout=5) is result for f in futures)
+        with service._FORENSIC_ADMISSION.enter(), service._FORENSIC_ADMISSION.enter():
+            pass
+    finally:
+        for case in cases:
+            case.cleanup()
+
+
+def test_long_av_layout_count_and_transport_measurement(tmp_path):
+    import json
+
+    from fakedetector.analyzers._transport import _MAX_METADATA_BYTES
+    from fakedetector.preprocessing._models import DenseVideoWindowDescriptor
+
+    source = tmp_path / "source.mp4"
+    _timing_fixture_video(source, duration=20, audio=True)
+    descriptor = _video_descriptor(duration_seconds=20, width=64, height=48, fps=25, has_audio=True)
+    descriptor = descriptor.model_copy(
+        update={"sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+    )
+    config = AppConfig.model_validate(
+        yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+    )
+    combined = []
+    for cap in (ForensicCapability.AV_TIMELINE, ForensicCapability.DENSE_VIDEO):
+        case = _case(tmp_path / cap, source, descriptor)
+        try:
+            prepared = PreprocessingDispatcher(config).prepare(
+                case.request, PreprocessingRequirements(forensic=frozenset({cap}))
+            )
+            for representation in prepared.forensic.representations:
+                if representation not in combined:
+                    combined.append(representation)
+        finally:
+            case.cleanup()
+    assert len(combined) == 2 + 9 + 6 + 1 == 18
+    with pytest.raises(ValueError, match="at most 16"):
+        ForensicManifest(
+            source_sha256=descriptor.sha256,
+            media_type=MediaType.VIDEO,
+            representations=tuple(combined),
+        )
+    # Measurement only: bypass count validation, never hand this layout to a consumer.
+    oversized = ForensicManifest.model_construct(
+        source_sha256=descriptor.sha256, media_type=MediaType.VIDEO, representations=tuple(combined)
+    )
+    removed = next(r.facts for r in combined if isinstance(r.facts, DenseVideoWindowDescriptor))
+    legal = tuple(
+        r
+        for r in combined
+        if r.facts != removed
+        and not (
+            isinstance(r.facts, TimingRecordsDescriptor)
+            and r.facts.data is not None
+            and r.facts.data.artifact_id == removed.timing_artifact_id
+        )
+    )
+    assert len(legal) == 16
+    boundary = ForensicManifest(
+        source_sha256=descriptor.sha256, media_type=MediaType.VIDEO, representations=legal
+    )
+    sizes = []
+    for manifest in (boundary, oversized):
+        raw = manifest.to_metadata()
+        # Upper legacy timestamp count with long finite values, not media payloads.
+        envelope = json.dumps(
+            {"forensic": raw, "target_timestamps": [1.234567890123456e100] * 120},
+            separators=(",", ":"),
+        ).encode()
+        sizes.append((len(raw.encode()), len(envelope)))
+        assert len(envelope) < _MAX_METADATA_BYTES
+    print("M1-G measured (manifest, metadata) bytes for 16 / 18:", sizes)
+
+
+@pytest.mark.parametrize("delta", [-1, 0, 1])
+def test_forensic_complete_metadata_envelope_boundary(tmp_path, delta):
+    import json
+
+    from fakedetector.analyzers._orchestrator import _plain_json_value
+    from fakedetector.analyzers._transport import _MAX_METADATA_BYTES
+    from fakedetector.preprocessing._requirements import _MAX_FORENSIC_METADATA_BYTES
+    from fakedetector.preprocessing._service import _prepared_media
+
+    assert _MAX_FORENSIC_METADATA_BYTES == _MAX_METADATA_BYTES
+    case = _forensic_case(tmp_path, _jpeg_bytes())
+    try:
+        prepared = ImagePreprocessor(ImagePreprocessingConfig()).prepare(case.request, _JPEG_DEMAND)
+        metadata = _plain_json_value(prepared.metadata) | {"source_codec": ""}
+        size = len(json.dumps(metadata, ensure_ascii=False, separators=(",", ":")).encode())
+        metadata["source_codec"] = "x" * (_MAX_METADATA_BYTES - size + delta)
+        if delta > 0:
+            with pytest.raises(PreprocessingError) as error:
+                _prepared_media(case.request, MediaType.IMAGE, list(prepared.artifacts), metadata)
+            assert error.value.phase == "forensic_metadata_limit"
+        else:
+            result = _prepared_media(
+                case.request, MediaType.IMAGE, list(prepared.artifacts), metadata
+            )
+            assert result.forensic == prepared.forensic
+    finally:
+        case.cleanup()
+        assert case.registry.cleanup_once().completed
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "audio_samples_0",
+        "audio_spectral_0",
+        "timing_0_0_packet",
+        "timing_0_0_frame",
+        "dense_timing_0_0_frame",
+    ],
+)
+@pytest.mark.parametrize("failure", ["partial", "extent", "manifest"])
+def test_numeric_family_failure_keeps_partial_artifacts_owned(
+    tmp_path, monkeypatch, target, failure
+):
+    from fakedetector.preprocessing import _service as service
+
+    source = tmp_path / "source.mp4"
+    _timing_fixture_video(source, duration=1, audio=True)
+    descriptor = _video_descriptor(duration_seconds=1, width=64, height=48, fps=25, has_audio=True)
+    descriptor = descriptor.model_copy(
+        update={"sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+    )
+    case = _case(tmp_path / "case", source, descriptor)
+    config = AppConfig.model_validate(
+        yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+    )
+    original_write = service._write_numeric
+    observed = []
+
+    def write(request, artifacts, numeric, batches, remaining, **kwargs):
+        if numeric.artifact_id != target:
+            return original_write(request, artifacts, numeric, batches, remaining, **kwargs)
+        observed.append(numeric)
+
+        def broken():
+            batch = next(iter(batches))
+            yield batch.reshape(-1)[:1]
+            if failure == "partial":
+                raise PreprocessingError("artifact_write", "injected_partial")
+
+        original_write(
+            request,
+            artifacts,
+            numeric,
+            batches if failure == "manifest" else broken(),
+            remaining,
+            **kwargs,
+        )
+        if failure == "manifest":
+            # A descriptor rejected after its numeric file exists still owns that file.
+            raise ValueError("PRIVATE decoder output C:/private/media.wav")
+
+    monkeypatch.setattr(service, "_write_numeric", write)
+    try:
+        with pytest.raises(PreprocessingError) as caught:
+            PreprocessingDispatcher(config).prepare(
+                case.request,
+                PreprocessingRequirements(
+                    forensic=frozenset(
+                        {
+                            ForensicCapability.AUDIO_SPECTRAL,
+                            ForensicCapability.TIMING_RECORDS,
+                            ForensicCapability.DENSE_VIDEO,
+                        }
+                    )
+                ),
+            )
+        expected = (
+            ("artifact_write", "injected_partial")
+            if failure == "partial"
+            else ("invariant", "numeric_extent")
+            if failure == "extent"
+            else ("invariant", "audio_precision_invariant")
+            if target.startswith("audio_")
+            else ("decode", "timing_malformed_artifact")
+        )
+        assert (caught.value.kind, caught.value.phase) == expected
+        assert str(caught.value) == "Media preprocessing failed."
+        assert len(observed) == 1
+        events = [event for event in case.registry.events if event[1] == target]
+        assert events[0] == ("register", target, None)
+        assert events[1] == ("access", target, False)
+        assert len(case.registry.cleanup_obligations()) > 0
+    finally:
+        case.cleanup()
+        assert case.registry.cleanup_once().completed
+    assert not (tmp_path / "case" / "temp" / case.request.analysis_id).exists()
+
+
+@pytest.mark.parametrize("bound", ["windows", "duration", "spectral_frames", "artifact_count"])
+def test_audio_known_preflight_bounds_keep_resource_classification(tmp_path, monkeypatch, bound):
+    from fakedetector.preprocessing import _service as service
+
+    source = tmp_path / "source.wav"
+    pcm(source, 16)
+    descriptor = _audio_descriptor(duration_seconds=1, sample_rate_hz=8000, channels=1)
+    descriptor = descriptor.model_copy(
+        update={"sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+    )
+    case = _case(tmp_path / "case", source, descriptor)
+    policy = ForensicResourcePolicy(
+        **(
+            {"audio_rate": 4000}
+            if bound == "windows"
+            else {"spectral_frames": 1, "spectral_batch": 1}
+            if bound == "spectral_frames"
+            else {}
+        )
+    )
+    monkeypatch.setattr(service, "_FORENSIC_POLICY", policy)
+
+    class NoDecode(_FFmpegPreprocessingTool):
+        def audio_precision(self, *args, **kwargs):
+            facts = super().audio_precision(*args, **kwargs)
+            if bound == "duration":
+                return facts.model_copy(update={"declared_duration_seconds": float(1 << 63)})
+            return facts
+
+        def precision_window(self, *args, **kwargs):
+            pytest.fail("preflight must precede native decode")
+
+    try:
+        with pytest.raises(PreprocessingError) as caught:
+            service._prepare_audio_forensic(
+                case.request,
+                PreprocessingRequirements(forensic=frozenset({ForensicCapability.AUDIO_SPECTRAL})),
+                NoDecode(executable="ffmpeg", timeout_seconds=5),
+                [object()] * 256 if bound == "artifact_count" else [],
+                1.0,
+                None,
+            )
+        assert (caught.value.kind, caught.value.phase) == (
+            "resource_limit",
+            "audio_precision_artifacts"
+            if bound == "artifact_count"
+            else "audio_precision_preflight",
+        )
+        assert not case.registry.events
+    finally:
+        case.cleanup()
+        assert case.registry.cleanup_once().completed
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    ["select_audio_windows", "AudioWindowDescriptor", "stft_batches", "ForensicManifest"],
+)
+def test_audio_internal_contract_failure_is_sanitized_and_owned(tmp_path, monkeypatch, boundary):
+    from fakedetector.preprocessing import _service as service
+
+    source = tmp_path / "source.wav"
+    pcm(source, 16)
+    descriptor = _audio_descriptor(duration_seconds=1, sample_rate_hz=8000, channels=1)
+    descriptor = descriptor.model_copy(
+        update={"sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+    )
+    case = _case(tmp_path / "case", source, descriptor)
+
+    def fail(*args, **kwargs):
+        raise ValueError("PRIVATE decoder output C:/private/media.wav")
+
+    monkeypatch.setattr(service, boundary, fail)
+    try:
+        with pytest.raises(PreprocessingError) as caught:
+            service._prepare_audio_forensic(
+                case.request,
+                PreprocessingRequirements(forensic=frozenset({ForensicCapability.AUDIO_SPECTRAL})),
+                _FFmpegPreprocessingTool(executable="ffmpeg", timeout_seconds=5),
+                [],
+                1.0,
+                None,
+            )
+        assert (caught.value.kind, caught.value.phase) == ("invariant", "audio_precision_invariant")
+        assert str(caught.value) == "Media preprocessing failed."
+        assert caught.value.__suppress_context__
+        if boundary == "select_audio_windows":
+            assert not case.registry.cleanup_obligations()
+        else:
+            assert any(
+                path.exists() and path.stat().st_size
+                for path in case.registry.cleanup_obligations()
+            )
+    finally:
+        case.cleanup()
+        assert case.registry.cleanup_once().completed
+    assert not (tmp_path / "case" / "temp" / case.request.analysis_id).exists()
+
+
+@pytest.mark.parametrize("over_limit", [False, True])
+def test_final_av_manifest_distinguishes_count_from_internal_contract(
+    tmp_path, monkeypatch, over_limit
+):
+    from fakedetector.preprocessing import _service as service
+
+    source = tmp_path / "source.mp4"
+    _timing_fixture_video(source, duration=1, audio=True)
+    descriptor = _video_descriptor(duration_seconds=1, width=64, height=48, fps=25, has_audio=True)
+    descriptor = descriptor.model_copy(
+        update={"sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+    )
+    case = _case(tmp_path / "case", source, descriptor)
+    real_timing = service._prepare_timing_forensic
+
+    def timing(*args, **kwargs):
+        representations = real_timing(*args, **kwargs)
+        return representations * 4 if over_limit else representations
+
+    def fail(**kwargs):
+        assert not over_limit, "count must be rejected before model construction"
+        raise ValueError("PRIVATE cross-representation contract C:/private/media.mp4")
+
+    monkeypatch.setattr(service, "_prepare_timing_forensic", timing)
+    monkeypatch.setattr(service, "ForensicManifest", fail)
+    try:
+        with pytest.raises(PreprocessingError) as caught:
+            service._prepare_av_forensic(
+                case.request,
+                PreprocessingRequirements(forensic=frozenset({ForensicCapability.TIMING_RECORDS})),
+                _FFmpegPreprocessingTool(executable="ffmpeg", timeout_seconds=5),
+                [],
+                1.0,
+                None,
+            )
+        assert (caught.value.kind, caught.value.phase) == (
+            ("resource_limit", "forensic_manifest_limit")
+            if over_limit
+            else ("invariant", "forensic_manifest_invariant")
+        )
+        assert str(caught.value) == "Media preprocessing failed."
+        assert any(path.exists() for path in case.registry.cleanup_obligations())
+    finally:
+        case.cleanup()
+        assert case.registry.cleanup_once().completed

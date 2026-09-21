@@ -340,6 +340,25 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-22
+
+### Изменено
+
+- **[Stage 12/Macro 1/M1-G] Ограничен допуск forensic preprocessing внутри interpreter.**
+  Измерения показали, что native working set существенно превышает artifact bytes.
+  Введены два одновременных forensic dispatch без очереди; unresolved child удерживает
+  слот через cleanup barrier. Hard OS RSS quota и межпроцессная гарантия не заявляются.
+  Предел 16 representations сохранён: generic и dense timing имеют разные semantics,
+  а длинная композиция из 18 записей остаётся явным resource rejection. Нормативные
+  гарантии и ограничения находятся в `CONTRACTS.md` §7.5.
+
+### Исправлено
+
+- **[Stage 12/Macro 1/M1-G] Закрыты неконечный process timeout и позднее переполнение metadata.**
+  `NaN`/`Inf` timeout отклоняется до child start; полный forensic metadata envelope
+  проверяется в preprocessing до worker transport. Public API, зависимости,
+  production analyzers и result/risk/completeness semantics не изменены.
+
 ### 2026-09-21
 
 ### Изменено

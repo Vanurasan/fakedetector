@@ -26,6 +26,69 @@ def python_child(source: str, *arguments: str) -> list[str]:
     return [executable, "-I", "-c", source, *arguments]
 
 
+@pytest.mark.parametrize("timeout", [float("nan"), float("inf"), -float("inf"), 0, -1])
+def test_invalid_deadline_is_rejected_before_child(tmp_path, monkeypatch, timeout):
+    monkeypatch.setattr(
+        bounded_process_module, "_start_process", lambda *a, **k: pytest.fail("child started")
+    )
+    with pytest.raises(ValueError):
+        run_bounded_process(["trusted"], cwd=tmp_path, timeout_seconds=timeout)
+
+
+@pytest.mark.parametrize(
+    "failure,expected",
+    [
+        (ProcessInfrastructureError("stdout_read"), "stdout_read"),
+        (ProcessInfrastructureError("stderr_read"), "stderr_read"),
+        (ProcessInfrastructureError("stdout_write"), "stdout_write"),
+        (ProcessInfrastructureError("wait"), "stdout_close"),
+        (ProcessTimeoutError(), "stdout_close"),
+        (ProcessOutputLimitError(), "stdout_close"),
+        (KeyboardInterrupt(), None),
+    ],
+)
+@pytest.mark.parametrize("stderr_close", [False, True])
+def test_execution_failure_and_two_close_failures_have_stable_precedence(
+    tmp_path, monkeypatch, failure, expected, stderr_close
+):
+    closed = []
+
+    class Pipe:
+        def __init__(self, name):
+            self.name = name
+
+        def close(self):
+            closed.append(self.name)
+            if self.name == "stdout" or stderr_close:
+                raise OSError("PRIVATE diagnostic")
+
+    process = _FakeProcess(stdout=Pipe("stdout"))
+    process.stderr = Pipe("stderr")
+    monkeypatch.setattr(bounded_process_module, "_start_process", lambda *a, **k: process)
+
+    def fail(*a, **k):
+        raise failure
+
+    monkeypatch.setattr(bounded_process_module, "_wait_with_bounded_capture", fail)
+    with pytest.raises(
+        KeyboardInterrupt if expected is None else ProcessInfrastructureError
+    ) as caught:
+        run_bounded_process(
+            ["trusted"],
+            cwd=tmp_path,
+            timeout_seconds=1,
+            stdout_limit_bytes=1,
+            stderr_limit_bytes=1,
+        )
+    if expected is not None:
+        assert caught.value.phase == expected
+    else:
+        assert caught.value is failure
+    assert closed == ["stdout", "stderr"]
+    assert process.wait_calls >= 1
+    assert "PRIVATE" not in str(caught.value)
+
+
 def test_stdout_and_stderr_are_drained_concurrently(tmp_path: Path) -> None:
     result = run_bounded_process(
         python_child(
