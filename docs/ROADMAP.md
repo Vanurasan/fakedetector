@@ -120,11 +120,11 @@ AFTER_MVP
 Статус Macros 0–8 Stage 11: DONE / owner accepted
 Последний завершённый Macro: Stage 12 Macro 0 — Stage Definition, Licensing & Third-Party Policy (DONE)
 Статус Stage 12: IN_PROGRESS
-Текущий Macro: Macro 1 — Forensic Preprocessing Foundations (IN_PROGRESS; M1-A–M1-G DONE)
+Текущий Macro: Macro 1 — Forensic Preprocessing Foundations (IN_PROGRESS; M1-A–M1-G DONE / committed)
 Статус Macro 0: DONE
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Последний завершённый increment: M1-G — Integration, Resource, Failure & Concurrency Hardening (DONE)
-Следующее действие: M1-H — independent closure audit (отдельная задача)
+Следующее действие: независимый повторный аудит M1-H — Astra High (первичный аудит — REMEDIATE; targeted remediation завершена)
 Следующий Macro: Macro 2 — Image Analyzer Expansion — Wave 1 (NOT_STARTED; после закрытия Macro 1)
 Будущие работы: Stage 12 Macros 2–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры: отсутствуют
@@ -155,8 +155,9 @@ Macro 0 — `DONE`. Macro 1 — Forensic Preprocessing Foundations — `IN_PROGR
 M1-A (contracts/limits), M1-B (original image/JPEG), M1-C (deterministic image
 residual kernels), M1-D (audio precision/STFT), M1-E (bounded timing) и M1-F
 (dense windows/AV mapping) завершены.
-M1-G (integration/hardening) завершён; результаты и ограничения приведены ниже.
-Следующий отдельный increment — **M1-H: independent closure audit**.
+M1-A–M1-G завершены и закоммичены; результаты и ограничения приведены ниже.
+Первичный независимый аудит **M1-H** завершён с результатом **REMEDIATE**;
+M1H-F01 и M1H-F02 исправлены в targeted remediation; требуется независимый повторный аудит Astra High.
 Решения G1–G5 закрыты; в M1-F новые
 runtime dependencies, публичные схемы и конфигурационные поля не вводились.
 
@@ -178,7 +179,7 @@ runtime dependencies, публичные схемы и конфигурацио�
 | 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
 | 10 | Сборка и демонстрация MVP | DONE / CLOSED | Macro 1–3 DONE / owner accepted; independent post-remediation audit — PASS; S10-A01–S10-A04 CLOSED |
 | 11 | Post-MVP Normalization & Hardening | DONE / CLOSED | Macros 0–8 DONE / owner accepted; финальная проверка и strict certification — PASS; actionable findings 0 |
-| 12 | Analyzer Expansion, Licensing & Product Validation | IN_PROGRESS | Macro 0 DONE; Macro 1 IN_PROGRESS, M1-A–M1-E DONE; лицензия проекта Apache-2.0 |
+| 12 | Analyzer Expansion, Licensing & Product Validation | IN_PROGRESS | Macro 0 DONE; Macro 1 IN_PROGRESS, M1-A–M1-G DONE / committed; M1-H REMEDIATE; лицензия проекта Apache-2.0 |
 | 13+ | Дальнейшие расширения | AFTER_MVP / NOT_STARTED | ML, интеграции, история, масштабирование; отдельное решение владельца |
 
 ---
@@ -2340,7 +2341,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 | Macro | Название | Статус | Вход / результат и критерий перехода |
 |---:|---|---|---|
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
-| 1 | Forensic Preprocessing Foundations | IN_PROGRESS | M1-A–M1-G DONE; следующий increment M1-H, owner blockers отсутствуют |
+| 1 | Forensic Preprocessing Foundations | IN_PROGRESS | M1-A–M1-G DONE / committed; первичный M1-H — REMEDIATE; targeted remediation завершена, требуется независимый повторный аудит Astra High |
 | 2 | Image Analyzer Expansion — Wave 1 | NOT_STARTED | После 1: согласованный набор image-методов, provenance, применимость, признаки и тесты |
 | 3 | Audio Analyzer Expansion — Wave 1 | NOT_STARTED | После 1 и планового закрытия 2: согласованный audio-набор на общих представлениях |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
@@ -2495,7 +2496,9 @@ metadata-границу; большие числовые данные — зар
 
 ### Последовательность M1-A–M1-H
 
-M1-A, M1-B, M1-C, M1-D, M1-E и M1-F — `DONE`; G–H остаются `NOT_STARTED`.
+M1-A–M1-G — `DONE / committed`. Первичный независимый аудит M1-H завершён:
+`REMEDIATE`; M1H-F01 и M1H-F02 исправлены в targeted remediation,
+требуется независимый повторный аудит Astra High.
 Macro 1 — `IN_PROGRESS`.
 
 | Increment | Зависимости | Проверяемый результат |
@@ -2507,10 +2510,10 @@ Macro 1 — `IN_PROGRESS`.
 | M1-E — bounded timing — DONE | A/B, G4 | Типизированные stream/packet/frame facts, signed PTS/DTS и rational time base; bounded ffprobe и переиспользование общей sideband-границы из B для timing; без raw JSON в analyzer inputs |
 | M1-F — dense windows/AV mapping — DONE | B/C/D/E | Ограниченные последовательные RGB frames и timing из одного decode; exact региональные audio packet/video frame endpoints и offsets, явные coverage/unknown states без глобальной continuity и precision audio/STFT demand |
 | M1-G — integration/hardening — DONE | B–F | Совместные count/byte/CPU budgets, безопасная сериализация, timeout/overflow/crash/reap/cleanup matrix, существующие consumers без изменения поведения; sdist → wheel → внешняя runtime-среда без checkout и dev packages |
-| M1-H — independent closure audit | G | Отдельный независимый read-only аудит, отсутствие незакрытых findings, проверка критериев Macro 1 и решение о закрытии |
+| M1-H — independent closure audit — REMEDIATE | G | Первичный аудит завершён; M1H-F01 и M1H-F02 исправлены в targeted remediation; до решения о закрытии требуется независимый повторный аудит Astra High |
 
-Точный следующий increment — отдельная задача
-**M1-H: independent closure audit**. A задаёт общие contracts/limits для B–F;
+Следующее действие — независимый повторный аудит M1-H — Astra High.
+A задаёт общие contracts/limits для B–F;
 точные реализованные ограничения принадлежат `CONTRACTS.md` §7.5. Предложения
 Pass 1 ниже сохраняются как критерии дальнейшей проверки A/G, не production
 sampling defaults и не новые YAML-поля.
@@ -2713,7 +2716,8 @@ Owner blockers отсутствуют. Stage 12 и Macro 1 остаются `IN_
 
 Baseline `f885a04f44044a3cf8148bc7b6c3c69336b4b375`, ветка
 `feat/stage12-macro1-forensic-preprocessing-foundations`; исходное дерево чистое.
-Изменения M1-G не закоммичены. Новых capabilities, representations, dependencies,
+M1-G принят владельцем и закоммичен; HEAD после M1-G — `5f869782592b34ffc437b37da9def91d79782042`.
+Новых capabilities, representations, dependencies,
 public API/config fields и analyzers нет. Нормативные гарантии принадлежат
 `CONTRACTS.md` §7.5; ниже — результаты проверки, а не новые sampling defaults.
 
@@ -2801,14 +2805,34 @@ pre-commit/Ruff, mypy (65 source files) и CLI smoke — PASS.
 checkout в `sys.path`. Installed probe расширен на precision audio/STFT, generic
 timing, same-decode dense RGB/timing и AV mapping; JPEG child/cleanup сохранены.
 `source_tree_clean=false`: это development verification, не strict certification.
-Чистую сертификацию владелец может повторить после commit перед M1-H.
+Позднее первичный аудит M1-H подтвердил strict clean-tree installed-wheel
+certification — **PASS**. Это не меняет статус приведённой выше dirty-tree проверки.
 
 Focused suite: **729 passed, 1 skipped**. `uv run poe check`: **2495 passed,
 17 skipped, coverage 90%**; pre-commit/Ruff, mypy (65 source files) и CLI smoke — PASS.
 `git diff --check` — PASS. Текущий каталог четырёх analyzers,
 их IDs/versions, requirements, risk/completeness и прежняя активация не изменены.
 Graphify rebuild, Git mutations и M1-H не выполнялись. Owner blockers отсутствуют.
-Stage 12 и Macro 1 остаются `IN_PROGRESS`; следующее действие — отдельный M1-H.
+На момент завершения M1-G следующим действием был отдельный M1-H.
+Первичный независимый аудит M1-H завершён с **REMEDIATE**: M1H-F01 — потеря
+cleanup barrier при вторичном прерывании artifact close; M1H-F02 — устаревший
+статус M1-G в ROADMAP. Stage 12 и Macro 1 остаются `IN_PROGRESS`;
+targeted remediation завершена, требуется независимый повторный аудит Astra High.
+
+M1H-F01 и M1H-F02 исправлены в targeted remediation:
+artifact close сохраняет вторичное прерывание вместе с исходным cleanup barrier
+через существующий `_CleanupSafetyInterruption`; текущие статусы ROADMAP исправлены.
+Добавлено 18 regression cases, включая dense dispatch с живым child, удержание
+admission и однократное освобождение после reap. Focused suite — **620 passed,
+2 skipped**; `uv run poe check` — **2523 passed, 17 skipped, coverage 90%**;
+pre-commit/Ruff, mypy (65 source files) и CLI smoke — PASS.
+Git mutations, Graphify rebuild и повторный M1-H не выполнялись; финальный PASS
+M1-H и закрытие Macro 1 не заявляются.
+
+Результат рассмотрения Graphify в первичном аудите M1-H:
+`REQUIRED_BEFORE_MACRO1_CLOSURE`. Пересборка Graphify обязательна до закрытия
+Macro 1 и ещё не выполнена. Graphify остаётся вспомогательным инструментом,
+а не доказательством архитектуры.
 
 ### Критерии ресурсов и достоверности для A/G
 

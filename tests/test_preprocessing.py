@@ -3889,6 +3889,115 @@ def test_dense_failed_artifact_lifecycle_and_barrier(tmp_path, monkeypatch, barr
     assert not (tmp_path / "case" / "temp" / ("a" * 32)).exists()
 
 
+@pytest.mark.parametrize("interruption_type", [KeyboardInterrupt, SystemExit])
+def test_dense_close_interruption_retains_admission_until_child_reaped(
+    tmp_path, monkeypatch, real_subprocesses, interruption_type
+):
+    from test_bounded_process import python_child
+
+    from fakedetector._generated_artifact_budget import _BoundedArtifactWriter
+    from fakedetector.core import _bounded_process as bounded
+    from fakedetector.core._cleanup_safety import _CleanupSafetyInterruption
+    from fakedetector.preprocessing import _service as service
+
+    source = tmp_path / "source.mp4"
+    _timing_fixture_video(source)
+    descriptor = _video_descriptor(duration_seconds=1, width=64, height=48, fps=25, has_audio=False)
+    descriptor = descriptor.model_copy(
+        update={"sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+    )
+    case = _case(tmp_path / "case", source, descriptor)
+    config = AppConfig.model_validate(
+        yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+    )
+    dispatcher = PreprocessingDispatcher(config)
+    demand = PreprocessingRequirements(forensic=frozenset({ForensicCapability.DENSE_VIDEO}))
+    admission = service._ForensicAdmission()
+    monkeypatch.setattr(service, "_FORENSIC_ADMISSION", admission)
+    original_runner = decoder.run_bounded_process
+    original_close = _BoundedArtifactWriter.close
+    secondary = interruption_type()
+    primary = None
+
+    with pytest.MonkeyPatch.context() as stop_patch:
+
+        def fail_capture(child, **kwargs):
+            kwargs["stdout_sink"].write(b"partial")
+            stop_patch.setattr(child, "terminate", lambda: None)
+            stop_patch.setattr(child, "kill", lambda: None)
+
+            def unresolved_wait(timeout):
+                raise subprocess.TimeoutExpired("probe", timeout)
+
+            stop_patch.setattr(child, "wait", unresolved_wait)
+            raise ProcessTimeoutError()
+
+        def run(args, **kwargs):
+            nonlocal primary
+            if "rawvideo" not in args:
+                return original_runner(args, **kwargs)
+            with pytest.MonkeyPatch.context() as capture_patch:
+                capture_patch.setattr(bounded, "_wait_with_bounded_capture", fail_capture)
+                try:
+                    return original_runner(python_child("import time; time.sleep(30)"), **kwargs)
+                except ProcessInfrastructureError as error:
+                    primary = error
+                    assert error.phase == "termination"
+                    assert error._cleanup_safety_barrier is not None
+                    assert not error._cleanup_safety_barrier.try_confirm_safe()
+                    raise
+
+        def interrupted_close(writer):
+            original_close(writer)
+            if primary is not None:
+                raise secondary
+
+        monkeypatch.setattr(decoder, "run_bounded_process", run)
+        monkeypatch.setattr(_BoundedArtifactWriter, "close", interrupted_close)
+        with admission.enter():
+            with pytest.raises(_CleanupSafetyInterruption) as caught:
+                dispatcher.prepare(case.request, demand)
+            error = caught.value
+            assert error.interruption is secondary
+            assert primary is not None
+            barrier = error._cleanup_safety_barrier
+            assert barrier is not primary._cleanup_safety_barrier
+            assert not barrier.try_confirm_safe()
+            child = real_subprocesses[-1]
+            assert child.poll() is None
+            assert child.stdout.closed and child.stderr.closed
+            assert any(
+                path.read_bytes() == b"partial" for path in case.registry.cleanup_obligations()
+            )
+            for _ in range(2):
+                with pytest.raises(PreprocessingError) as rejected:
+                    dispatcher.prepare(case.request, demand)
+                assert (rejected.value.kind, rejected.value.phase) == (
+                    "resource_limit",
+                    "forensic_concurrency",
+                )
+            stop_patch.undo()
+            assert barrier.try_confirm_safe()
+            assert child.poll() is not None
+            assert primary._cleanup_safety_barrier.try_confirm_safe()
+            assert barrier.try_confirm_safe()
+            with admission.enter():
+                with pytest.raises(PreprocessingError) as rejected, admission.enter():
+                    pytest.fail("confirmation released the retained admission twice")
+                assert (rejected.value.kind, rejected.value.phase) == (
+                    "resource_limit",
+                    "forensic_concurrency",
+                )
+        with admission.enter(), admission.enter():
+            with pytest.raises(PreprocessingError) as rejected, admission.enter():
+                pytest.fail("process-local capacity exceeded after recovery")
+            assert (rejected.value.kind, rejected.value.phase) == (
+                "resource_limit",
+                "forensic_concurrency",
+            )
+    case.cleanup()
+
+
 @pytest.mark.parametrize("count", [32, 33])
 def test_dense_diagnostic_frame_boundary(count):
     header = b"[showinfo@%s @ abc] config in time_base: 1/1000, frame_rate: 25/1\n"

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO, cast
 
 from fakedetector.config._snapshot import _ConfigSnapshot
+from fakedetector.core._cleanup_safety import _CleanupSafetyBarrier, _CleanupSafetyInterruption
 from fakedetector.domain import MediaType
 
 _BYTES_PER_MEBIBYTE = 1_048_576
@@ -84,9 +85,18 @@ class _GeneratedArtifactBudget:
         output = _BoundedArtifactWriter(raw, self)
         try:
             yield cast(BinaryIO, output)
-        except BaseException:
-            with suppress(_GeneratedArtifactWriteError):
+        except BaseException as error:
+            try:
                 output.close()
+            except _GeneratedArtifactWriteError:
+                pass
+            except BaseException as close_error:
+                barrier = getattr(error, "_cleanup_safety_barrier", None)
+                if not isinstance(close_error, Exception) and isinstance(
+                    barrier, _CleanupSafetyBarrier
+                ):
+                    raise _CleanupSafetyInterruption(close_error, barrier) from None
+                raise
             raise
         else:
             output.close()
