@@ -340,6 +340,24 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-23
+
+### Изменено
+
+- **[Stage 12/Macro 1] Документально закрыт Forensic Preprocessing Foundations —
+  DONE / CLOSED / owner accepted.** M1-A–M1-G и targeted remediation приняты
+  владельцем и закоммичены. Первичный M1-H дал `REMEDIATE`: M1H-F01 (HIGH) —
+  потеря cleanup barrier при вторичном прерывании artifact close; M1H-F02 (LOW) —
+  противоречивые статусы M1-G/M1-H. Remediation сохраняет исходный unresolved
+  barrier и семантику прерывания, удерживая admission до подтверждения безопасности/reap;
+  текущие статусы нормализованы. Оба замечания `CLOSED`, финальный независимый
+  повторный M1-H — `PASS`, actionable findings — 0. Strict clean-tree certification
+  на `625b9e83f133fb0ae31a4b90e9e1288bff96f69c` — `PASS`, требование Graphify rebuild
+  выполнено. Свидетельства, хэши и принятые ограничения записаны в `ROADMAP.md`,
+  раздел M1-H. Public contract drift и регрессии текущих анализаторов отсутствуют.
+  Этот инкремент меняет только документацию; Stage 12 остаётся `IN_PROGRESS`,
+  Macro 2 — следующий запланированный Macro, ещё не начат.
+
 ### 2026-09-22
 
 ### Изменено
