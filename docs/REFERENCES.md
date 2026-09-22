@@ -533,6 +533,176 @@ Windows Job Object RAM quota не реализована. Риск native alloca
 Installed-wheel проверка M1-B встроена в `scripts/verify_release_package.py`;
 strict clean-tree certification остаётся отдельной проверкой M1-G.
 
+## M2-R1 — исследование JPEG DQ/grid, 2026-09-23
+
+Все записи ниже имеют категорию **RESEARCH_REFERENCE**, итог допуска —
+**только исследование**. Проверены агентом 2026-09-23 по указанным первичным
+источникам; owner acceptance метода отсутствует. Применение в предложениях —
+[METHODS.md](METHODS.md#кандидаты-stage-12--macro-2), сравнение —
+[исследовательский отчёт](research/2026-09-23-jpeg-dq-grid-method-selection.md).
+
+Статьи/стандарты цитируются, а не включаются в wheel, ZIP или репозиторий.
+Текст, иллюстрации, код, datasets и демонстрационные изображения не копируются
+в продукт. Для всех записей: моделей/весов нет; внешние datasets в M2-R1 не
+использовались, лицензии данных из экспериментов авторов не считаются допуском
+проектного корпуса. Patent clearance не проводился; ссылка и собственная
+реализация не доказывают отсутствие IP-ограничений. Неустановленные права
+повторного распространения не трактуются как разрешённые.
+
+<a id="jpeg-t81"></a>
+
+### JPEG-T81 — стандарт JPEG
+
+- Авторы: CCITT/ITU-T и ISO/IEC JTC 1; *Digital compression and coding of
+  continuous-tone still images — Requirements and guidelines*, 1992;
+  Recommendation T.81 / ISO/IEC 10918-1:1994.
+- Источник: [T.81, PDF на W3C](https://www.w3.org/Graphics/JPEG/itu-t81.pdf).
+- Использовано: Annex A/F/G/B — 8×8 DCT, квантование, components/sampling,
+  последовательный и progressive режимы, DQT selectors. Header хранит текущие
+  таблицы, не журнал предыдущих сохранений. Quality label не заменяет DQT.
+- Implementation source: не применяется, стандарт не код. Лицензия текущего
+  `pyjpegio==0.3.0` отдельно проверена в записи Macro 1 выше; допуск стандарта
+  для чтения не разрешает перепубликовать PDF или чужой decoder.
+
+<a id="jpeg-pf04"></a>
+
+### JPEG-PF04 — гистограммная периодичность DQ
+
+- Alin C. Popescu, Hany Farid. *Statistical Tools for Digital Forensics*.
+  Information Hiding 2004, LNCS 3200, pp. 128–147, 2004.
+- [Авторский PDF](https://farid.berkeley.edu/downloads/publications/ih04.pdf),
+  [DOI 10.1007/978-3-540-30114-1_10](https://doi.org/10.1007/978-3-540-30114-1_10).
+- Прочитан §3, особенно §§3.2–3.3: периодическое перераспределение histogram
+  bins, спектральные пики и вырожденные отношения квантов. Демонстрации статьи
+  не задают переносимый рабочий порог FakeDetector. В статье для вывода
+  используется floor; rounding-модель предложения обозначена отдельно.
+- Implementation source: код не использован. Право коммерческого копирования
+  текста/кода не установлено; научное цитирование не означает такую лицензию.
+
+<a id="jpeg-lf03"></a>
+
+### JPEG-LF03 — первичная таблица и неоднозначность
+
+- Jan Lukáš, Jessica Fridrich. *Estimation of Primary Quantization Matrix in
+  Double Compressed JPEG Images*. Digital Forensic Research Workshop, 2003.
+- [Авторский PDF, SUNY Binghamton](https://ws2.binghamton.edu/fridrich/Research/Doublecompression.pdf).
+- Прочитаны §§2–4: missing values, peak/valley и double peaks, зависимость
+  от q1/q2, округления и реализации DCT; первичная таблица восстанавливается
+  не во всех случаях. В работе сопоставляются оценочные подходы, включая
+  neural-network classifier; этот classifier не предлагается для Stage 12.
+- Implementation source: отсутствует; ни код, ни обученные параметры не взяты.
+  Права на их коммерческую поставку не проверены; запись — только ссылка.
+
+<a id="jpeg-pf08"></a>
+
+### JPEG-PF08 — обучение на гистограммных признаках
+
+- Tomáš Pevný, Jessica Fridrich. *Estimation of Primary Quantization Matrix
+  for Steganalysis of Double-Compressed JPEG Images*. SPIE 6819, 681911, 2008.
+- [Авторский PDF](https://ws2.binghamton.edu/fridrich/Research/paper_3_color.pdf),
+  [DOI 10.1117/12.759155](https://doi.org/10.1117/12.759155).
+- Использованы abstract и описание feature/classifier pipeline: low-frequency
+  DCT histograms для SVM detection/primary-step estimation. Это альтернатива
+  простому измерению, требующая обученного decision boundary; она не становится
+  детерминированным безобучающим порогом только из-за фиксированного inference.
+- Implementation source: отсутствует. Код, модели, training corpus и их права
+  не проверены и не допускаются этой записью.
+
+<a id="jpeg-bp12"></a>
+
+### JPEG-BP12 — aligned/non-aligned likelihood maps
+
+- Tiziano Bianchi, Alessandro Piva. *Image Forgery Localization via
+  Block-Grained Analysis of JPEG Artifacts*. IEEE Transactions on Information
+  Forensics and Security 7(3), pp. 1003–1017, 2012.
+- [DOI 10.1109/TIFS.2012.2187516](https://doi.org/10.1109/TIFS.2012.2187516),
+  [авторская версия в Politecnico di Torino](https://iris.polito.it/retrieve/e384c42e-2465-d4b2-e053-9f05fe0a1d67/bian_TIFS2012_OA.pdf).
+- Прочитаны §§III–V, Algorithms 2/3, equations 18–22: отдельные A-DJPG и
+  NA-DJPG модели, likelihood maps, оценка q1/mixture и ROC-выбор operating point.
+  Отношение likelihood >1 не обеспечивает заданную production FPR.
+- Implementation source: отсутствует. Внешний MATLAB/code не копировался;
+  license такого кода не проверена. Собственная будущая реализация требует
+  отдельного точного профиля и provenance, не вывода лицензии из IEEE PDF.
+
+<a id="jpeg-niu19"></a>
+
+### JPEG-NIU19 — повторное сжатие с той же таблицей
+
+- Yakun Niu, Xiaolong Li, Yao Zhao, Rongrong Ni. *An enhanced approach for
+  detecting double JPEG compression with the same quantization matrix*.
+  Signal Processing: Image Communication 76, pp. 89–96, 2019.
+- [Страница издателя, abstract и открытый preview](https://www.sciencedirect.com/science/article/abs/pii/S0923596518309196),
+  [DOI 10.1016/j.image.2019.04.016](https://doi.org/10.1016/j.image.2019.04.016).
+- Использованы доступные abstract/introduction: repeated recompression и
+  random perturbation как отдельная семья для same-table случая; ограничение
+  при низком качестве. Полный алгоритм по paywalled частям не проверен;
+  production формулы и thresholds из него не заимствуются.
+- Implementation source: отсутствует; код, параметры, datasets и права
+  коммерческой поставки не проверены. Отказ от этой семьи в текущем scope
+  обусловлен требованием нового экспериментального codec pipeline, а не
+  утверждением, что задача same-table принципиально всегда неразрешима.
+
+<a id="jpeg-grid20"></a>
+
+### JPEG-GRID20 — локальная решётка по blocking artifacts
+
+- Tina Nikoukhah, Miguel Colom, Jean-Michel Morel, Rafael Grompone von Gioi.
+  *Local JPEG Grid Detector via Blocking Artifacts, a Forgery Detection Tool*.
+  Image Processing On Line 10, pp. 24–42, 2020.
+- [Издание, DOI 10.5201/ipol.2020.283](https://www.ipol.im/pub/art/2020/283/),
+  [полный текст](https://www.ipol.im/pub/art/2020/283/article_lr.pdf).
+- Прочитаны Algorithm 1, §§2–5: cross-difference (с указанием происхождения
+  от Chen/Hsu 2008), phase votes, binomial-tail NFA, epsilon=1, window support,
+  сложность и false grids от upsampling. Формулы native-coordinate/bounded
+  окон FakeDetector не приписываются авторам.
+- Статья помечена CC-BY-NC-SA; не копировать её текст/рисунки в коммерческий
+  продукт. Издание указывает **AGPL-3.0-or-later**, software v2.0, SWH directory
+  `ec361fe603bb131ceb72d7fb39cd6856c1f6c06c` для reference code.
+  [Авторский repository GOD](https://github.com/tinankh/GOD) использован только
+  как указатель реализации, не как источник кода. AGPL не запрещает коммерцию,
+  но интеграция/распространение требуют отдельного разбора обязательств;
+  этой задачей они не разрешены. Предлагается собственная реализация по
+  математическому описанию, без copying/translation reference source.
+
+<a id="jpeg-zero21"></a>
+
+### JPEG-ZERO21 — альтернативный grid detector
+
+- Tina Nikoukhah, Jérémy Anger, Miguel Colom, Jean-Michel Morel,
+  Rafael Grompone von Gioi. *ZERO: a Local JPEG Grid Origin Detector Based on
+  the Number of DCT Zeros and its Applications in Image Forensics*.
+  Image Processing On Line 11, pp. 396–433, 2021.
+- [Издание, DOI 10.5201/ipol.2021.390](https://www.ipol.im/pub/art/2021/390/),
+  [полный текст](https://www.ipol.im/pub/art/2021/390/article_lr.pdf).
+- Использованы описание метода и §3: оценка DCT zeros на возможных grid origins,
+  локальная/global проверка с NFA. Native coefficients только одной текущей
+  сетки не заменяют проверку всех фаз по decoded pixels.
+- Статья CC-BY-NC-SA; code v4.0 обозначен изданием AGPL-3.0-or-later, SWH
+  directory `71b30c873962f1725c6291aa5f08a5691bcb1af4`. Код не загружался и
+  не копировался; commercial redistribution/сетевой сценарий не допущены
+  этой записью. Предлагаемый продукт не включает ZERO, его изображения или
+  datasets. Не переносить лицензию существующего NumPy на чужой алгоритм/code.
+
+<a id="jpeg-m2r1-proposal"></a>
+
+### JPEG-M2R1-PROPOSAL — собственные измерительные профили
+
+- Методические источники: JPEG-PF04/LF03/BP12 и JPEG-GRID20; различия и
+  ограничения указаны в `METHODS.md`.
+- Method source для конкретных bounded diagnostics/sampling/aggregation:
+  **project-specific heuristic**.
+- Implementation source: **original FakeDetector implementation** — только
+  план будущей реализации; в M2-R1 реализация отсутствует, версии analyzer нет.
+  Будущий собственный код подчиняется корневому Apache-2.0; это не
+  перелицензирование статей или reference implementations.
+- Новые библиотеки, executable, models/weights, datasets отсутствуют.
+  Предполагаемые building blocks — уже существующие NumPy/Pillow/pyjpegio;
+  их отдельные version/license записи в этом реестре сохраняются.
+- Целевая поставка — существующий CPU-only Windows/Python профиль, без
+  добавленного внешнего кода. Before-release review должен проверить реальный
+  implementation diff, attribution и обязательства фактически используемых
+  артефактов; сейчас production/provenance acceptance не заявляется.
+
 ## Общие библиотеки и инструменты
 
 ### Python standard library

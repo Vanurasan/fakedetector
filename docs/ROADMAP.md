@@ -131,7 +131,7 @@ AFTER_MVP
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Последний завершённый increment: M1-H — independent closure audit (DONE / PASS)
 Текущий increment: M2-A — BLOCKED на обязательном method/provenance gate; изменений кода нет
-Следующее действие: целевое исследование DQ/grid, выбор методов и принятие владельцем записей METHODS.md
+Следующее действие: owner review M2-R1, закрытие calibration/profile gates и принятие точных спецификаций METHODS.md
 Будущие работы: Stage 12 Macros 3–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры: M2-A не имеет принятых спецификаций DQ/grid в METHODS.md
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
@@ -170,11 +170,14 @@ Macro 1 — `DONE / CLOSED / merged`. Macro 2 — **IN_PROGRESS**; текуща�
 названия DQ/grid в плане не задают конкретный принятый production-метод.
 Изменений кода M2-A нет.
 
-Следующая предпосылка — отдельное целевое исследование DQ/grid, выбор методов,
-фиксация provenance и явное принятие владельцем спецификаций в `METHODS.md`.
+M2-R1 от 2026-09-23: целевое исследование и документационное предложение
+подготовлены; [отчёт](research/2026-09-23-jpeg-dq-grid-method-selection.md),
+research provenance в `REFERENCES.md` и предложения в `METHODS.md` доступны
+для owner review. Оба кандидата — `RESEARCH_ONLY_NOT_READY`; production
+finding thresholds не обоснованы. Следующая предпосылка — закрытие указанных
+calibration/profile/semantics gates и явное принятие точного scope владельцем.
 Только после появления принятых записей разрешено возобновить реализацию M2-A.
-Текущая задача Source-of-Truth & Agent Workflow Hardening меняет только
-документацию/process; она не выполняет исследование и не снимает этот gate.
+M2-R1 не начинает реализацию и не снимает method/provenance gate.
 
 ---
 
@@ -2988,8 +2991,13 @@ Graphify. Изменения реализации и Git mutations не выпо
 применимости, правил решения и обоснованных порогов нет. Подготовленные в
 Macro 1 представления и provenance компонентов не заменяют принятие метода.
 
-- [ ] Провести целевое исследование DQ/grid и сравнение конкретных методов.
-- [ ] Оформить применимые provenance/licensing записи в `REFERENCES.md`.
+- [x] M2-R1: подготовить целевое исследование DQ/grid и сравнение методов;
+  [отчёт от 2026-09-23](research/2026-09-23-jpeg-dq-grid-method-selection.md)
+  завершён агентом, owner acceptance отсутствует.
+- [x] M2-R1: оформить research provenance/licensing записи в `REFERENCES.md`;
+  это не допуск внешнего кода или production-реализации.
+- [ ] Закрыть profile/calibration/semantics gates из предложений `METHODS.md`;
+  DQ и grid пока `RESEARCH_ONLY_NOT_READY`, production thresholds не заданы.
 - [ ] Получить принятие владельцем полных записей DQ/grid в `METHODS.md`.
 - [ ] Только после закрытия gate возобновить реализацию M2-A в согласованном scope.
 
