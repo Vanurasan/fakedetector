@@ -130,8 +130,9 @@ AFTER_MVP
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Последний завершённый increment: M1-H — independent closure audit (DONE / PASS)
-Текущий increment: M2-A — BLOCKED на обязательном method/provenance gate; изменений кода нет
-Следующее действие: owner review M2-R1, закрытие calibration/profile gates и принятие точных спецификаций METHODS.md
+Текущая исследовательская работа: M2-R2 — измерения и controlled calibration подготовлены для owner review
+Реализация M2-A: BLOCKED на обязательном method/provenance gate
+Следующее действие: owner review M2-R2, реальный корпус/operating target, закрытие calibration/profile/semantics gates
 Будущие работы: Stage 12 Macros 3–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры: M2-A не имеет принятых спецификаций DQ/grid в METHODS.md
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
@@ -170,14 +171,16 @@ Macro 1 — `DONE / CLOSED / merged`. Macro 2 — **IN_PROGRESS**; текуща�
 названия DQ/grid в плане не задают конкретный принятый production-метод.
 Изменений кода M2-A нет.
 
-M2-R1 от 2026-09-23: целевое исследование и документационное предложение
-подготовлены; [отчёт](research/2026-09-23-jpeg-dq-grid-method-selection.md),
-research provenance в `REFERENCES.md` и предложения в `METHODS.md` доступны
-для owner review. Оба кандидата — `RESEARCH_ONLY_NOT_READY`; production
-finding thresholds не обоснованы. Следующая предпосылка — закрытие указанных
-calibration/profile/semantics gates и явное принятие точного scope владельцем.
-Только после появления принятых записей разрешено возобновить реализацию M2-A.
-M2-R1 не начинает реализацию и не снимает method/provenance gate.
+M2-R1 от 2026-09-23 принят владельцем как исследовательское свидетельство
+(подтверждено заданием M2-R2); это не принятие production-методов.
+M2-R2: по ограниченному разрешению владельца реализован research-only harness,
+подготовлены controlled corpus и
+[калибровочный отчёт](research/2026-09-23-jpeg-dq-grid-calibration.md) для owner review.
+DQ/Grid сохраняют `RESEARCH_ONLY_NOT_READY`; оба калибровочных вывода —
+`CALIBRATION_NOT_READY`, production thresholds не предложены. Следующая
+предпосылка — независимый real corpus с правами/provenance, operating target
+владельца и закрытие calibration/profile/semantics gates из `METHODS.md`.
+M2-R2 не снимает блокировку M2-A и не означает приёмку Stage 12 / Macro 2.
 
 ---
 
@@ -2993,15 +2996,29 @@ Macro 1 представления и provenance компонентов не з�
 
 - [x] M2-R1: подготовить целевое исследование DQ/grid и сравнение методов;
   [отчёт от 2026-09-23](research/2026-09-23-jpeg-dq-grid-method-selection.md)
-  завершён агентом, owner acceptance отсутствует.
+  принят владельцем как research evidence согласно заданию M2-R2.
 - [x] M2-R1: оформить research provenance/licensing записи в `REFERENCES.md`;
   это не допуск внешнего кода или production-реализации.
+- [x] M2-R2: по явному measurement-only разрешению подготовить изолированный
+  harness, арифметические тесты, controlled corpus вне Git и
+  [отчёт](research/2026-09-23-jpeg-dq-grid-calibration.md). Работа представлена
+  для owner review; вывод обоих методов — `CALIBRATION_NOT_READY`.
+- [ ] M2-R2: получить owner acceptance исследовательских результатов;
+  self-report не является приёмкой.
+- [ ] Определить real corpus с provenance/правами и operating target для
+  независимой калибровки; synthetic observations не устанавливают population FPR.
 - [ ] Закрыть profile/calibration/semantics gates из предложений `METHODS.md`;
   DQ и grid пока `RESEARCH_ONLY_NOT_READY`, production thresholds не заданы.
 - [ ] Получить принятие владельцем полных записей DQ/grid в `METHODS.md`.
 - [ ] Только после закрытия gate возобновить реализацию M2-A в согласованном scope.
 
-M2-A не DONE; code changes отсутствуют, новые анализаторы не production-active.
+M2-A не DONE; production code changes отсутствуют, новые анализаторы не production-active.
+Исследовательский код M2-R2 не регистрирует IDs и не влияет на риск/полноту.
+Проверки M2-R2: focused suite — 89 passed; полный quality barrier —
+2611 passed, 17 skipped, 1 failed на sdist provenance нового untracked отчёта.
+Ruff, mypy и отдельно выполненный CLI smoke — PASS. Для повторной проверки
+sdist после Git-действий владельца — `OWNER_VERIFY_REQUIRED`; требование
+tracked provenance сохранено. Полные свидетельства находятся в отчёте M2-R2.
 Пять image-кандидатов и их методологический допуск перечислены в `METHODS.md`;
 исследовательские отчёты подчиняются `research/README.md`.
 
