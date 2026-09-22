@@ -1318,6 +1318,600 @@ ownership semantics.
 
 ---
 
+### 7.5. Внутренние forensic contracts Macro 1
+
+Решения владельца G1–G5 приняты. Производитель новых представлений остаётся
+в preprocessing; источник, реестр артефактов, общий бюджет и private worker
+transport сохраняют прежнее владение. M1-A реализует типы, декларации,
+проверки размеров и координат; M1-B — original image/JPEG producer и numeric reader;
+M1-C — общие bounded deterministic image residual kernels; M1-D — source-precision
+audio windows и numeric framing/STFT; M1-E — bounded stream/packet/frame timing.
+M1-F реализует dense RGB windows и региональное A/V timing mapping.
+Новые требования отсутствуют у четырёх текущих анализаторов версии `1.0.0`.
+Публичные схемы, локализация, риск, полнота и YAML не изменяются.
+
+**Требования.** `PreprocessingRequirements.forensic` — immutable `frozenset`
+закрытого `ForensicCapability`, объединяемый существующим `AnalyzerRegistry`
+только для активного маршрута. Зависимости раскрываются однократно и без дублей:
+
+- image: `original_image`, `image_coordinates → original_image`,
+  `jpeg_structure → original_image`,
+  `jpeg_coefficients → jpeg_structure + image_coordinates`,
+  `residual_raster → image_coordinates`;
+- audio и video: `audio_precision`, `audio_samples → audio_precision`,
+  `audio_spectral → audio_samples`, `stream_timing`,
+  `timing_records → stream_timing`;
+- только video: `dense_video → stream_timing`,
+  `av_timeline → timing_records`.
+
+Старые `audio_spectrogram`/`video_audio_track` сохраняют семантику. Неподходящий
+media route отклоняется. Dispatcher принимает original image/coordinates/JPEG
+и audio precision/samples/spectral, stream timing/timing records, dense video
+и AV timeline demand. Профили реализованных производителей определены
+ниже; объединение capabilities не меняет их параметры.
+
+**Факты и идентичность.** В существующем `metadata["forensic"]` резервируется
+строго валидируемый JSON `ForensicManifest`, передаваемый строкой без изменения
+private transport. Он содержит один SHA-256 исходника, media route и максимум
+16 `ForensicRepresentation`. Каждая запись связывает закрытый вид фактов с
+`RepresentationProvenance`: producer/version и profile/version, каждый до
+64 ASCII-символов без путей. `PreparedMedia.forensic` и `AnalyzerRequest.forensic`
+дают типизированную immutable проекцию; отсутствие ключа означает прежний путь.
+Parent сверяет SHA-256 с `ValidatedFileDescriptor`, worker — с каноническими
+file facts. Числовые descriptor IDs должны присутствовать в переданных artifacts;
+реестр дополнительно подтверждает принадлежность каждого opaque ref задаче.
+Числовые файлы используют `PreparedArtifact.format="forensic_raw"`; ссылка на
+PNG/WAV или другой формат не принимается как raw numeric storage.
+
+Типы включают `OriginalImageFacts`, `JpegHeader`/`JpegComponent`,
+`ImageRasterDescriptor`, `JpegCoefficientsDescriptor`, `AudioPrecisionFacts`,
+`AudioWindowDescriptor`, `SpectralWindowDescriptor`, `StreamTimingFacts`,
+`TimingRecordsDescriptor`, `DenseVideoWindowDescriptor`, `AVTimelineDescriptor`.
+Они не содержат выводов о подделке. Original image facts уникальны; координаты
+растра и SOF коэффициентов согласуются с ними. Sample windows ссылаются на
+precision facts по stream index, spectral windows — на sample artifact ID,
+timing records — на stream/time base, dense — на frame artifact того же decode,
+AV — на выбранные streams и региональные packet/frame descriptors.
+Такие ссылки не являются путями или разрешением произвольного чтения.
+
+**Числовые данные.** `NumericArtifact` описывает opaque ID, положительную shape
+ранга 1–4 и закрытый dtype: `|u1`, `<i4`, `<i8`, `<f8`, `<c16`. Формат — raw
+C-order, без заголовка, padding, object arrays и pickle; endian задан явно.
+Точная длина выводится из shape/itemsize с проверкой произведения до выделения
+памяти и должна совпасть с файлом. `AnalyzerRequest.read_numeric` сверяет
+descriptor с source-bound manifest, проверяет длину через read-only capability
+до чтения и повторно после ограниченного чтения. Массив имеет immutable `bytes`
+backing buffer; включить запись через `setflags` невозможно:
+одного `frozen=True` или снятого writeable flag у изменяемого владельца недостаточно.
+
+Коэффициенты имеют оси `(block_y, block_x, 8, 8)` в native SOF component order,
+без применения EXIF. Растр имеет `(y, x, channel)` и явные ориентированные
+диапазоны. Audio имеет `(sample, channel)`, абсолютный диапазон source samples
+`[start, stop)` и исходный channel order. `<i4` содержит signed codes с младшим
+выравниванием (unsigned 8-bit центрируется относительно нуля), `<f8` сохраняет
+floating samples без gain/clipping. Resample/downmix и незаявленная потеря
+precision запрещены. Source bit depth может быть неизвестна; decoder format
+не доказывает effective bit depth. Неизвестный decoder format допускается только
+как факт, без sample window; floating decoder требует `<f8`, integer — `<i4`
+и не допускает заявленную source bit depth выше 32. Прежний PCM16 остаётся
+отдельным представлением.
+Spectral имеет `(frame, channel, rFFT-bin)`, явные FFT/hop/window/scaling,
+frame range относительно sample window и только полные окна без padding.
+
+Timing использует signed ticks, положительный рациональный `TimeBase` и `None`
+для неизвестных фактов. Формат таблиц и покрытие M1-E определены ниже. Dense
+RGB24 имеет `(frame, y, x, 3)` и ссылается на frame records **того же decode**:
+`decode_operation_id` у pixels и timing обязан совпадать; одного совпадения
+ordinal недостаточно. Проверки M1-F определены ниже.
+AV mapping содержит точные региональные endpoints в секундах, не sample indices
+и не утверждение о непрерывности. Межоконные пробелы не являются наблюдавшимися
+разрывами; выводов о drift/synchronization эти дескрипторы не делают.
+
+**Координаты.** `ImageCoordinates` фиксирует native размеры и EXIF 1–8.
+Для ориентаций 5–8 oriented width/height меняются местами. Координаты обозначают
+границы пикселей `[0,W] × [0,H]`; центр пикселя `(i,j)` равен `(i+0.5,j+0.5)`.
+`normalized_bbox(left, top, right, bottom)` преобразует все четыре угла и
+возвращает `(x,y,width,height)` в существующем нормализованном пространстве,
+без clamp, resize или изменения публичной `Finding` localization. Вырожденные,
+нечисловые и выходящие за источник bbox отклоняются. Отсутствующий EXIF даёт 1;
+невалидный tag требует явной обработки производителем.
+
+**Ресурсы.** Единственный внутренний владелец потолков —
+`preprocessing/_requirements.py`, `ForensicResourcePolicy`. Это начальный hard
+safety envelope, не production sampling defaults и не YAML. Значения можно
+только ужесточать в пределах согласованных комбинаций; типы, положительность,
+сочетания лимитов и переполнение проверяются. Максимальные значения:
+
+| Объект | Потолок и единицы |
+|---|---|
+| Manifest / numeric artifact | 16 384 UTF-8 байта / 64 MiB на один numeric artifact |
+| JPEG | input 32 MiB, 256 markers/scans, 1 MiB marker payload, суммарно `2^22` native padded coefficients |
+| Raster / tiles | `2^22` pixels, 16 tiles до 512×512, halo до 2, временная память residual до 32 MiB |
+| Audio | 3 окна до 10 s, до `2^20` samples вместе по каналам на окно, до 192 kHz / 8 channels |
+| Spectral | FFT до 4096, hop от FFT/4 до FFT, 8192 time/channel frames, batch до 32 |
+| Timing | 3 области, 2 streams, на stream/область 256 packets и 512 frames; всего 4608 records, 1 MiB typed tables, 256 KiB на probe |
+| Dense video | 3 окна, до 32 frames и 2 s каждое; RGB24 до 640×360 без upscale, native до 3840×2160 |
+
+`check_artifacts` ссылается на прежние 256 artifacts и **оставшийся**
+`_GeneratedArtifactBudget`; второго бюджета нет. Count включает старые и новые
+файлы, preflight не резервирует байты, каждая будущая запись всё равно использует
+`open_output`. Общий manifest вместе со старой metadata остаётся в прежних
+32 768 байтах worker request. Новый закрытый payload не допускает arbitrary
+recursive metadata/raw EXIF/raw ffprobe JSON, путей и массивов; ответы worker
+по-прежнему ограничены 65 536 байтами. Числовые данные не входят в response или
+`raw_metrics`. Потолки данных не заменяют remaining timeout и контроль native RSS.
+
+**Bounded media timing (M1-E).** Производитель `ffprobe_timing/1`, профиль
+`bounded_packets_frames/1`, реализован в private `_media_tools.py` и подключён через
+существующий `_FFmpegPreprocessingTool`. `stream_timing` запрашивает только факты;
+`timing_records` дополнительно создаёт packet records и video decoded-frame
+records. На video route выбираются первые video и audio streams; на audio route —
+первый audio stream. Отсутствующая audio track не является ошибкой. Audio frame
+records этим профилем не создаются. Аудио sample windows остаются представлением
+M1-D; timing-only demand не вызывает `audio_precision`/`precision_window`.
+
+`StreamTimingFacts` сохраняет stream index, media kind, `time_base`,
+`start_pts`/`duration_ts` как `start_tick`/`duration_ticks`, а также отдельные
+`declared_start`/`declared_duration` из decimal seconds в виде точных рациональных
+чисел. Declared seconds не заполняют неизвестные наблюдаемые timestamps.
+`avg_frame_rate`/`r_frame_rate` используют отдельный `TimingRate`: точную
+рациональную частоту в кадрах в секунду без метода `seconds(ticks)`. `TimeBase`
+остаётся типом секунд на tick и не принимается вместо `TimingRate` или наоборот.
+`0/0`, `0/1`, `N/A` и отсутствующие rates дают `None`; отрицательные и прочие
+невалидные rates отклоняются. Невалидный time base также отклоняется.
+Rates не доказывают CFR. Оба типа имеют положительные целочисленные компоненты до
+`2^31-1`; остальные рациональные значения — signed numerator до `2^63-1`
+по модулю и положительный denominator до `2^63-1`. `TimeBase.seconds(ticks)`
+возвращает `Fraction(ticks * numerator, denominator)` без float arithmetic.
+SHA-256 source проверяется повторно потоково; manifest связывает записи с source,
+generic records обязаны сохранять provenance соответствующего stream.
+Dense records имеют отдельную роль; их provenance обязан совпадать с привязанными
+pixels и профилем `ffmpeg_dense/1`, `rgb24_bilinear/1`.
+Raw probe JSON, tags и stderr не сохраняются.
+
+`TimingRecordsDescriptor` ссылается на таблицу `<i8`, `(record_count, 9)`:
+
+`purpose=generic` обозначает обычный M1-E producer с
+`stop_reason=packet_budget_or_eof`. `purpose=dense` разрешён только для frame rows
+до 32 записей с `stop_reason=dense_limits_or_eof`. Роль входит в ключ уникальности
+`(stream_index, region, record_kind, purpose)`, поэтому записи обоих producers
+могут сосуществовать. Несогласованные role/stop semantics отклоняются.
+
+| Столбец | Наблюдение |
+|---|---|
+| 0 | PTS ticks |
+| 1 | DTS ticks; у frames — `pkt_dts`, если ffprobe его сообщил |
+| 2 | `duration`: packet duration для packet rows, frame duration для frame rows |
+| 3 | Локальный ordinal в выбранной области и stream |
+| 4 | Validity mask, биты 0–6 соответствуют столбцам 0, 1, 2, 5, 6, 7, 8 |
+| 5 | Отдельный `best_effort_timestamp` у frame rows |
+| 6 | Отдельный `pkt_duration` у frame rows |
+| 7 | Наблюдение `key_frame`: 0 или 1 при установленном validity bit |
+| 8 | Picture type: I=1, P=2, B=3, S=4, SI=5, SP=6, BI=7; иные неизвестны |
+
+При отсутствии значения хранится 0 с очищенным validity bit. PTS не подменяется
+DTS или best-effort timestamp. Packet ordinal — порядок demux выбранного stream
+в данном probe, не глобальный ordinal файла. Frame ordinal — порядок **выдачи**
+декодером, не утверждение о coded-picture decode order. B-frame reordering,
+немонотонные/повторные PTS и DTS != PTS сохраняются без исправления и без выводов.
+Packet flags не сохраняются. Frame records получают отдельный
+`decode_operation_id`; их нельзя связывать с существующими sampled PNG,
+полученными другим decode. Writer и `AnalyzerRequest.read_numeric` проверяют
+форму, маски, отсутствие значений при сброшенном бите, ordinal, длительности,
+allowlist key/picture и соответствие endpoints/coverage данным. Reader сохраняет
+immutable bytes backing; malformed typed artifact отклоняется через `ValueError`.
+
+План содержит до трёх номинальных двухсекундных интервалов в stream ticks:
+начало, середина и конец по declared duration. При неизвестной duration выбирается
+только начало. Совпадающие и перекрывающиеся кандидаты объединяются в их
+интервальное объединение, включая транзитивные перекрытия; объединённая область
+может быть длиннее номинальных двух секунд. Например, при duration 3000 ticks
+и nominal window 2000 ticks результат — один интервал `[0, 3000)`. Для него
+создаётся одна пара packet/frame probes, без дополнительных областей ради
+сохранения меток кандидатов. Пределы числа записей, байтов и процессов не меняются.
+Неизвестный start даёт нулевую **запрошенную** позицию, не нулевой измеренный
+timestamp.
+`requested` сохраняет точные `[start, stop)` ticks. В argv seek округляется вниз
+до микросекунды; фактический seek не считается точным.
+
+Каждый probe использует `-read_intervals start%+#N`: N=256 для packets,
+N=512 для video frames. Это ограничение числа **входных пакетов**, а не обещание
+числа кадров или конца временного интервала. Выходные frame records отдельно
+проверяются на предел 512. Все полученные записи сохраняются, включая seek
+preroll и записи за nominal stop; таблица не обрезается молча. `first_tick` и
+`last_tick` — PTS первой и последней строки, включая `None` при неизвестном PTS;
+их порядок не исправляется. `record_count` выводится из shape, для пустого
+результата равен 0: `data=None`, без фиктивного numeric artifact.
+
+`coverage=empty` означает отсутствие записей, `unknown` — неизвестный PTS хотя бы
+одной строки, `partial` — наблюдаемый временной envelope не охватывает весь
+requested interval. `envelope` означает только охват границ через min PTS и max
+PTS+известная duration; он **не доказывает полноту, отсутствие внутренних пробелов
+или непрерывность**. Точные строки позволяют потребителю оценивать покрытие
+отдельно. `stop_reason=packet_budget_or_eof` честно сохраняет неоднозначность:
+ffprobe не сообщает, достигнут ли лимит входных пакетов или EOF. Более точная
+причина не выдумывается. Разница requested/observed start доступна явно;
+межоконные пробелы не становятся наблюдениями разрыва и не дают full-file verdict.
+
+Используется прежний `run_bounded_process`: argv без shell, протокол `file`,
+allowlist полей, один decoder thread, timeout `min(15 s, remaining budget)`,
+stdout/stderr до 256 KiB каждый, concurrent drain, reap и cleanup safety barrier.
+Проверка count, worst-case bytes и оставшегося общего artifact budget выполняется
+до packet/frame probes; каждая запись идёт через прежний registry/open_output.
+Потолки `ForensicResourcePolicy` не меняются. Также действует предел 16 manifest
+representations, включая M1-D; слишком большой объединённый demand отклоняется,
+не расширяет лимиты. Native geometry проверяется по stream header до frame probe;
+это не hard OS RSS quota и не защита от всех изменений геометрии внутри codec.
+
+Безопасные внутренние phases различают `timing_unsupported_*`,
+`timing_malformed_rational`, malformed stream/probe/records/artifact,
+`timing_probe_malformed_media`, decoder/diagnostic failure, timeout, overflow,
+record count/preflight/artifact resource rejection и process infrastructure failure.
+Неподтверждённый reap сохраняет существующий cleanup barrier. Неполное покрытие —
+типизированный факт, не Finding и не изменение risk/completeness. Анализаторы
+`video_timestamp_consistency` и `video_audio_timing_consistency` не реализованы.
+
+**Dense video и A/V timing M1-F.** Производитель `ffmpeg_dense/1`, профиль
+`rgb24_bilinear/1`, создаёт один FFmpeg decode на объединённую область M1-E.
+`DenseVideoWindowDescriptor` хранит opaque pixel ID, shape, native dimensions,
+`pixel_format=rgb24`, `geometry_profile=coded_grid_bilinear_no_upscale`, ссылку
+на frame table и общий `decode_operation_id`. Source SHA-256 и producer/profile
+принадлежат representation/manifest. Requested interval, observed endpoints,
+число кадров, ordinals, time base и coverage доступны через связанные timing facts.
+Dense-only demand не запускает generic packet/frame probes. Если одновременно
+запрошены `timing_records` или `av_timeline`, обычные M1-E probes выполняются
+независимо и сохраняют прежние budgets, coverage и профиль. Они не используются
+для привязки pixels. Dense records используют отдельные IDs `dense_timing_*`;
+manifest запрещает generic pixel binding, provenance swaps и orphan dense timing.
+
+Raw RGB24 — C-order `(frame, height, width, 3)`, `|u1`, без заголовка/padding.
+До процесса рассчитывается `32 * width * height * 3` для stdout. Registry владеет
+pixel artifact до открытия writer; запись потоковая через общий artifact budget.
+Существующий immutable numeric reader проверяет точную длину, source binding и
+opaque ID; pixels и raw stderr не попадают в metadata/worker JSON.
+
+Выбираются до трёх объединённых областей M1-E, без дублирования labels/probes.
+Объединённый requested interval сохраняется целиком; dense decode ограничивает
+его начальный участок двумя секундами и первыми 32 последовательными frames.
+Поэтому `[0, 3s)` остаётся одним запросом с честным частичным покрытием.
+Unknown duration даёт только начало. Start сохраняется в signed ticks.
+Seek округлён до микросекунды; `-copyts`, `-seek_timestamp 1`, `-noaccurate_seek`
+сохраняют исходную шкалу, preroll отбрасывается по ticks. Последовательные `trim`
+ограничивают время и число кадров до showinfo/rawvideo, `-frames:v 32`
+дополнительно ограничивает muxer. Предел времени округляется вниз до целых ticks
+(минимум один tick для грубой базы).
+
+Native header ограничен 3840×2160. Масштаб `min(1, 640/W, 360/H)` вычисляется
+рационально; выходные размеры округляются вниз, минимум один pixel. Bilinear
+resize сохраняет пропорции coded pixel grid с округлением меньше pixel,
+без upscale, autorotate и произвольного stretch. Display aspect/SAR и rotation
+не применяются. Соответствие границ output/native задаётся отношениями `W/w`
+и `H/h`; выходные координаты не выдаются за native. Размеры каждого decoded
+кадра проверяются по native showinfo, изменившаяся geometry отклоняется.
+
+Два именованных showinfo в **одном** filtergraph наблюдают кадр до и после resize.
+Строгий allowlist проверяет базу времени, ordinal, PTS, доступную duration,
+key/picture, geometry и RGB format; timing поля обязаны совпадать до/после.
+База FFmpeg обязана совпадать с M1-E stream time base, без округления timestamps
+через float/rescale. DTS, отдельные best-effort/pkt-duration не сообщаются showinfo
+и остаются отсутствующими; PTS — наблюдение output AVFrame этого decode.
+B-frame reordering не является ошибкой. Для каждого RGB frame сверяется Adler-32
+с checksum showinfo (начальное значение 0); это проверка соответствия байтов,
+не криптографическая идентичность. Длина rawvideo должна точно совпасть с числом
+принятых records; partial bytes, missing/extra/malformed diagnostics отклоняются.
+
+Переиспользуется bounded runner: argv без shell, `file` protocol, один decoder/
+filter/output thread, timeout `min(30s, remaining budget)`, concurrent stdout/
+stderr drain, terminate/reap и прежний unresolved-process cleanup barrier.
+Stderr ограничен 256 KiB и не сохраняется; allowlisted служебные строки
+отбрасываются. Всего до 96 RGB frames (66 355 200 bytes при 640×360), плюс timing
+tables; действуют прежние 256 artifacts, 16 representations, 16 KiB manifest и
+оставшийся общий byte budget. Preflight учитывает pixels, generic и dense timing
+вместе. Слишком большой совместный demand отклоняется до record/decode операций,
+без сокращения generic observations: например, три региона обоих streams плюс
+dense и AV mapping требуют 18 representations при потолке 16.
+Checksum reader держит один RGB frame, parser — ограниченный stderr и максимум
+64 showinfo observations, Nx9 table до 32 строк. Native decoder RSS и keyframe
+preroll CPU не объявляются hard-limited Python accounting; общий deadline действует.
+Правила допуска совместной forensic работы определены ниже в разделе M1-G.
+
+Безопасные phases различают `dense_unsupported_stream`, geometry/time-base/timestamp,
+`dense_malformed_media`, `dense_decoder`, `dense_timeout`, stdout/stderr overflow,
+partial frame, pixel/timing count, checksum, malformed timing и resource rejection.
+Пустое dense окно даёт `dense_empty_coverage`; неполное непустое окно сохраняет
+M1-E coverage и `stop_reason=dense_limits_or_eof`, без выдуманной причины остановки.
+Частичные файлы сохраняют lifecycle ownership для штатной cleanup/barrier логики.
+
+`AVTimelineDescriptor` (`av_timing/1`, `regional_endpoints/1`) не создаёт numeric
+artifact. По stream index он связывает независимые time bases и declared starts
+из `StreamTimingFacts`, отдельно от наблюдаемых endpoints. До трёх `AVTimingRegion`
+сопоставляют только `purpose=generic` audio packet и video frame descriptors по
+номеру области; добавление dense demand не меняет mapping. Интервалы
+каждого stream остаются независимыми и явно доступны в descriptors.
+`TimelineTime` хранит exact seconds через Fraction: signed numerator до `2^127-1`,
+положительный denominator до `2^62-1`. Это вмещает произведения M1-E ticks/base.
+Offsets — `audio_first - video_first` и `audio_last - video_last`; это разницы
+независимо выбранных endpoints, **не** измеренный lip-sync или одновременность.
+Manifest повторно вычисляет mapping и отвергает несогласованные факты.
+
+Applicability различает `available` (оба stream), `missing_audio`, `missing_video`,
+`missing_both`; отсутствие нужной дорожки для mapping не является failure.
+Coverage каждого региона сохраняет `empty`/`unknown`/`partial`/`envelope`, отсутствие
+регионального descriptor — `None`; неизвестный endpoint/offset остаётся `None`.
+Timestamp resets и раздельные окна не сортируются в глобальную временную шкалу.
+Интерполяции, глобального affine mapping, continuity/sync verdict и Findings нет.
+Dense и AV demand не активируют precision audio, sample windows или STFT.
+
+**M1-G: совместные ресурсы и допуск.** Потолок 16 representations сохраняется
+как независимый предел размера графа и количества производимых представлений,
+а не как оценка RSS. Для длинного A/V источника: 2 stream facts +
+3 × (video packet + video frame + audio packet) + 3 × (dense timing + RGB) +
+1 AV mapping = **18**. Generic и dense timing не являются устранимым дубликатом:
+у них разные decode, purpose и coverage. Эта комбинация отклоняется
+`resource_limit/timing_preflight` до generic record probes и dense decode;
+автоматического удаления окон или изменения generic coverage нет.
+При дополнительном audio spectral demand верхняя композиция достигает
+18 + 1 precision + 3 samples + 3 spectra = 25 и также не поддерживается.
+Сохранение 16 намеренно ограничивает совместную работу; транспорт сам по себе
+не вынуждает менять этот предел. Замеры layout и памяти приведены в M1-G ROADMAP.
+
+Счётчик representations не заменяет остальные проверки: 256 generated artifacts,
+16 KiB JSON manifest, размеры каждого numeric descriptor, aggregate timing rows,
+remaining task byte budget и workspace preflight проверяются независимо.
+Три максимальных dense окна требуют 66 355 200 RGB bytes, дополнительно к timing
+и уже созданным legacy/audio artifacts. Каждая запись повторно проверяет общий
+byte ledger; предварительная оценка не является резервированием. Ledger учитывает
+максимальные записанные extents монотонно: truncate, failed write и cleanup не
+возвращают бюджет для повторного расходования внутри той же задачи. После cleanup
+файлы удалены; ledger заканчивает жизнь вместе с задачей, это не общий пул памяти.
+Audio и timing producers выполняются последовательно, поэтому отказ следующего
+producer может следовать за уже завершённой bounded работой предыдущего.
+
+При непустом forensic demand `PreprocessingDispatcher.prepare` допускает максимум
+**две** одновременно активные операции на Python interpreter. Политика фиксирована,
+внутренняя, без YAML и очереди ожидания: третий вызов получает
+`resource_limit/forensic_concurrency` до вызова preprocessor. Внутри каждого dispatch
+native children запускаются последовательно. Слот освобождается при success,
+обычной ошибке, timeout и `BaseException`, если child safety подтверждена.
+Неподтверждённый child переносит владение слотом в cleanup barrier; слот удерживается
+до успешного `try_confirm_safe`, повторное подтверждение не освобождает его дважды.
+Если barrier больше не обслуживается, слот остаётся занят ради безопасности.
+Допуск не ждёт свободного слота; подтверждение barrier использует прежнюю bounded
+terminate/kill/reap процедуру. Это не межпроцессный или системный semaphore.
+Прямые вызовы private kernels/tools и legacy dispatch без forensic demand этим
+механизмом не ограничены. Текущий production catalog forensic demand не запрашивает.
+Жёсткой OS RSS quota нет; process isolation, deadlines, размеры и этот допуск
+не дают гарантии общего native working set для нескольких Python processes.
+
+После сборки forensic manifest preprocessing проверяет **весь** metadata envelope
+в UTF-8 compact JSON (`ensure_ascii=False`, `allow_nan=False`) до возврата
+`PreparedMedia`: не более **32 768 bytes**, включая escaping вложенного manifest,
+legacy fields и timestamps. Ровно предел допустим; превышение даёт
+`resource_limit/forensic_metadata_limit`, сохраняя lifecycle ownership файлов.
+Это исключает поздний отказ только на worker transport для такого результата.
+Особенно важно, что legacy codec/container strings не имеют отдельной длины в
+domain model. Предел manifest 16 384 bytes сам по себе не доказывает размер envelope.
+Worker response 65 536 bytes и canonical result 65 509 bytes остаются отдельными
+ограничениями: preprocessing metadata не копируется в результат анализа.
+
+Shared runner требует конечный положительный timeout до создания child.
+При одновременных failures execution interruption сохраняет приоритет; interruption
+при close переносит unresolved barrier. Затем приоритет имеют termination и
+stdout/stderr read либо sink write failures; далее close failure, затем прочая
+execution failure (timeout/overflow/wait). Обе трубы закрываются, stdout/stderr
+phase сохраняется, private output в текст ошибки не переносится. Runner не
+перепроектирован; исходный cleanup barrier по-прежнему запрещает unsafe cleanup.
+
+**Residual kernels.** M1-C добавляет только private числовой слой в
+`preprocessing/_media_tools.py`; producer `residual_raster`, новый analyzer,
+Finding и постоянный derived artifact этим не создаются. Входной raster имеет
+dtype `uint8` и форму `H×W`, `H×W×1`, `H×W×3` RGB или `H×W×4` RGBA. Strided
+raster допустим, но каждая выбранная область копируется в C-order buffer с
+immutable `bytes` backing. До чтения области проверяются общий raster до `2^22`
+pixels, tuple из 1–16 прямоугольных core-областей до 512×512, их принадлежность
+raster и halo 0–2. У границы источника недостающий halo достраивается правилом
+`reflect` NumPy, эквивалентным `BORDER_REFLECT_101`; сохранённая tile shape равна
+`(core_height + 2*halo, core_width + 2*halo[, channels])`.
+
+Luminance сохраняет полный halo, имеет C-order little-endian `float64`, диапазон
+`[0, 255]` и ту же пространственную shape. Для grayscale значения только
+переводятся в `float64`; RGB использует фиксированное
+`0.299 R + 0.587 G + 0.114 B`. В RGBA alpha полностью игнорируется: он не
+маскирует RGB и не становится числовым сигналом. Smoothing использует только
+нормированные separable binomial kernels 3×3 (`[1,2,1]/4`) и 5×5
+(`[1,4,6,4,1]/16`); required halo равен соответственно 1 или 2. High-pass
+равен `luminance - smoothing`. Горизонтальная и вертикальная производные —
+центральные разности `[-0.5, 0, 0.5]` с halo 1. Все три операции возвращают
+ровно core shape и исходную oriented coverage; padding внутри kernels не
+выполняется. Диапазоны результатов: smoothing `[0,255]`, high-pass
+`[-255,255]`, производные `[-127.5,127.5]`.
+
+Локальная robust summary над одной core-plane содержит только `sample_count`,
+median, unscaled median absolute deviation и квартиль 25/75 с linear
+interpolation. Это числовые наблюдения без порогов и forensic labels. Все
+числовые входы и результаты конечны; `NaN`/`Inf`, иной dtype/shape, mutable
+backing и недостаточный halo отклоняются. Возвращаемые arrays имеют immutable
+`bytes` backing, поэтому включить запись через `setflags` нельзя. Фиксированные
+ядра, порядок NumPy reduction (`optimize=False`) и отсутствие RNG обеспечивают
+повторяемый результат для одинакового входа независимо от thread timing.
+
+Память проверяется через тот же `ForensicResourcePolicy` до вычисления. Для
+tile extraction оценка peak равна сумме retained output bytes плюс крупнейшая
+временная tile; luminance учитывает две float64 planes для grayscale и три для
+RGB/RGBA вместе с immutable copy; smoothing — две core planes, residual — три,
+две производные и robust summary — по четыре. Каждая оценка обязана быть не
+больше 32 MiB. Полноразмерная float64-копия raster не создаётся: численные
+операции выполняются только над выбранными tiles, а память исходного целого
+uint8 RGB/RGBA raster учитывается отдельно. Arrays не передаются через worker
+response, metadata или `raw_metrics`.
+
+**Source-precision audio (M1-D).** Производитель `ffmpeg_audio/1`, профиль
+`precision_windows/1`, работает только по demand для первого audio stream в
+audio/video source. Старые PCM16, fragments и rendered spectrogram не меняются.
+Source SHA-256 повторно проверяется потоково. Bounded ffprobe запрашивает только
+allowlist stream fields; raw JSON, теги и stderr не входят в manifest.
+`codec`, `sample_rate`, `channels`, `declared_sample_format`,
+`declared_channel_layout`, `declared_bits_per_sample`,
+`declared_bits_per_raw_sample`, duration/start — заявления stream/container.
+`source_bits` сохраняет declared raw bits, иначе declared bits; это не effective
+bit depth. Нулевое/отсутствующее число bits означает неизвестное значение.
+`decoder_format`, `decoder_storage_bits`, `decoded_planar`,
+`decoded_sample_rate`, `decoded_channels`, `decoded_channel_layout` наблюдаются
+через `ashowinfo` в том же decode, до преобразования в raw output. Format,
+rate/channels и layout обязаны оставаться постоянными; rate/channels должны
+совпадать с probe. Неизвестный/s64 формат не создаёт precision windows.
+
+Decode выполняется bounded input seek/duration, `asettb=1/sample_rate`
+(только единицы timestamps), `atrim=end_sample=N`, `dither_method=none`, без
+resample/downmix/gain/dither/padding. Packed и planar `u8/s16/s32/flt/dbl`
+преобразуются в interleaved raw `<i4` или `<f8`. Integer FFmpeg output s32
+выравнивается вправо: сдвиг 24 для u8 (центрирование относительно 128), 16 для
+s16; для s32 — `32 - declared_bits_per_raw_sample`, если поле известно,
+иначе 0. Перед сдвигом проверяется, что все удаляемые биты нулевые; потеря
+точности запрещена. `integer_right_shift` записывает преобразование, а
+`decoder_storage_bits` остаётся шириной декодера (PCM24 обычно s32).
+Float32 расширяется точно до float64; float64 не сужается, значения вне
+`[-1,1]` сохраняются, NaN/Inf отклоняются.
+
+Начальный профиль выбирает начало, середину и конец по declared duration,
+ограничивая каждое окно `min(10*rate, floor(2^20/channels))` samples/channel.
+Совпадающие/перекрывающиеся кандидаты объединяются, если union помещается в
+предел окна; иначе уже покрытый prefix отбрасывается. Не больше трёх окон.
+Seek/duration — только запрос: `requested_samples` хранится отдельно.
+`samples` — фактический диапазон на sample timeline относительно первого
+наблюдавшегося decoded sample начала stream. `first_sample_pts` сохраняет
+наблюдавшийся signed PTS в единицах `1/sample_rate`; исходное время равно
+`first_sample_pts/sample_rate`. Все frame PTS внутри окна должны образовывать
+непрерывную последовательность; их sample counts должны точно совпасть с
+raw byte length. Отличающийся start/короткий output не подменяется requested
+coverage; пустой output отклоняется. Пробелы между окнами не являются
+наблюдавшимися разрывами аудио. Разные форматы между окнами отклоняются.
+Facts-only demand декодирует один sample и не создаёт numeric artifact.
+Samples обязаны сохранять provenance identity соответствующих precision facts.
+
+**Numeric framing/STFT (M1-D).** Числовой слой `_media_tools.py` принимает только
+immutable bytes-backed C-order `(sample, channel)` `<i4`/`<f8`, проверяет policy
+и finite values до вычисления. Framing возвращает read-only strided view
+`(frame, channel, sample)` без копирования перекрывающихся окон. Frame j начинается
+в `j*hop`; число полных frames равно `max(0, 1+floor((N-n_fft)/hop))`.
+Coverage заканчивается на `(frames-1)*hop+n_fft` либо 0 при отсутствии frames;
+`dropped_tail_samples` явно сохраняет остаток. Padding/centering отсутствуют.
+
+`hann` означает только periodic Hann: `w[k]=(1-cos(2*pi*k/N))/2`,
+`k=0..N-1`. Первый коэффициент 0, последний обычно не 0; для N=1 результат
+`[0]`, для N=2 — `[0,1]`. Rectangular window отдельно означает единичные веса.
+NumPy rFFT использует `norm="backward"`: forward transform без нормирования,
+bin k соответствует `k*sample_rate/n_fft`, k=0..floor(n_fft/2).
+Каналы независимы, frame time — начало frame, без half-window offset.
+Complex output `<c16`; magnitude `abs(FFT)` и power `abs(FFT)**2` имеют `<f8`.
+Нет doubling, amplitude correction или bandwidth normalization; power не PSD.
+Результаты конечны и имеют immutable bytes backing. Descriptor spectral data
+имеет оси `(frame, channel, bin)`, frame ordinals относительно sample artifact.
+
+Demand `audio_spectral` применяет профиль `numpy_stft/1`,
+`hann4096_hop1024/1`: magnitude, n_fft=4096, hop=1024, batch=16.
+Окно короче 4096 samples не создаёт spectral artifact: sample coverage остаётся
+доступной, полных spectral frames нет. Kernels допускают другие bounded FFT/hop,
+window/scaling, но demand не вводит конфигурационных полей. Ни full-file STFT,
+ни матрицы в worker JSON не создаются. Совокупный размер raw artifacts заранее
+проверяется против оставшегося общего бюджета (float64 worst case для samples),
+каждая запись идёт через register-before-write и `open_output`.
+Framing/rFFT проверяют `n_fft<=4096`, `ceil(n_fft/4)<=hop<=n_fft`,
+8192 time/channel frames и batch<=32. Оценка временной памяти пакета:
+`batch*channels*(16*n_fft+64*(floor(n_fft/2)+1))`, не больше существующего
+32 MiB workspace ceiling policy; учтены float64/complex128 и immutable copies.
+
+FFmpeg/ffprobe используют прежний `run_bounded_process`: allowlisted argv без
+shell, stdout до точного объёма окна, stderr/probe до 256 KiB, timeout
+`min(remaining, configured, 30s)` для decode и 15s для probe; overflow/timeout
+возвращаются только после reap, unresolved process передаёт cleanup barrier.
+Seek/preroll и native allocations не являются hard OS RAM quota.
+Ошибки различаются внутренними phases `audio_precision_unsupported_format`,
+`audio_precision_malformed` (probe schema), `*_malformed_media` (явный invalid-data
+ответ декодера), `audio_precision_*_decoder` (прочий отказ декодера), `*_timeout`,
+`*_overflow`, `audio_precision_preflight`, `audio_precision_observation_mismatch`,
+`audio_precision_empty_window`. Malformed numeric artifact отклоняется reader
+по identity/shape/dtype/exact length/finite values. Findings не создаются.
+
+В audio producer `resource_limit/audio_precision_preflight` относится только к
+явным проверкам audio policy, диапазона planned sample count и aggregate spectral
+frames. Count/byte ledger сохраняет `resource_limit/audio_precision_artifacts`.
+Неожиданный `ValueError` при построении окон, descriptors, STFT или audio manifest
+даёт `invariant/audio_precision_invariant` с очищенным текстом ошибки.
+При окончательной сборке AV manifest превышение representation count сохраняет
+`resource_limit/forensic_manifest_limit`; остальные ошибки его валидации дают
+`invariant/forensic_manifest_invariant`. Зарегистрированные файлы сохраняют
+lifecycle ownership; классификация timing/dense producer не меняется.
+
+**Preflight JPEG.** `JpegHeader.preflight` работает только с малыми
+типизированными SOF facts, до вызова native decoder: размеры 1–65535, 8-bit
+baseline/progressive, 1–4 уникальных components, sampling factors 1–4,
+до 10 blocks/MCU, без дробных отношений максимального sampling factor.
+Для компонента размеры блоков равны
+`ceil(W*h/(8*max_h)) × ceil(H*v/(8*max_v))`.
+Native оценка округляет оба измерения до полного MCU:
+`ceil(W/(8*max_h))*ceil(H/(8*max_v))*64*sum(h*v)`.
+Ограничение применяется к padded allocation, а не только к выдаваемым planes;
+int32 output bytes и native 16-bit coefficient bytes учитываются отдельно.
+Это не оценка всего RSS: source copy, markers, native overhead и временные
+копии измерены отдельно в M1-B; совместные измерения и допуск описаны в M1-G.
+
+M1-B реализует минимальный bounded marker/header parser: проверяет SOI,
+длины сегментов, SOF0/SOF2 и component/table IDs, лимиты scans/markers/payload,
+доходит до EOI с учётом byte stuffing/restart markers, отвергает DNL/смену геометрии,
+неподдерживаемые coding modes и неоднозначные переопределения таблиц. Entropy
+decoding собственным кодом не реализуется. Проверяется тот же controlled source,
+который затем передаётся child; размер ограничен также Stage 3 input budget.
+До успешного preflight `pyjpegio` вызывать нельзя. В runtime установлен точный
+`pyjpegio==0.3.0`. DQT IDs могут быть разреженными; до четырёх таблиц по 64
+положительных значения хранятся в natural 8×8 row-major порядке с precision
+8/16. SOF0 допускает только 8-bit DQT. Повторный SOF, повторный DQT ID, DQT после
+начала scans, неподдерживаемый SOF, missing EOI и любые trailing bytes отвергаются.
+DHT допускает штатную progressive-переустановку; SOS проверяет selectors,
+спектральные диапазоны и последовательность initial/refinement scans. APP/COM
+не интерпретируются parser и ограничены общим marker payload budget.
+
+`OriginalImageFacts` фиксирует фактические source mode, native dimensions,
+нормализованные dimensions, выбранный source frame (включая APNG default image),
+валидный EXIF orientation и факт применения преобразования. Отсутствующий EXIF
+означает identity mapping; невалидный/непрочитанный — `orientation=None`, без
+доказанного преобразования. Такой mapping не позволяет вычислять bbox.
+Преобразования 1–8 действуют над pixel edges, центры — `(i+0.5,j+0.5)`.
+Нормализованный PNG сохраняет прежний Pillow pipeline; JPEG coefficients остаются
+в native coordinates. Non-JPEG даёт original facts с `jpeg=None`, без child.
+Producer/profile версии original facts — `fakedetector/1`, `original_image/1`;
+коэффициентов — `pyjpegio/0.3.0`, `jpeg_coefficients/1`. SHA-256 перечитываемого
+controlled source проверяется в parent и повторно в child.
+
+Private child работает с ASCII basename `source` в существующем controlled cwd,
+без aliases и изменения cwd родителя. На Windows запускается реальный CPython
+`sys._base_executable`, с `__PYVENV_LAUNCHER__=sys.executable` для сохранения venv:
+PID, которым владеет runner, должен быть PID декодера, а не venv redirector.
+`-I`, `shell=False`, `stdin=DEVNULL`; из окружения сохраняются только
+`SystemRoot/WINDIR/TEMP/TMP`, явно задаётся `OPENBLAS_NUM_THREADS=1`.
+`run_bounded_process` одновременно дренирует stdout/stderr по ≤4096 байт,
+использует минимум из 30 s и remaining budget, подтверждает reap и сохраняет
+cleanup safety barrier при неразрешённом владении. Ответ protocol v1 содержит
+только version, `status="clean"`, source SHA-256; принимается точная форма.
+Native stderr при успешном exit означает `jpeg_native_warning` и отказ;
+ненулевой exit/crash — `jpeg_native_error`, timeout — `jpeg_native_timeout`,
+overflow — `jpeg_native_output`, неверный ответ — `jpeg_native_protocol`.
+Raw stderr и exception text не сохраняются; warnings не становятся Findings.
+
+До запуска child регистрируются `jpeg_component_N.raw`, каждый полностью
+заполняется через общий `open_output`: весь физический объём учтён заранее.
+Child проверяет существующие ordinary files и их точную длину, затем перезаписывает
+только фиксированные mmap extents. Для каждой plane проверяются geometry,
+integer dtype и полный диапазон int32 перед преобразованием; запись идёт по
+одному block row без полной транспонированной копии. Parent повторно сверяет
+длины. Частично записанные файлы остаются под прежним lifecycle cleanup.
+Только явный `jpeg_coefficients` demand включает child; текущий каталог не изменён.
+G2 сохраняет NumPy/OpenCV без SciPy; G3 — hybrid precision facts/windows;
+G4 размещает timing/ffprobe в preprocessing и расширяет существующую bounded
+process boundary, а не создаёт отдельную процессную архитектуру.
+
+---
+
 ## 8. Контракт анализатора
 
 ### 8.1. Требования к анализатору

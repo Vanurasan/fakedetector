@@ -340,6 +340,87 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-23
+
+### Изменено
+
+- **[Stage 12/Macro 1] Документально закрыт Forensic Preprocessing Foundations —
+  DONE / CLOSED / owner accepted.** M1-A–M1-G и targeted remediation приняты
+  владельцем и закоммичены. Первичный M1-H дал `REMEDIATE`: M1H-F01 (HIGH) —
+  потеря cleanup barrier при вторичном прерывании artifact close; M1H-F02 (LOW) —
+  противоречивые статусы M1-G/M1-H. Remediation сохраняет исходный unresolved
+  barrier и семантику прерывания, удерживая admission до подтверждения безопасности/reap;
+  текущие статусы нормализованы. Оба замечания `CLOSED`, финальный независимый
+  повторный M1-H — `PASS`, actionable findings — 0. Strict clean-tree certification
+  на `625b9e83f133fb0ae31a4b90e9e1288bff96f69c` — `PASS`, требование Graphify rebuild
+  выполнено. Свидетельства, хэши и принятые ограничения записаны в `ROADMAP.md`,
+  раздел M1-H. Public contract drift и регрессии текущих анализаторов отсутствуют.
+  Этот инкремент меняет только документацию; Stage 12 остаётся `IN_PROGRESS`,
+  Macro 2 — следующий запланированный Macro, ещё не начат.
+
+### 2026-09-22
+
+### Изменено
+
+- **[Stage 12/Macro 1/M1-G] Ограничен допуск forensic preprocessing внутри interpreter.**
+  Измерения показали, что native working set существенно превышает artifact bytes.
+  Введены два одновременных forensic dispatch без очереди; unresolved child удерживает
+  слот через cleanup barrier. Hard OS RSS quota и межпроцессная гарантия не заявляются.
+  Предел 16 representations сохранён: generic и dense timing имеют разные semantics,
+  а длинная композиция из 18 записей остаётся явным resource rejection. Нормативные
+  гарантии и ограничения находятся в `CONTRACTS.md` §7.5.
+
+### Исправлено
+
+- **[Stage 12/Macro 1/M1-G] Закрыты неконечный process timeout и позднее переполнение metadata.**
+  `NaN`/`Inf` timeout отклоняется до child start; полный forensic metadata envelope
+  проверяется в preprocessing до worker transport. Public API, зависимости,
+  production analyzers и result/risk/completeness semantics не изменены.
+
+### 2026-09-21
+
+### Изменено
+
+- **[Stage 12/Macro 1/M1-F] Реализованы dense video windows и региональные A/V timing facts.**
+  Pixels и timestamps связаны одним bounded FFmpeg decode и проверкой RGB checksum.
+  Прежняя заготовка sample-index mapping заменена точными региональными endpoints:
+  AV demand зависит от timing, без precision audio/STFT и без предположения
+  непрерывности между окнами. Причина — исключить ложную связь независимых decode
+  и ненужную обработку audio samples. Внутренний контракт принадлежит §7.5
+  `CONTRACTS.md`; public API, зависимости и текущие анализаторы не изменены.
+
+- **[Stage 12/Macro 1/M1-D] Реализованы source-precision audio windows и numeric STFT.**
+  Hybrid facts отделяют stream declarations от наблюдений того же bounded decode;
+  фактическое покрытие подтверждается PTS/sample counts, integer codes сохраняются
+  в int32, floating samples — в float64 без clipping. Framing без padding и
+  periodic Hann/rFFT/magnitude/power используют существующий NumPy и общий
+  artifact/process budget. Причина — предоставить будущим анализаторам точные
+  числовые представления без изменения PCM16 consumers. Публичные контракты,
+  зависимости, текущие четыре анализатора и риск-семантика не изменены;
+  внутренние определения и ограничения принадлежат §7.5 `CONTRACTS.md`.
+
+- **[Stage 12/Macro 1/M1-B] Реализованы original image/JPEG representations по demand.**
+  Добавлен точный runtime pin `pyjpegio==0.3.0`: native coefficients читаются
+  только в bounded private child после собственного структурного preflight.
+  Общий process runner поддерживает одновременный bounded stderr; warnings
+  отклоняются без raw output в результатах. Original facts связаны с SHA-256,
+  EXIF mapping и исходными component/table IDs; int32 artifacts используют
+  прежний registry/budget/cleanup и immutable numeric reader. Причина — дать
+  будущим анализаторам исходные JPEG наблюдения без пересчёта DCT из PNG.
+  Installed-wheel smoke расширен на этот путь. Текущие анализаторы, PNG,
+  public API/domain/config и риск-семантика не изменены; контракт — §7.5
+  `CONTRACTS.md`, provenance и ограничения RSS — `REFERENCES.md`.
+
+- **[Stage 12/Macro 1/M1-A] Утверждены внутренние forensic contracts.**
+  Приняты owner gates G1–G5; точные условия принадлежат `CONTRACTS.md` §7.5.
+  Существующие requirements расширены закрытыми capabilities и объединением
+  зависимостей активного каталога. Добавлены immutable типизированные facts,
+  opaque numeric descriptors, source/artifact binding, внутренние resource
+  ceilings, EXIF 1–8 mapping и JPEG preflight до native coefficient allocation.
+  Это основание для последующих производителей B–F: извлечение в M1-A не
+  выполняется, новые зависимости не добавлены. Четыре текущих анализатора,
+  public API/domain, риск, полнота и YAML сохраняют прежние контракты.
+
 ### 2026-09-20
 
 ### Решения

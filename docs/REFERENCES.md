@@ -365,6 +365,160 @@ MIT — разумная альтернатива при приоритете п
 Apache-совместимую зависимость. Для конкретного заимствования проверяются точная
 версия метода, файлы, веса и данные; сейчас библиотека не добавляется.
 
+## Исследование JPEG-зависимостей Macro 1 — 2026-09-20
+
+Категория: `RUNTIME_LIBRARY`. Ниже сохранены результаты исследовательского
+Pass 1 от 2026-09-20; тогда зависимости проекта не менялись. По принятому G1
+в M1-B от 2026-09-21 интегрирован только `pyjpegio==0.3.0`, см. запись ниже.
+Решение владельца и последовательность реализации находятся в `ROADMAP.md`.
+Модели, веса и datasets не использовались.
+
+### pyjpegio 0.3.0
+
+- Источник: [релиз PyPI](https://pypi.org/project/pyjpegio/0.3.0/),
+  [исходники v0.3.0](https://github.com/dwgoon/jpegio/tree/v0.3.0).
+  PyPI attestation указывает commit
+  `cf402ff8ba615660e2882d31e342964312c87f1f` и workflow `deploy.yml`.
+  Distribution называется `pyjpegio`, import — `jpegio`; это не старый
+  PyPI distribution `jpegio==0.2.8`.
+- Проверен точный `pyjpegio-0.3.0-cp312-cp312-win_amd64.whl`, опубликованный
+  2026-07-04: **238 459 байт**, сумма несжатых ZIP members **805 532 байта**.
+  SHA-256: `b3c7dcccf6b6eac9ed5aabe9a18a7cbc0b7c746707baf3479a779cdf094c4701`.
+  Архив загружен с PyPI и исследован без установки в окружение проекта.
+- Metadata: Python ≥3.9, `numpy>=1.23`, Development Status `4 - Beta`.
+  Default binding — CPython C API/C++; vendored libjpeg-turbo статически
+  линкуется. Сборка из исходников требует C/C++ compiler и CMake, а wheel
+  не требует компилятора получателя. SIMD/NASM относится к сборке.
+  Основание: [setup.py](https://github.com/dwgoon/jpegio/blob/v0.3.0/setup.py)
+  и metadata проверенного wheel.
+- Лицензия wrapper — [Apache-2.0](https://github.com/dwgoon/jpegio/blob/v0.3.0/LICENSE).
+  Wheel действительно содержит `LICENSE`, `NOTICE`,
+  `third_party/libjpeg-turbo/LICENSE.md` и `README.ijg` в `.dist-info/licenses`.
+  [NOTICE](https://github.com/dwgoon/jpegio/blob/v0.3.0/NOTICE) указывает
+  **libjpeg-turbo 3.2.0**, IJG/BSD-3-Clause и zlib для SIMD. Коммерческое
+  использование допускается при соблюдении соответствующих условий;
+  top-level Apache не заменяет bundled notices и IJG attribution.
+- API предоставляет native quantized `coef_arrays`, `quant_tables`,
+  `comp_info`, precision и coding facts; spatial decode по умолчанию выключен.
+  Код читает полный сжатый файл и сохраняет APP/COM markers; это не streaming
+  coefficient decoder. C API возвращает int32 views с удержанием native owner.
+  Основания: [README](https://github.com/dwgoon/jpegio/blob/v0.3.0/README.md),
+  [jstruct.cpp](https://github.com/dwgoon/jpegio/blob/v0.3.0/src/jpegio/_backend/jstruct.cpp),
+  [binding](https://github.com/dwgoon/jpegio/blob/v0.3.0/src/jpegio/_capi/decompressedjpeg.cpp).
+  README отдельно указывает происхождение базового C/C++ кода из лаборатории
+  Jessica Fridrich; источник метода не приписывается FakeDetector.
+
+Проведён отдельный ограниченный smoke: новый venv вне repository, CPython
+3.12.10 / Windows x64, binary-only установка `pyjpegio==0.3.0` и
+`numpy==2.5.2`, запуски с `-I` из внешнего cwd. Import origin находится в
+исследовательском `site-packages`, checkout в `sys.path` отсутствует.
+Малые JPEG fixtures созданы существующим Pillow, без внешних медиа.
+
+| Проверка | Наблюдаемый результат |
+|---|---|
+| Baseline RGB 17×13, subsampling 4:2:0 | Чтение успешно; int32 planes 16×24, 8×16, 8×16; две quantization tables |
+| Progressive RGB 17×13, 4:4:4 | Чтение успешно; три planes 16×24; progressive flag установлен |
+| Grayscale 17×13 | Чтение успешно; один plane 16×24 и одна quantization table |
+| Не-JPEG и удаление последних 50 байт JPEG | Python `RuntimeError`; второй случай также выводит bounded-observed warning в stderr |
+| Удаление только двух байт EOI | Возвращаются coefficients и 27 байт stderr: успешный return не доказывает целостность JPEG |
+| Существующий JPEG с кириллицей в абсолютном имени | `RuntimeError`; Python подтверждает наличие файла |
+| Unicode cwd и ASCII basename в отдельном child | Чтение успешно без копирования файла; релевантно существующему controlled source с именем `source` |
+
+Это свидетельство работы точного installed dependency wheel, а не сертификация
+FakeDetector с новой зависимостью, fuzzing или доказательство отсутствия native
+дефектов. В частности, fatal-error handler не отменяет soft recovery; raw native
+exceptions/stderr могут содержать private details. Полная integration/resource/
+reap/cleanup матрица остаётся критерием будущей реализации.
+
+### Сравниваемые альтернативы
+
+- **jpeglib 1.0.2**: [PyPI](https://pypi.org/project/jpeglib/1.0.2/) публикует
+  `jpeglib-1.0.2-cp38-abi3-win_amd64.whl` от 2025-09-18,
+  **9 852 148 байт**; tag совместим с CPython 3.12 x64.
+  Metadata dependencies — `numpy`, `wheel`, `setuptools`; библиотека поставляет
+  несколько версий libjpeg/libjpeg-turbo/mozjpeg, предоставляет DCT/quantization
+  API. Wrapper — MPL-2.0; коммерческое использование допустимо, но при
+  распространении действуют обязанности по covered source/notices, отдельно
+  проверяются bundled codec licenses. [Mozilla FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/)
+  объясняет file-level copyleft и совместимость larger work с Apache-кодом.
+  [read_dct v1.0.2](https://github.com/martinbenes1996/jpeglib/blob/1.0.2/src/jpeglib/functional.py)
+  прямо предупреждает о возможном завершении процесса libjpeg; функция также
+  читает полный файл. В этом проходе этот wheel не устанавливался и его
+  bundled license inventory не сертифицирован.
+- **jpegio 0.2.8**: [старый distribution](https://pypi.org/project/jpegio/0.2.8/)
+  от 2021-10-15 не содержит Windows CPython 3.12 wheel; не путать с проверенным
+  `pyjpegio`. Source build не подтверждает требуемую Windows-поставку.
+- **Собственный parser / существующий Pillow**: публичный Pillow
+  [JPEG API](https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html#jpeg)
+  предоставляет quantization tables, но не native quantized coefficient API.
+  По [ITU-T T.81](https://www.w3.org/Graphics/JPEG/itu-t81.pdf) header/marker facts
+  и entropy decoding — разные задачи: восстановление native coefficients
+  требует обработки scans, Huffman/arithmetic coding, restarts и progressive
+  refinement. DCT декодированных RGB-пикселей не воспроизводит исходные
+  quantized coefficients. Малый собственный header parser не является заменой
+  такого decoder. Private ABI библиотек, встроенных в Pillow/OpenCV, не является
+  проверенным независимым installed-wheel интерфейсом.
+
+### Проверка арифметики JPEG preflight M1-A — 2026-09-21
+
+Проверены официальные исходники **libjpeg-turbo 3.2.0**:
+[jdinput.c](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/3.2.0/src/jdinput.c)
+вычисляет размеры component blocks через округление отношения размеров и
+sampling factors вверх;
+[jdcoefct.c](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/3.2.0/src/jdcoefct.c)
+резервирует full-image coefficient arrays с округлением обоих измерений до
+sampling-factor blocks. На этом основано разделение выдаваемых и native padded
+коэффициентов в M1-A. Реализована собственная арифметическая оценка и тесты,
+сторонний код не копировался. Это проверка формул, не повторный wheel smoke
+и не доказательство ограничения всего native RSS; вызов `pyjpegio` в M1-A
+отсутствует. Принятый выбор зависимости и ограничения описаны в
+`CONTRACTS.md` §7.5, статус реализации — в `ROADMAP.md`.
+
+### Интеграция pyjpegio 0.3.0 в M1-B — 2026-09-21
+
+`uv add pyjpegio==0.3.0` добавил точный runtime pin и штатно обновил `uv.lock`.
+Windows CPython 3.12 использует тот же wheel и SHA-256, что исследованы выше;
+Apache-2.0 wrapper и bundled libjpeg-turbo 3.2.0 notices не изменились.
+При распространении wheel/сборки зависимости необходимо сохранять `LICENSE`,
+`NOTICE`, libjpeg-turbo `LICENSE.md` и `README.ijg`; разрешение коммерческого
+использования не отменяет обязанностей при redistribution. FakeDetector не
+копирует исходники wrapper/codec и не выдаёт библиотеку за forensic method.
+
+Граница адаптации — собственный bounded marker parser, resource preflight,
+изолированный child и typed raw coefficient artifacts. Реализованный контракт
+находится в `CONTRACTS.md` §7.5. По установленному `_backend/jstruct.cpp`
+подтверждено: `quant_tables` — компактный список в порядке возрастания slot IDs,
+а selectors компонентов сохраняют исходные IDs; fixture с IDs 0/3 проходит.
+Missing EOI отвергается до native decode; warning при повреждённой entropy
+приводит к отказу без сохранения raw stderr.
+
+Для Windows child проверен механизм CPython 3.12.10
+[getpath.py](https://github.com/python/cpython/blob/v3.12.10/Modules/getpath.py):
+реальный interpreter с явно заданным `__PYVENV_LAUNCHER__` сохраняет venv,
+обходя дополнительный процесс redirector. PID проверен относительно Popen;
+код CPython не копировался. NumPy native pool ограничен одним OpenBLAS thread.
+Это частная граница поддерживаемого CPython 3.12, не обещание совместимости
+с произвольными Python launchers.
+
+Наблюдение Windows `GetProcessMemoryInfo(PeakWorkingSetSize)` после reap
+реального decoder PID, один запуск каждого generated fixture:
+
+| JPEG | MCU-padded coefficients | Raw int32 bytes | Peak working set, bytes |
+|---|---:|---:|---:|
+| RGB 17×17 baseline 4:2:0 | 1536 | 4352 | 69 025 792 |
+| RGB 1664×1664 progressive 4:2:0 | 4 153 344 | 16 613 376 | 72 519 680 |
+| Grayscale 2048×2048 baseline | 4 194 304 | 16 777 216 | 78 290 944 |
+
+Peak pagefile/commit counters: 59 215 872 / 59 105 280 / 59 338 752 байт
+соответственно. Это наблюдения полной среды child, включая imports; они не
+являются верхней границей для любых данных. При обычном NumPy thread pool
+наблюдалось около 0.8 GB commit, что обосновывает явный лимит threads.
+Ограничение коэффициентов и output не является process-wide hard RAM sandbox;
+Windows Job Object RAM quota не реализована. Риск native allocations/дефектов,
+общего RSS с parent и нескольких одновременных задач перенесён в M1-G.
+Installed-wheel проверка M1-B встроена в `scripts/verify_release_package.py`;
+strict clean-tree certification остаётся отдельной проверкой M1-G.
+
 ## Общие библиотеки и инструменты
 
 ### Python standard library
@@ -430,6 +584,39 @@ Apache-совместимую зависимость. Для конкретно�
 wheel фиксируют составное лицензионное выражение для включённых компонентов;
 соответствующий версии `LICENSE.txt` остаётся полным источником применимых
 уведомлений.
+
+### Audio numeric foundations M1-D — 2026-09-21
+
+Собственные audio helpers в `_media_tools.py` и профиль preprocessing —
+`FIRST_PARTY_CODE`, Apache-2.0 проекта. Новые внешние исходники не копировались.
+Используются существующие NumPy 2.5.2 и внешние FFmpeg/ffprobe, указанные
+выше; состав зависимостей и способ поставки не меняются. Дополнительно используется
+NumPy rFFT, без SciPy/librosa/soundfile. Метод — обычные framing, periodic Hann и
+DFT; forensic detector, PSD или статистическая калибровка не заявляются.
+
+Первичные определения интерфейсов:
+[NumPy rFFT](https://numpy.org/doc/stable/reference/generated/numpy.fft.rfft.html),
+[FFmpeg ashowinfo](https://ffmpeg.org/ffmpeg-filters.html#ashowinfo),
+[FFmpeg atrim](https://ffmpeg.org/ffmpeg-filters.html#atrim),
+[FFmpeg seek/copyts](https://ffmpeg.org/ffmpeg.html).
+Документация используется для семантики вызова, а не как источник копируемого
+кода. Точная локальная числовая семантика закреплена только в `CONTRACTS.md` §7.5.
+Тестовые данные создаются собственными deterministic PCM codes/тонами и локальным
+FFmpeg; внешние recordings, datasets, models и weights не применяются.
+
+### Dense video foundations M1-F — 2026-09-21
+
+Dense producer, strict diagnostic parser и региональное A/V mapping — собственный
+`FIRST_PARTY_CODE`, Apache-2.0 проекта. Используются прежние FFmpeg/ffprobe,
+NumPy и стандартный `zlib.adler32`; внешние исходники не копировались,
+зависимости и способ поставки не меняются. Fixtures создаются локально FFmpeg.
+Семантика ограничений и диагностики сверяется с первичными интерфейсами:
+[FFmpeg showinfo](https://ffmpeg.org/ffmpeg-filters.html#showinfo),
+[FFmpeg trim](https://ffmpeg.org/ffmpeg-filters.html#trim),
+[реализация EOF в trim](https://github.com/FFmpeg/FFmpeg/blob/master/libavfilter/trim.c).
+Исходник используется только для проверки семантики остановки filtergraph.
+Точные локальные contracts принадлежат `CONTRACTS.md` §7.5; forensic detector
+или внешний метод оценки синхронизации не заимствуется и не заявляется.
 
 ## Происхождение политики оценки Stage 7
 

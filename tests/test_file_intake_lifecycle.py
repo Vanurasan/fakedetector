@@ -756,6 +756,7 @@ def test_ffprobe_stdout_read_failure_is_failed_and_cleans_owned_source(
     class StartedProcess:
         def __init__(self) -> None:
             self.stdout = FailingStdout()
+            self.stderr = None
             self.killed = False
             self.terminated = False
             self.wait_calls = 0

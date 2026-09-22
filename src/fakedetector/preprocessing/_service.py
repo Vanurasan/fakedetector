@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
-from typing import Protocol, cast
+from threading import BoundedSemaphore, Lock
+from typing import Literal, Protocol, cast
 
+import numpy as np
+from numpy.typing import NDArray
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from fakedetector._generated_artifact_budget import (
@@ -24,6 +31,7 @@ from fakedetector.config.models import (
     ImagePreprocessingConfig,
     VideoPreprocessingConfig,
 )
+from fakedetector.core._cleanup_safety import _CleanupSafetyBarrier, _CleanupSafetyInterruption
 from fakedetector.domain import (
     AudioTechnicalParameters,
     ImageTechnicalParameters,
@@ -38,12 +46,41 @@ from fakedetector.lifecycle.artifacts import (
     WorkspaceArtifactRegistry,
 )
 from fakedetector.preprocessing._errors import PreprocessingError
-from fakedetector.preprocessing._media_tools import _FFmpegPreprocessingTool
+from fakedetector.preprocessing._media_tools import (
+    DecodedAudioWindow,
+    _decode_jpeg_coefficients,
+    _FFmpegPreprocessingTool,
+    _parse_jpeg,
+    dense_geometry,
+    select_audio_windows,
+    select_timing_regions,
+    stft_batches,
+)
 from fakedetector.preprocessing._models import (
+    AudioWindowDescriptor,
+    AVTimelineDescriptor,
+    ForensicManifest,
+    ForensicRepresentation,
+    ImageCoordinates,
+    IndexRange,
+    JpegCoefficientsDescriptor,
+    NumericArtifact,
+    OriginalImageFacts,
     PreparedArtifact,
     PreparedMedia,
+    RepresentationProvenance,
+    SpectralWindowDescriptor,
+    StreamTimingFacts,
+    TimingInterval,
+    TimingRecordsDescriptor,
 )
-from fakedetector.preprocessing._requirements import PreprocessingRequirements
+from fakedetector.preprocessing._requirements import (
+    _FORENSIC_POLICY,
+    _MAX_FORENSIC_METADATA_BYTES,
+    _MAX_FORENSIC_REPRESENTATIONS,
+    ForensicCapability,
+    PreprocessingRequirements,
+)
 
 _MULTI_FRAME_WARNING = (
     "Normalized image represents only the first displayed frame and does not cover "
@@ -81,6 +118,55 @@ class PreprocessingRequest:
             raise ValueError("artifact budget media type does not match request")
 
 
+class _ForensicAdmission:
+    """Two forensic dispatches per interpreter; unresolved children retain admission."""
+
+    def __init__(self) -> None:
+        self._slots = BoundedSemaphore(2)
+
+    @contextmanager
+    def enter(self) -> Iterator[None]:
+        if not self._slots.acquire(blocking=False):
+            raise PreprocessingError("resource_limit", "forensic_concurrency")
+        release = True
+        try:
+            yield
+        except BaseException as error:
+            if (
+                isinstance(error, (PreprocessingError, _CleanupSafetyInterruption))
+                and error._cleanup_safety_barrier is not None
+            ):
+                error._cleanup_safety_barrier = _AdmissionBarrier(
+                    error._cleanup_safety_barrier, self._slots
+                )
+                release = False
+            raise
+        finally:
+            if release:
+                self._slots.release()
+
+
+class _AdmissionBarrier:
+    def __init__(self, barrier: _CleanupSafetyBarrier, slots: BoundedSemaphore) -> None:
+        self._barrier = barrier
+        self._slots = slots
+        self._released = False
+        self._lock = Lock()
+
+    def try_confirm_safe(self) -> bool:
+        with self._lock:
+            if self._released:
+                return True
+            if not self._barrier.try_confirm_safe():
+                return False
+            self._released = True
+            self._slots.release()
+            return True
+
+
+_FORENSIC_ADMISSION = _ForensicAdmission()
+
+
 class Preprocessor(Protocol):
     """Narrow internal contract implemented by each media preprocessor."""
 
@@ -112,8 +198,12 @@ class ImagePreprocessor:
         *,
         remaining_timeout_seconds: Callable[[], float] | None = None,
     ) -> PreparedMedia:
-        del requirements
         parameters = _parameters(request, ImageTechnicalParameters, self.media_type)
+        original = None
+        if requirements.forensic:
+            _check_remaining(remaining_timeout_seconds)
+            original = _original_image_facts(request)
+            _check_remaining(remaining_timeout_seconds)
         normalized: Image.Image | None = None
         artifacts: list[PreparedArtifact] = []
         try:
@@ -161,6 +251,48 @@ class ImagePreprocessor:
             "normalized": normalized_facts,
             "frame_scope": "first_frame",
         }
+        if original is not None:
+            original = OriginalImageFacts.model_validate(
+                {
+                    **original.model_dump(),
+                    "normalized_size": (normalized_facts["width"], normalized_facts["height"]),
+                    "orientation_applied": original.coordinates.orientation not in (None, 1),
+                }
+            )
+            representations = [
+                ForensicRepresentation(
+                    provenance=RepresentationProvenance(
+                        producer="fakedetector",
+                        producer_version="1",
+                        profile="original_image",
+                        profile_version="1",
+                    ),
+                    facts=original,
+                )
+            ]
+            if (
+                original.jpeg is not None
+                and ForensicCapability.JPEG_COEFFICIENTS in requirements.forensic
+            ):
+                planes = _prepare_jpeg_planes(
+                    request, original, artifacts, remaining_timeout_seconds
+                )
+                representations.append(
+                    ForensicRepresentation(
+                        provenance=RepresentationProvenance(
+                            producer="pyjpegio",
+                            producer_version="0.3.0",
+                            profile="jpeg_coefficients",
+                            profile_version="1",
+                        ),
+                        facts=JpegCoefficientsDescriptor(header=original.jpeg, planes=planes),
+                    )
+                )
+            metadata["forensic"] = ForensicManifest(
+                source_sha256=request.validated_file.sha256,
+                media_type=self.media_type,
+                representations=tuple(representations),
+            ).to_metadata()
         frame_count = parameters.frame_count or 1
         image_warnings = (_MULTI_FRAME_WARNING,) if frame_count > 1 else ()
         return _prepared_media(request, self.media_type, artifacts, metadata, image_warnings)
@@ -321,6 +453,15 @@ class AudioPreprocessor:
         if self._config.extract_metadata:
             metadata["source_codec"] = parameters.codec
             metadata["source_bitrate_bps"] = parameters.bitrate_bps
+        if requirements.forensic:
+            metadata["forensic"] = _prepare_av_forensic(
+                request,
+                requirements,
+                self._media_tool,
+                artifacts,
+                parameters.duration_seconds,
+                remaining_timeout_seconds,
+            ).to_metadata()
         return _prepared_media(request, self.media_type, artifacts, metadata)
 
 
@@ -452,6 +593,15 @@ class VideoPreprocessor:
             if truncated
             else ()
         )
+        if requirements.forensic:
+            metadata["forensic"] = _prepare_av_forensic(
+                request,
+                requirements,
+                self._media_tool,
+                artifacts,
+                parameters.duration_seconds,
+                remaining_timeout_seconds,
+            ).to_metadata()
         return _prepared_media(request, self.media_type, artifacts, metadata, video_warnings)
 
 
@@ -489,6 +639,24 @@ class PreprocessingDispatcher:
     ) -> PreparedMedia:
         """Dispatch without extension guessing, analyzer execution, or lifecycle mutation."""
         active_requirements = requirements or PreprocessingRequirements()
+        try:
+            active_requirements.validate_media(request.validated_file.media_type)
+        except ValueError:
+            raise PreprocessingError("invariant", "forensic_media_type") from None
+        if active_requirements.forensic - {
+            ForensicCapability.ORIGINAL_IMAGE,
+            ForensicCapability.IMAGE_COORDINATES,
+            ForensicCapability.JPEG_STRUCTURE,
+            ForensicCapability.JPEG_COEFFICIENTS,
+            ForensicCapability.AUDIO_PRECISION,
+            ForensicCapability.AUDIO_SAMPLES,
+            ForensicCapability.AUDIO_SPECTRAL,
+            ForensicCapability.STREAM_TIMING,
+            ForensicCapability.TIMING_RECORDS,
+            ForensicCapability.DENSE_VIDEO,
+            ForensicCapability.AV_TIMELINE,
+        }:
+            raise PreprocessingError("invariant", "forensic_producer_unavailable")
         if not request.artifact_budget.matches(
             self._config_snapshot,
             request.validated_file.media_type,
@@ -499,11 +667,12 @@ class PreprocessingDispatcher:
         except KeyError:
             raise PreprocessingError("invariant", "media_type") from None
         _check_remaining(remaining_timeout_seconds)
-        prepared_media = preprocessor.prepare(
-            request,
-            active_requirements,
-            remaining_timeout_seconds=remaining_timeout_seconds,
-        )
+        with _FORENSIC_ADMISSION.enter() if active_requirements.forensic else nullcontext():
+            prepared_media = preprocessor.prepare(
+                request,
+                active_requirements,
+                remaining_timeout_seconds=remaining_timeout_seconds,
+            )
         _check_remaining(remaining_timeout_seconds)
         return prepared_media
 
@@ -539,6 +708,535 @@ def _operation_timeout(
 
 def _check_remaining(remaining_timeout_seconds: Callable[[], float] | None) -> None:
     _operation_timeout(remaining_timeout_seconds)
+
+
+def _prepare_av_forensic(
+    request: PreprocessingRequest,
+    requirements: PreprocessingRequirements,
+    tool: _FFmpegPreprocessingTool,
+    artifacts: list[PreparedArtifact],
+    duration: float,
+    remaining: Callable[[], float] | None,
+) -> ForensicManifest:
+    representations: list[ForensicRepresentation] = []
+    if requirements.forensic & {
+        ForensicCapability.AUDIO_PRECISION,
+        ForensicCapability.AUDIO_SAMPLES,
+        ForensicCapability.AUDIO_SPECTRAL,
+    }:
+        representations.extend(
+            _prepare_audio_forensic(
+                request, requirements, tool, artifacts, duration, remaining
+            ).representations
+        )
+    if ForensicCapability.STREAM_TIMING in requirements.forensic:
+        representations.extend(
+            _prepare_timing_forensic(
+                request,
+                requirements,
+                tool,
+                artifacts,
+                remaining,
+                existing_representations=len(representations),
+            )
+        )
+    if ForensicCapability.AV_TIMELINE in requirements.forensic:
+        mapping = AVTimelineDescriptor.from_timing(
+            tuple(r.facts for r in representations if isinstance(r.facts, StreamTimingFacts)),
+            tuple(r.facts for r in representations if isinstance(r.facts, TimingRecordsDescriptor)),
+        )
+        representations.append(
+            ForensicRepresentation(
+                provenance=RepresentationProvenance(
+                    producer="av_timing",
+                    producer_version="1",
+                    profile="regional_endpoints",
+                    profile_version="1",
+                ),
+                facts=mapping,
+            )
+        )
+    if len(representations) > _MAX_FORENSIC_REPRESENTATIONS:
+        raise PreprocessingError("resource_limit", "forensic_manifest_limit")
+    try:
+        return ForensicManifest(
+            source_sha256=request.validated_file.sha256,
+            media_type=request.validated_file.media_type,
+            representations=tuple(representations),
+        )
+    except ValueError:
+        raise PreprocessingError("invariant", "forensic_manifest_invariant") from None
+
+
+def _prepare_timing_forensic(
+    request: PreprocessingRequest,
+    requirements: PreprocessingRequirements,
+    tool: _FFmpegPreprocessingTool,
+    artifacts: list[PreparedArtifact],
+    remaining: Callable[[], float] | None,
+    *,
+    existing_representations: int = 0,
+) -> tuple[ForensicRepresentation, ...]:
+    provenance = RepresentationProvenance(
+        producer="ffprobe_timing",
+        producer_version="1",
+        profile="bounded_packets_frames",
+        profile_version="1",
+    )
+    records_demand = ForensicCapability.TIMING_RECORDS in requirements.forensic
+    dense_demand = ForensicCapability.DENSE_VIDEO in requirements.forensic
+    mapping_demand = ForensicCapability.AV_TIMELINE in requirements.forensic
+    dense_provenance = RepresentationProvenance(
+        producer="ffmpeg_dense", producer_version="1", profile="rgb24_bilinear", profile_version="1"
+    )
+    representations: list[ForensicRepresentation] = []
+    plan: list[
+        tuple[StreamTimingFacts, TimingInterval, int, Literal["packet", "frame", "dense"]]
+    ] = []
+    try:
+        with request.source_file_ref.open_for_read() as stream:
+            hasher = hashlib.sha256()
+            while chunk := stream.read(65536):
+                _check_remaining(remaining)
+                hasher.update(chunk)
+        if hasher.hexdigest() != request.validated_file.sha256:
+            raise PreprocessingError("invariant", "forensic_source_identity")
+        kinds: tuple[Literal["audio", "video"], ...] = (
+            ("video", "audio")
+            if request.validated_file.media_type is MediaType.VIDEO
+            else ("audio",)
+        )
+        for kind in kinds[: _FORENSIC_POLICY.timing_streams]:
+            facts = request.source_file_ref.with_local_source_path(
+                partial(
+                    tool.timing_stream,
+                    kind=kind,
+                    frames=records_demand or dense_demand,
+                    timeout_seconds=_operation_timeout(remaining),
+                )
+            )
+            if facts is None:
+                continue
+            representations.append(ForensicRepresentation(provenance=provenance, facts=facts))
+            if records_demand or dense_demand:
+                for region, interval in enumerate(select_timing_regions(facts)):
+                    if records_demand:
+                        plan.append((facts, interval, region, "packet"))
+                        if kind == "video":
+                            plan.append((facts, interval, region, "frame"))
+                    if dense_demand and kind == "video":
+                        plan.append((facts, interval, region, "dense"))
+        if not representations and not mapping_demand:
+            raise PreprocessingError("decode", "timing_unsupported_streams")
+        if dense_demand and not any(
+            r.facts.stream_kind == "video"
+            for r in representations
+            if isinstance(r.facts, StreamTimingFacts)
+        ):
+            raise PreprocessingError("decode", "dense_unsupported_stream")
+        dense_plan = [item for item in plan if item[3] == "dense"]
+        dense_bytes = sum(
+            _FORENSIC_POLICY.dense_frames * w * h * 3
+            for item in dense_plan
+            for w, h in (dense_geometry(item[0]),)
+        )
+        count = sum(
+            _FORENSIC_POLICY.timing_packets
+            if item[3] == "packet"
+            else _FORENSIC_POLICY.dense_frames
+            if item[3] == "dense"
+            else _FORENSIC_POLICY.timing_frames
+            for item in plan
+        )
+        if (
+            count > _FORENSIC_POLICY.timing_records
+            or count * 72 > _FORENSIC_POLICY.timing_artifact_bytes
+            or len(dense_plan) > _FORENSIC_POLICY.dense_windows
+            or existing_representations
+            + len(representations)
+            + len(plan)
+            + len(dense_plan)
+            + int(mapping_demand)
+            > _MAX_FORENSIC_REPRESENTATIONS
+        ):
+            raise PreprocessingError("resource_limit", "timing_preflight")
+        _FORENSIC_POLICY.check_artifacts(
+            request.artifact_budget,
+            total_count=len(artifacts) + len(plan) + len(dense_plan),
+            additional_bytes=count * 72 + dense_bytes,
+        )
+        for facts, interval, region, record_kind in plan:
+            record_provenance = provenance
+            if record_kind == "dense":
+                pixel_id = f"dense_{facts.stream_index}_{region}"
+                pixel_ref = _register(request.artifact_registry, pixel_id, f"{pixel_id}.raw")
+                dense, descriptor, values = _with_source_and_artifact(
+                    request,
+                    pixel_ref,
+                    partial(
+                        tool.dense_window,
+                        facts=facts,
+                        requested=interval,
+                        region=region,
+                        artifact_budget=request.artifact_budget,
+                        timeout_seconds=_operation_timeout(remaining),
+                    ),
+                )
+                artifacts.append(
+                    PreparedArtifact(
+                        artifact_id=pixel_id,
+                        artifact_type="dense_rgb",
+                        artifact_ref=pixel_ref,
+                        format="forensic_raw",
+                    )
+                )
+                representations.append(
+                    ForensicRepresentation(provenance=dense_provenance, facts=dense)
+                )
+                record_provenance = dense_provenance
+            else:
+                descriptor, values = request.source_file_ref.with_local_source_path(
+                    partial(
+                        tool.timing_records,
+                        facts=facts,
+                        requested=interval,
+                        region=region,
+                        kind=record_kind,
+                        timeout_seconds=_operation_timeout(remaining),
+                    )
+                )
+            if descriptor.data is not None:
+                _write_numeric(
+                    request,
+                    artifacts,
+                    descriptor.data,
+                    (values,),
+                    remaining,
+                    artifact_type="timing_numeric",
+                )
+            representations.append(
+                ForensicRepresentation(provenance=record_provenance, facts=descriptor)
+            )
+        return tuple(representations)
+    except IntakeSystemError:
+        raise PreprocessingError("source_read", "timing_source") from None
+    except _GeneratedArtifactLimitError:
+        raise PreprocessingError("resource_limit", "timing_artifacts") from None
+    except _GeneratedArtifactWriteError:
+        raise PreprocessingError("artifact_write", "timing_artifacts") from None
+    except ValueError:
+        raise PreprocessingError("decode", "timing_malformed_artifact") from None
+
+
+def _prepare_audio_forensic(
+    request: PreprocessingRequest,
+    requirements: PreprocessingRequirements,
+    tool: _FFmpegPreprocessingTool,
+    artifacts: list[PreparedArtifact],
+    duration: float,
+    remaining: Callable[[], float] | None,
+) -> ForensicManifest:
+    provenance = RepresentationProvenance(
+        producer="ffmpeg_audio",
+        producer_version="1",
+        profile="precision_windows",
+        profile_version="1",
+    )
+    spectral_provenance = RepresentationProvenance(
+        producer="numpy_stft", producer_version="1", profile="hann4096_hop1024", profile_version="1"
+    )
+    representations: list[ForensicRepresentation] = []
+    try:
+        with request.source_file_ref.open_for_read() as stream:
+            hasher = hashlib.sha256()
+            while chunk := stream.read(65536):
+                _check_remaining(remaining)
+                hasher.update(chunk)
+        if hasher.hexdigest() != request.validated_file.sha256:
+            raise PreprocessingError("invariant", "forensic_source_identity")
+        facts = request.source_file_ref.with_local_source_path(
+            lambda source: tool.audio_precision(
+                source, timeout_seconds=_operation_timeout(remaining)
+            )
+        )
+        total_samples = max(
+            1, math.ceil((facts.declared_duration_seconds or duration) * facts.sample_rate)
+        )
+        # Only explicit policy validation is a resource failure; model construction is not.
+        try:
+            _FORENSIC_POLICY.check_audio(1, facts.channels, facts.sample_rate)
+        except ValueError:
+            raise PreprocessingError("resource_limit", "audio_precision_preflight") from None
+        if total_samples >= 1 << 63:
+            raise PreprocessingError("resource_limit", "audio_precision_preflight")
+        windows = select_audio_windows(total_samples, facts.sample_rate, facts.channels)
+        samples_demand = ForensicCapability.AUDIO_SAMPLES in requirements.forensic
+        spectral_demand = ForensicCapability.AUDIO_SPECTRAL in requirements.forensic
+        if not samples_demand:
+            windows = (IndexRange(start=0, stop=1),)
+        # Worst-case float64 samples and magnitude spectra; one shared artifact budget.
+        sample_bytes = sum(w.count * facts.channels * 8 for w in windows) if samples_demand else 0
+        frame_counts = [max(0, 1 + (w.count - 4096) // 1024) for w in windows]
+        spectral_bytes = sum(frame_counts) * facts.channels * 2049 * 8 if spectral_demand else 0
+        if (
+            spectral_demand
+            and sum(frame_counts) * facts.channels > _FORENSIC_POLICY.spectral_frames
+        ):
+            raise PreprocessingError("resource_limit", "audio_precision_preflight")
+        _FORENSIC_POLICY.check_artifacts(
+            request.artifact_budget,
+            total_count=len(artifacts)
+            + (len(windows) if samples_demand else 0)
+            + (sum(count > 0 for count in frame_counts) if spectral_demand else 0),
+            additional_bytes=sample_bytes + spectral_bytes,
+        )
+        origin = 0
+        observed_facts = None
+        previous_stop = 0
+        for ordinal, window in enumerate(windows):
+
+            def decode(source: Path, selected: IndexRange = window) -> DecodedAudioWindow:
+                return tool.precision_window(
+                    source, facts, selected, timeout_seconds=_operation_timeout(remaining)
+                )
+
+            decoded = request.source_file_ref.with_local_source_path(decode)
+            if ordinal == 0:
+                origin = decoded.first_pts
+                observed_facts = decoded.facts
+                representations.append(
+                    ForensicRepresentation(provenance=provenance, facts=observed_facts)
+                )
+            elif decoded.facts != observed_facts:
+                raise PreprocessingError("decode", "audio_precision_changed_format")
+            if not samples_demand:
+                break
+            start = decoded.first_pts - origin
+            if start < previous_stop:
+                raise PreprocessingError("decode", "audio_precision_overlapping_coverage")
+            previous_stop = start + decoded.values.shape[0]
+            descriptor = NumericArtifact(
+                artifact_id=f"audio_samples_{ordinal}",
+                shape=decoded.values.shape,
+                dtype="<i4" if decoded.values.dtype.kind == "i" else "<f8",
+            )
+            _write_numeric(request, artifacts, descriptor, (decoded.values,), remaining)
+            representations.append(
+                ForensicRepresentation(
+                    provenance=provenance,
+                    facts=AudioWindowDescriptor(
+                        stream_index=facts.stream_index,
+                        samples=IndexRange(start=start, stop=previous_stop),
+                        requested_samples=window,
+                        first_sample_pts=decoded.first_pts,
+                        data=descriptor,
+                    ),
+                )
+            )
+            frames = max(0, 1 + (decoded.values.shape[0] - 4096) // 1024)
+            if spectral_demand and frames:
+                spectral = NumericArtifact(
+                    artifact_id=f"audio_spectral_{ordinal}",
+                    shape=(frames, facts.channels, 2049),
+                    dtype="<f8",
+                )
+                batches = stft_batches(
+                    decoded.values,
+                    sample_rate=facts.sample_rate,
+                    n_fft=4096,
+                    hop=1024,
+                    batch_size=16,
+                )
+                _write_numeric(request, artifacts, spectral, (b.values for b in batches), remaining)
+                representations.append(
+                    ForensicRepresentation(
+                        provenance=spectral_provenance,
+                        facts=SpectralWindowDescriptor(
+                            samples_artifact_id=descriptor.artifact_id,
+                            frames=IndexRange(start=0, stop=frames),
+                            n_fft=4096,
+                            hop=1024,
+                            window="hann",
+                            scaling="magnitude",
+                            data=spectral,
+                        ),
+                    )
+                )
+        return ForensicManifest(
+            source_sha256=request.validated_file.sha256,
+            media_type=request.validated_file.media_type,
+            representations=tuple(representations),
+        )
+    except IntakeSystemError:
+        raise PreprocessingError("source_read", "audio_precision_source") from None
+    except _GeneratedArtifactLimitError:
+        raise PreprocessingError("resource_limit", "audio_precision_artifacts") from None
+    except _GeneratedArtifactWriteError:
+        raise PreprocessingError("artifact_write", "audio_precision_artifacts") from None
+    except ValueError:
+        raise PreprocessingError("invariant", "audio_precision_invariant") from None
+
+
+def _write_numeric(
+    request: PreprocessingRequest,
+    artifacts: list[PreparedArtifact],
+    descriptor: NumericArtifact,
+    batches: Iterable[NDArray[np.generic]],
+    remaining: Callable[[], float] | None,
+    *,
+    artifact_type: str = "audio_numeric",
+) -> None:
+    reference = _register(
+        request.artifact_registry, descriptor.artifact_id, f"{descriptor.artifact_id}.raw"
+    )
+
+    def write(target: Path) -> None:
+        size = 0
+        with request.artifact_budget.open_output(target) as output:
+            for batch in batches:
+                _check_remaining(remaining)
+                size += batch.nbytes
+                if size > descriptor.nbytes:
+                    raise PreprocessingError("invariant", "numeric_extent")
+                output.write(batch.tobytes(order="C"))
+        if size != descriptor.nbytes:
+            raise PreprocessingError("invariant", "numeric_extent")
+
+    _with_artifact_path(request.artifact_registry, reference, write)
+    artifacts.append(
+        PreparedArtifact(
+            artifact_id=descriptor.artifact_id,
+            artifact_type=artifact_type,
+            artifact_ref=reference,
+            format="forensic_raw",
+        )
+    )
+
+
+def _original_image_facts(request: PreprocessingRequest) -> OriginalImageFacts:
+    """Observe the controlled source without copying arbitrary metadata into facts."""
+    try:
+        with request.source_file_ref.open_for_read() as stream:
+            signature = stream.read(2)
+            stream.seek(0)
+            structure = None
+            if signature == b"\xff\xd8":
+                data = stream.read(_FORENSIC_POLICY.jpeg_input_bytes + 1)
+                structure = _parse_jpeg(data)
+                digest = hashlib.sha256(data).hexdigest()
+                del data
+            else:
+                hasher = hashlib.sha256()
+                while chunk := stream.read(65536):
+                    hasher.update(chunk)
+                digest = hasher.hexdigest()
+            if digest != request.validated_file.sha256:
+                raise PreprocessingError("invariant", "forensic_source_identity")
+            stream.seek(0)
+            with Image.open(stream) as image:
+                frame = 1 if image.format == "PNG" and getattr(image, "default_image", False) else 0
+                image.seek(frame)
+                orientation: int | None = 1
+                valid_exif: int | None = None
+                try:
+                    with warnings.catch_warnings(record=True) as observed:
+                        warnings.simplefilter("always")
+                        value = image.getexif().get(274)
+                    if observed or (
+                        value is not None and (type(value) is not int or not 1 <= value <= 8)
+                    ):
+                        orientation = None
+                    elif type(value) is int:
+                        orientation = valid_exif = value
+                except (OSError, ValueError, SyntaxError):
+                    orientation = None
+                return OriginalImageFacts(
+                    format=(image.format or "unknown").lower(),
+                    source_mode=image.mode,
+                    source_frame=frame,
+                    exif_orientation=valid_exif,
+                    coordinates=ImageCoordinates(
+                        native_width=image.width,
+                        native_height=image.height,
+                        orientation=orientation,
+                    ),
+                    jpeg=structure.header if structure else None,
+                    quantization_tables=structure.tables if structure else (),
+                )
+    except IntakeSystemError:
+        raise PreprocessingError("source_read", "image_source") from None
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
+        raise PreprocessingError("decode", "image_original") from None
+
+
+def _prepare_jpeg_planes(
+    request: PreprocessingRequest,
+    original: OriginalImageFacts,
+    artifacts: list[PreparedArtifact],
+    remaining_timeout_seconds: Callable[[], float] | None,
+) -> tuple[NumericArtifact, ...]:
+    assert original.jpeg is not None
+    allocation = original.jpeg.preflight(request.validated_file.size_bytes)
+    planes = tuple(
+        NumericArtifact(artifact_id=f"jpeg_component_{i}", shape=(*shape, 8, 8), dtype="<i4")
+        for i, shape in enumerate(allocation.block_shapes)
+    )
+    try:
+        _FORENSIC_POLICY.check_artifacts(
+            request.artifact_budget,
+            total_count=len(artifacts) + len(planes),
+            additional_bytes=allocation.output_bytes,
+        )
+        for plane in planes:
+            reference = _register(
+                request.artifact_registry, plane.artifact_id, f"{plane.artifact_id}.raw"
+            )
+
+            def reserve(target: Path, size: int = plane.nbytes) -> None:
+                # The child can overwrite only this existing mmap extent. Charge all
+                # physical bytes through the shared budget before native execution.
+                with request.artifact_budget.open_output(target) as output:
+                    while size:
+                        count = min(size, 65536)
+                        output.write(bytes(count))
+                        size -= count
+
+            _with_artifact_path(request.artifact_registry, reference, reserve)
+            artifacts.append(
+                PreparedArtifact(
+                    artifact_id=plane.artifact_id,
+                    artifact_type="jpeg_coefficients",
+                    artifact_ref=reference,
+                    format="forensic_raw",
+                )
+            )
+        _check_remaining(remaining_timeout_seconds)
+        request.source_file_ref.with_local_source_path(
+            lambda source: _decode_jpeg_coefficients(
+                source,
+                request.validated_file.sha256,
+                timeout_seconds=_operation_timeout(remaining_timeout_seconds),
+            )
+        )
+        for plane, artifact in zip(planes, artifacts[-len(planes) :], strict=True):
+
+            def validate_extent(target: Path, descriptor: NumericArtifact = plane) -> None:
+                descriptor.validate_byte_length(target.stat().st_size)
+
+            _with_artifact_path(
+                request.artifact_registry,
+                artifact.artifact_ref,
+                validate_extent,
+            )
+    except _GeneratedArtifactLimitError:
+        raise PreprocessingError("resource_limit", "jpeg_artifact_preflight") from None
+    except (OSError, _GeneratedArtifactWriteError):
+        raise PreprocessingError("artifact_write", "jpeg_coefficients") from None
+    except ValueError:
+        raise PreprocessingError("invariant", "jpeg_artifact_extent") from None
+    except IntakeSystemError:
+        raise PreprocessingError("source_read", "jpeg_source") from None
+    return planes
 
 
 def _decode_normalized_image(source_ref: PreparedSourceRef) -> Image.Image:
@@ -733,6 +1431,16 @@ def _prepared_media(
     metadata: dict[str, object],
     media_warnings: tuple[str, ...] = (),
 ) -> PreparedMedia:
+    if (
+        "forensic" in metadata
+        and len(
+            json.dumps(metadata, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        )
+        > _MAX_FORENSIC_METADATA_BYTES
+    ):
+        raise PreprocessingError("resource_limit", "forensic_metadata_limit")
     return PreparedMedia(
         analysis_id=request.analysis_id,
         media_type=media_type,

@@ -147,6 +147,16 @@ class AnalyzerOrchestrator:
             raise TypeError("artifact_registry must be WorkspaceArtifactRegistry")
         if prepared_media.media_type is not validated_file.media_type:
             raise AnalyzerInfrastructureError("prepared_media_mismatch")
+        manifest = prepared_media.forensic
+        if manifest is not None:
+            try:
+                manifest.validate_binding(
+                    prepared_media.media_type,
+                    {a.artifact_id: a.format for a in prepared_media.artifacts},
+                    source_sha256=validated_file.sha256,
+                )
+            except ValueError:
+                raise AnalyzerInfrastructureError("forensic_identity") from None
         if any(
             not artifact_registry._matches_registered_artifact(
                 artifact.artifact_ref,

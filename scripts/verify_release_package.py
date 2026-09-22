@@ -276,6 +276,119 @@ def _installed_probe(python: Path, *, cwd: Path, env: dict[str, str]) -> dict[st
             "logging": {{}},
             "external_systems": {{}},
         }})
+        import hashlib
+        import io
+        import jpegio
+        from PIL import Image
+        from fakedetector._generated_artifact_budget import _GeneratedArtifactBudget
+        from fakedetector.config._snapshot import _ConfigSnapshot
+        from fakedetector.domain import MediaType, ImageTechnicalParameters, ValidatedFileDescriptor
+        from fakedetector.intake.temporary_input import LocalTemporaryInputOwner, PreparedSourceRef
+        from fakedetector.lifecycle.artifacts import WorkspaceArtifactRegistry
+        from fakedetector.preprocessing._errors import PreprocessingError
+        from fakedetector.preprocessing._requirements import (
+            ForensicCapability, PreprocessingRequirements,
+        )
+        from fakedetector.preprocessing._service import (
+            PreprocessingDispatcher, PreprocessingRequest,
+        )
+
+        assert metadata.version("pyjpegio") == "0.3.0"
+        jpeg_origin = Path(jpegio.__file__).resolve()
+        assert jpeg_origin.is_relative_to(Path(sys.prefix))
+        buffer = io.BytesIO()
+        with Image.new("RGB", (17, 17), (40, 80, 120)) as image:
+            image.save(buffer, "JPEG", progressive=True)
+        jpeg = buffer.getvalue()
+        oversized = bytearray(jpeg)
+        sof = oversized.index(b"\\xff\\xc2")
+        oversized[sof + 5:sof + 9] = b"\\xff" * 4
+        jpeg_root = Path.cwd() / "jpeg-\u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430"
+        jpeg_results = []
+        for index, (payload, expected) in enumerate(((jpeg, "clean"), (jpeg[:-2], "decode"),
+                                                     (bytes(oversized), "resource_limit"))):
+            owner = LocalTemporaryInputOwner(jpeg_root)
+            analysis_id = format(index + 1, "032x")
+            owned = owner.create(analysis_id)
+            owner.ingest(owned, io.BytesIO(payload), len(payload) + 1)
+            accepted = owner.transfer(owned)
+            registry = WorkspaceArtifactRegistry(jpeg_root / analysis_id)
+            descriptor = ValidatedFileDescriptor(
+                original_name="image.jpg", extension="jpg", declared_mime_type=None,
+                detected_mime_type="image/jpeg", media_type=MediaType.IMAGE,
+                size_bytes=len(payload), sha256=hashlib.sha256(payload).hexdigest(),
+                signature_match=True, safe_read=True,
+                technical_parameters=ImageTechnicalParameters(width=17, height=17,
+                    format="JPEG", color_mode="RGB", frame_count=1, has_metadata=False),
+            )
+            try:
+                prepared = PreprocessingDispatcher(config).prepare(
+                    PreprocessingRequest(analysis_id=analysis_id, validated_file=descriptor,
+                        source_file_ref=PreparedSourceRef(accepted), artifact_registry=registry,
+                        artifact_budget=_GeneratedArtifactBudget(
+                            _ConfigSnapshot.capture(config), MediaType.IMAGE)),
+                    PreprocessingRequirements(forensic=frozenset({{ForensicCapability.JPEG_COEFFICIENTS}})),
+                )
+                assert expected == "clean" and len(prepared.artifacts) == 4
+                assert prepared.forensic.source_sha256 == descriptor.sha256
+                planes = prepared.forensic.representations[1].facts.planes
+                for plane, artifact in zip(planes, prepared.artifacts[1:], strict=True):
+                    length = registry.with_local_artifact_path(
+                        artifact.artifact_ref, lambda p: p.stat().st_size)
+                    assert length == plane.nbytes
+                jpeg_results.append("clean")
+            except PreprocessingError as error:
+                assert error.kind == expected
+                jpeg_results.append(error.kind)
+            finally:
+                assert registry.cleanup_once().completed
+                accepted.cleanup()
+                assert not (jpeg_root / analysis_id).exists()
+        jpeg_root.rmdir()
+        import subprocess
+        import wave
+        import numpy as np
+        from fakedetector.preprocessing import _media_tools as mt
+        from fakedetector.preprocessing._models import IndexRange, AVTimelineDescriptor
+        audio_path = Path.cwd() / "macro1.wav"
+        video_path = Path.cwd() / "macro1.mp4"
+        pixel_path = Path.cwd() / "macro1.rgb"
+        with wave.open(str(audio_path), "wb") as stream:
+            stream.setparams((1, 4, 8000, 0, "NONE", "none"))
+            stream.writeframes(np.arange(8000, dtype="<i4").tobytes())
+        tool = mt._FFmpegPreprocessingTool(executable="ffmpeg", timeout_seconds=30)
+        precision = tool.audio_precision(audio_path, timeout_seconds=30)
+        samples = tool.precision_window(audio_path, precision, IndexRange(start=0, stop=8000),
+                                        timeout_seconds=30)
+        assert np.array_equal(samples.values[:, 0], np.arange(8000))
+        spectra = list(mt.stft_batches(samples.values, sample_rate=8000, n_fft=4096, hop=1024))
+        assert spectra and not spectra[0].values.flags.writeable
+        subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i",
+                        "testsrc2=size=64x48:rate=25:duration=1", "-i", str(audio_path),
+                        "-c:v", "mpeg4", "-c:a", "aac", str(video_path)],
+                       check=True, capture_output=True, timeout=30)
+        video = tool.timing_stream(video_path, kind="video", frames=True, timeout_seconds=30)
+        audio = tool.timing_stream(video_path, kind="audio", frames=False, timeout_seconds=30)
+        interval = mt.select_timing_regions(video)[0]
+        generic, gv = tool.timing_records(
+            video_path, video, interval, 0, "frame", timeout_seconds=30)
+        packets, pv = tool.timing_records(video_path, audio, mt.select_timing_regions(audio)[0],
+                                          0, "packet", timeout_seconds=30)
+        dense, timing, tv = tool.dense_window(video_path, pixel_path, video, interval, 0,
+            artifact_budget=_GeneratedArtifactBudget(
+                _ConfigSnapshot.capture(config), MediaType.VIDEO),
+            timeout_seconds=30)
+        assert dense.decode_operation_id == timing.decode_operation_id
+        assert generic.purpose == "generic" and timing.purpose == "dense"
+        assert generic.data.artifact_id != timing.data.artifact_id
+        assert pixel_path.stat().st_size == dense.pixels.nbytes
+        assert len(gv) == len(tv) == 25
+        mapping = AVTimelineDescriptor.from_timing((video, audio), (generic, packets, timing))
+        assert mapping.applicability == "available" and len(mapping.regions) == 1
+        macro1_probe = {{"audio_precision_stft": "passed", "generic_timing": "passed",
+                        "dense_same_decode": "passed", "av_mapping": "passed"}}
+        for path in (audio_path, video_path, pixel_path):
+            path.unlink()
         app = create_app(config)
         print(json.dumps({{
             "package_version": distribution.version,
@@ -291,6 +404,10 @@ def _installed_probe(python: Path, *, cwd: Path, env: dict[str, str]) -> dict[st
             "python_version": platform.python_version(),
             "sys_path": sys.path,
             "user_site_enabled": bool(__import__("site").ENABLE_USER_SITE),
+            "macro1_probe": macro1_probe,
+            "jpeg_probe": {{"version": metadata.version("pyjpegio"), "origin": str(jpeg_origin),
+                            "outcomes": jpeg_results, "unicode_workspace": True,
+                            "cleanup": "passed"}},
         }}, sort_keys=True))
         """
     )
@@ -488,6 +605,8 @@ def verify(output_directory: Path | None = None) -> dict[str, Any]:
         "installed_from_exact_wheel": True,
         "editable_install": False,
         "dependency_check": "passed",
+        "jpeg_preprocessing": probe["jpeg_probe"],
+        "macro1_preprocessing": probe["macro1_probe"],
         "runtime_dependency_comparison": comparison,
         "cli_help": "passed",
         "source_checkout_on_sys_path": False,

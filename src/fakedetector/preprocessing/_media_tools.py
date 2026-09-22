@@ -1,13 +1,27 @@
-"""Bounded FFmpeg operations used only by trusted preprocessing code."""
+"""Bounded media tools, image kernels, and JPEG preflight for trusted preprocessing."""
 
 from __future__ import annotations
 
+import hashlib
+import importlib
+import json
 import math
+import mmap
 import os
-from collections.abc import Sequence
+import re
+import sys
+import zlib
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import Path
 from time import monotonic
-from typing import BinaryIO
+from typing import BinaryIO, Literal, cast
+from uuid import uuid4
+
+import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
+from numpy.typing import NDArray
 
 from fakedetector._generated_artifact_budget import (
     _GeneratedArtifactBudget,
@@ -17,14 +31,462 @@ from fakedetector._generated_artifact_budget import (
 from fakedetector.core._bounded_process import (
     ProcessInfrastructureError,
     ProcessOutputLimitError,
+    ProcessResult,
     ProcessTimeoutError,
     run_bounded_process,
 )
 from fakedetector.preprocessing._errors import PreprocessingError
+from fakedetector.preprocessing._models import (
+    AudioPrecisionFacts,
+    DenseVideoWindowDescriptor,
+    IndexRange,
+    JpegComponent,
+    JpegHeader,
+    JpegQuantizationTable,
+    NumericArtifact,
+    StreamTimingFacts,
+    TimeBase,
+    TimingInterval,
+    TimingRate,
+    TimingRational,
+    TimingRecordsDescriptor,
+)
+from fakedetector.preprocessing._requirements import (
+    _FORENSIC_POLICY,
+    ForensicResourcePolicy,
+)
 
 _MAX_FLAC_PROGRESS_BYTES = 16 * 1024
 _RIFF_UINT32_MAX = (1 << 32) - 1
 _FLAC_TOTAL_SAMPLES_MASK = (1 << 36) - 1
+_UINT8 = np.dtype("|u1")
+_FLOAT64 = np.dtype("<f8")
+_LUMINANCE_WEIGHTS = (0.299, 0.587, 0.114)
+_SMOOTHING_VECTORS = {
+    3: (0.25, 0.5, 0.25),
+    5: (0.0625, 0.25, 0.375, 0.25, 0.0625),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class TileRegion:
+    """Zero-based half-open core coverage in oriented raster coordinates."""
+
+    x: int
+    y: int
+    width: int
+    height: int
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.x) is not int
+            or type(self.y) is not int
+            or type(self.width) is not int
+            or type(self.height) is not int
+            or self.x < 0
+            or self.y < 0
+            or self.width <= 0
+            or self.height <= 0
+        ):
+            raise ValueError("tile region must contain nonnegative coordinates and positive size")
+
+
+@dataclass(frozen=True, slots=True)
+class ImageTile:
+    """Immutable uint8 core plus a complete REFLECT_101 halo."""
+
+    pixels: NDArray[np.uint8]
+    region: TileRegion
+    halo: int
+
+    def __post_init__(self) -> None:
+        _validate_halo(self.halo)
+        expected = (self.region.height + 2 * self.halo, self.region.width + 2 * self.halo)
+        if (
+            not isinstance(self.pixels, np.ndarray)
+            or self.pixels.dtype != _UINT8
+            or self.pixels.ndim not in (2, 3)
+            or self.pixels.shape[:2] != expected
+            or self.pixels.ndim == 3
+            and self.pixels.shape[2] not in (1, 3, 4)
+            or not self.pixels.flags.c_contiguous
+            or not _has_immutable_backing(self.pixels)
+        ):
+            raise ValueError("image tile does not satisfy the immutable uint8 layout")
+
+
+@dataclass(frozen=True, slots=True)
+class LuminanceTile:
+    """Immutable float64 luminance window retaining the source tile halo."""
+
+    values: NDArray[np.float64]
+    region: TileRegion
+    halo: int
+
+    def __post_init__(self) -> None:
+        _validate_halo(self.halo)
+        expected = (self.region.height + 2 * self.halo, self.region.width + 2 * self.halo)
+        _validate_float_plane(self.values, expected)
+        if np.any(self.values < 0.0) or np.any(self.values > 255.0):
+            raise ValueError("luminance values must be in the closed range [0, 255]")
+
+
+@dataclass(frozen=True, slots=True)
+class KernelPlane:
+    """Immutable float64 observation covering exactly one tile core."""
+
+    values: NDArray[np.float64]
+    coverage: TileRegion
+    halo_used: int
+
+    def __post_init__(self) -> None:
+        _validate_halo(self.halo_used)
+        _validate_float_plane(self.values, (self.coverage.height, self.coverage.width))
+
+
+@dataclass(frozen=True, slots=True)
+class GradientPlanes:
+    """Horizontal and vertical centered finite differences for equal coverage."""
+
+    horizontal: KernelPlane
+    vertical: KernelPlane
+
+    def __post_init__(self) -> None:
+        if (
+            self.horizontal.coverage != self.vertical.coverage
+            or self.horizontal.halo_used != 1
+            or self.vertical.halo_used != 1
+        ):
+            raise ValueError("gradient planes must have equal coverage and one-pixel halo")
+
+
+@dataclass(frozen=True, slots=True)
+class RobustLocalStatistics:
+    """Distribution observations without forensic labels or thresholds."""
+
+    sample_count: int
+    median: float
+    median_absolute_deviation: float
+    lower_quartile: float
+    upper_quartile: float
+
+    def __post_init__(self) -> None:
+        numeric = (
+            self.median,
+            self.median_absolute_deviation,
+            self.lower_quartile,
+            self.upper_quartile,
+        )
+        if (
+            type(self.sample_count) is not int
+            or self.sample_count <= 0
+            or not all(type(value) is float and np.isfinite(value) for value in numeric)
+            or self.median_absolute_deviation < 0.0
+            or self.lower_quartile > self.upper_quartile
+        ):
+            raise ValueError("robust local statistics are invalid")
+
+
+def extract_image_tiles(
+    raster: NDArray[np.generic],
+    regions: tuple[TileRegion, ...],
+    *,
+    halo: int,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> tuple[ImageTile, ...]:
+    """Copy bounded core windows with a fixed NumPy ``reflect``/REFLECT_101 halo.
+
+    ``raster`` may be C-contiguous or strided. Accepted layouts are HxW,
+    HxWx1, HxWx3 (RGB), and HxWx4 (RGBA), all uint8. Returned buffers are
+    C-order and backed by immutable ``bytes``.
+    """
+    height, width, channels = _validate_raster(raster)
+    if type(regions) is not tuple:
+        raise TypeError("tile regions must be a tuple")
+    policy.check_raster(width, height, tiles=len(regions))
+
+    output_sizes: list[int] = []
+    for region in regions:
+        if not isinstance(region, TileRegion):
+            raise TypeError("tile regions must contain TileRegion values")
+        policy.check_tile(region.width, region.height, halo, 1)
+        if region.x + region.width > width or region.y + region.height > height:
+            raise ValueError("tile region exceeds raster coverage")
+        output_sizes.append((region.width + 2 * halo) * (region.height + 2 * halo) * channels)
+
+    total_output = sum(output_sizes)
+    peak_workspace = total_output + max(output_sizes)
+    first = regions[0]
+    policy.check_tile(first.width, first.height, halo, peak_workspace)
+
+    tiles: list[ImageTile] = []
+    for region in regions:
+        desired_left = region.x - halo
+        desired_top = region.y - halo
+        desired_right = region.x + region.width + halo
+        desired_bottom = region.y + region.height + halo
+        source_left = max(desired_left, 0)
+        source_top = max(desired_top, 0)
+        source_right = min(desired_right, width)
+        source_bottom = min(desired_bottom, height)
+        crop = raster[source_top:source_bottom, source_left:source_right]
+        spatial_pad = (
+            (source_top - desired_top, desired_bottom - source_bottom),
+            (source_left - desired_left, desired_right - source_right),
+        )
+        if not halo:
+            padded = crop
+        elif raster.ndim == 3:
+            padded = np.pad(crop, (*spatial_pad, (0, 0)), mode="reflect")
+        else:
+            padded = np.pad(crop, spatial_pad, mode="reflect")
+        pixels = _immutable_uint8(padded)
+        tiles.append(ImageTile(pixels=pixels, region=region, halo=halo))
+    return tuple(tiles)
+
+
+def to_luminance(
+    tile: ImageTile,
+    *,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> LuminanceTile:
+    """Convert grayscale/RGB/RGBA uint8 to BT.601 float64 luminance.
+
+    RGBA alpha is intentionally ignored; only the first three RGB channels
+    contribute. The output retains the input halo and has range [0, 255].
+    """
+    _check_tile_instance(tile, policy)
+    height, width = tile.pixels.shape[:2]
+    plane_bytes = height * width * _FLOAT64.itemsize
+    workspace_planes = 2 if tile.pixels.ndim == 2 or tile.pixels.shape[2] == 1 else 3
+    policy.check_tile(
+        tile.region.width,
+        tile.region.height,
+        tile.halo,
+        workspace_planes * plane_bytes,
+    )
+
+    if tile.pixels.ndim == 2:
+        values = tile.pixels.astype(_FLOAT64, copy=True)
+    elif tile.pixels.shape[2] == 1:
+        values = tile.pixels[..., 0].astype(_FLOAT64, copy=True)
+    else:
+        values = np.empty((height, width), dtype=_FLOAT64)
+        temporary = np.empty_like(values)
+        np.multiply(tile.pixels[..., 0], _LUMINANCE_WEIGHTS[0], out=values)
+        np.multiply(tile.pixels[..., 1], _LUMINANCE_WEIGHTS[1], out=temporary)
+        np.add(values, temporary, out=values)
+        np.multiply(tile.pixels[..., 2], _LUMINANCE_WEIGHTS[2], out=temporary)
+        np.add(values, temporary, out=values)
+    return LuminanceTile(
+        values=_immutable_float64(values),
+        region=tile.region,
+        halo=tile.halo,
+    )
+
+
+def smooth_luminance(
+    tile: LuminanceTile,
+    *,
+    kernel_size: int = 3,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> KernelPlane:
+    """Apply a normalized binomial 3x3 or 5x5 kernel to the tile core."""
+    kernel, radius = _smoothing_kernel(kernel_size)
+    _check_luminance_tile(tile, required_halo=radius, policy=policy, workspace_planes=2)
+    values = _filter_core(tile, kernel)
+    return KernelPlane(
+        values=_immutable_float64(values),
+        coverage=tile.region,
+        halo_used=radius,
+    )
+
+
+def high_pass_residual(
+    tile: LuminanceTile,
+    *,
+    kernel_size: int = 3,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> KernelPlane:
+    """Subtract fixed binomial smoothing from luminance over the tile core."""
+    kernel, radius = _smoothing_kernel(kernel_size)
+    _check_luminance_tile(tile, required_halo=radius, policy=policy, workspace_planes=3)
+    smoothed = _filter_core(tile, kernel)
+    residual = np.subtract(_core_values(tile), smoothed)
+    return KernelPlane(
+        values=_immutable_float64(residual),
+        coverage=tile.region,
+        halo_used=radius,
+    )
+
+
+def finite_differences(
+    tile: LuminanceTile,
+    *,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> GradientPlanes:
+    """Return centered [−0.5, 0, 0.5] horizontal and vertical differences."""
+    _check_luminance_tile(tile, required_halo=1, policy=policy, workspace_planes=4)
+    halo = tile.halo
+    height = tile.region.height
+    width = tile.region.width
+    values = tile.values
+    horizontal = np.subtract(
+        values[halo : halo + height, halo + 1 : halo + width + 1],
+        values[halo : halo + height, halo - 1 : halo + width - 1],
+    )
+    horizontal *= 0.5
+    vertical = np.subtract(
+        values[halo + 1 : halo + height + 1, halo : halo + width],
+        values[halo - 1 : halo + height - 1, halo : halo + width],
+    )
+    vertical *= 0.5
+    coverage = tile.region
+    return GradientPlanes(
+        horizontal=KernelPlane(
+            values=_immutable_float64(horizontal),
+            coverage=coverage,
+            halo_used=1,
+        ),
+        vertical=KernelPlane(
+            values=_immutable_float64(vertical),
+            coverage=coverage,
+            halo_used=1,
+        ),
+    )
+
+
+def robust_local_statistics(
+    plane: KernelPlane,
+    *,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> RobustLocalStatistics:
+    """Return median, MAD, and quartiles for one bounded finite core plane."""
+    if not isinstance(plane, KernelPlane):
+        raise TypeError("statistics input must be a KernelPlane")
+    plane_bytes = plane.values.size * _FLOAT64.itemsize
+    policy.check_tile(
+        plane.coverage.width,
+        plane.coverage.height,
+        plane.halo_used,
+        4 * plane_bytes,
+    )
+    flattened = plane.values.reshape(-1)
+    median = float(np.median(flattened))
+    deviation = float(np.median(np.abs(flattened - median)))
+    quartiles = np.quantile(flattened, (0.25, 0.75), method="linear")
+    return RobustLocalStatistics(
+        sample_count=flattened.size,
+        median=median,
+        median_absolute_deviation=deviation,
+        lower_quartile=float(quartiles[0]),
+        upper_quartile=float(quartiles[1]),
+    )
+
+
+def _validate_raster(raster: NDArray[np.generic]) -> tuple[int, int, int]:
+    if not isinstance(raster, np.ndarray) or raster.dtype != _UINT8:
+        raise TypeError("raster must be a uint8 ndarray")
+    if raster.ndim == 2:
+        height, width = raster.shape
+        channels = 1
+    elif raster.ndim == 3 and raster.shape[2] in (1, 3, 4):
+        height, width, channels = raster.shape
+    else:
+        raise ValueError("raster shape must be HxW, HxWx1, HxWx3, or HxWx4")
+    if height <= 0 or width <= 0:
+        raise ValueError("raster dimensions must be positive")
+    return height, width, channels
+
+
+def _validate_halo(halo: int) -> None:
+    if type(halo) is not int or halo < 0:
+        raise ValueError("halo must be a nonnegative integer")
+
+
+def _validate_float_plane(values: NDArray[np.float64], expected: tuple[int, int]) -> None:
+    if (
+        not isinstance(values, np.ndarray)
+        or values.dtype != _FLOAT64
+        or values.ndim != 2
+        or values.shape != expected
+        or not values.flags.c_contiguous
+        or not _has_immutable_backing(values)
+        or not np.isfinite(values).all()
+    ):
+        raise ValueError("numeric plane must be finite immutable C-order little-endian float64")
+
+
+def _has_immutable_backing(array: NDArray[np.generic]) -> bool:
+    owner: object = array
+    while isinstance(owner, np.ndarray):
+        if owner.flags.writeable:
+            return False
+        owner = owner.base
+    return isinstance(owner, bytes)
+
+
+def _immutable_uint8(array: NDArray[np.generic]) -> NDArray[np.uint8]:
+    contiguous = np.ascontiguousarray(array, dtype=_UINT8)
+    payload = contiguous.tobytes(order="C")
+    return np.frombuffer(payload, dtype=_UINT8).reshape(contiguous.shape)
+
+
+def _immutable_float64(array: NDArray[np.generic]) -> NDArray[np.float64]:
+    contiguous = np.ascontiguousarray(array, dtype=_FLOAT64)
+    payload = contiguous.tobytes(order="C")
+    return np.frombuffer(payload, dtype=_FLOAT64).reshape(contiguous.shape)
+
+
+def _check_tile_instance(tile: ImageTile, policy: ForensicResourcePolicy) -> None:
+    if not isinstance(tile, ImageTile):
+        raise TypeError("luminance input must be an ImageTile")
+    policy.check_tile(tile.region.width, tile.region.height, tile.halo, 1)
+
+
+def _check_luminance_tile(
+    tile: LuminanceTile,
+    *,
+    required_halo: int,
+    policy: ForensicResourcePolicy,
+    workspace_planes: int,
+) -> None:
+    if not isinstance(tile, LuminanceTile):
+        raise TypeError("kernel input must be a LuminanceTile")
+    if tile.halo < required_halo:
+        raise ValueError("tile halo is smaller than the kernel radius")
+    workspace = tile.region.width * tile.region.height * _FLOAT64.itemsize * workspace_planes
+    policy.check_tile(tile.region.width, tile.region.height, tile.halo, workspace)
+
+
+def _smoothing_kernel(kernel_size: int) -> tuple[NDArray[np.float64], int]:
+    if type(kernel_size) is not int or kernel_size not in _SMOOTHING_VECTORS:
+        raise ValueError("smoothing kernel size must be 3 or 5")
+    vector = np.asarray(_SMOOTHING_VECTORS[kernel_size], dtype=_FLOAT64)
+    return np.multiply.outer(vector, vector), kernel_size // 2
+
+
+def _filter_core(tile: LuminanceTile, kernel: NDArray[np.float64]) -> NDArray[np.float64]:
+    size = kernel.shape[0]
+    radius = size // 2
+    windows = sliding_window_view(tile.values, (size, size))
+    start = tile.halo - radius
+    selected = windows[
+        start : start + tile.region.height,
+        start : start + tile.region.width,
+    ]
+    result: NDArray[np.float64] = np.einsum(
+        "ijkl,kl->ij", selected, kernel, dtype=_FLOAT64, optimize=False
+    )
+    return result
+
+
+def _core_values(tile: LuminanceTile) -> NDArray[np.float64]:
+    halo = tile.halo
+    return tile.values[
+        halo : halo + tile.region.height,
+        halo : halo + tile.region.width,
+    ]
 
 
 class _StreamedContainerError(Exception):
@@ -39,6 +501,82 @@ class _FFmpegPreprocessingTool:
             raise ValueError("timeout_seconds must be greater than zero")
         self._executable = executable
         self._timeout_seconds = timeout_seconds
+
+    def timing_stream(
+        self,
+        source: Path,
+        kind: Literal["audio", "video"],
+        *,
+        frames: bool,
+        timeout_seconds: float | None,
+    ) -> StreamTimingFacts | None:
+        return probe_timing_stream(
+            source, kind, frames=frames, timeout=self._effective_timeout(timeout_seconds)
+        )
+
+    def timing_records(
+        self,
+        source: Path,
+        facts: StreamTimingFacts,
+        requested: TimingInterval,
+        region: int,
+        kind: Literal["packet", "frame"],
+        *,
+        timeout_seconds: float | None,
+    ) -> tuple[TimingRecordsDescriptor, NDArray[np.int64]]:
+        return probe_timing_records(
+            source,
+            facts,
+            requested,
+            region,
+            kind,
+            timeout=self._effective_timeout(timeout_seconds),
+        )
+
+    def dense_window(
+        self,
+        source: Path,
+        target: Path,
+        facts: StreamTimingFacts,
+        requested: TimingInterval,
+        region: int,
+        *,
+        artifact_budget: _GeneratedArtifactBudget,
+        timeout_seconds: float | None,
+    ) -> tuple[DenseVideoWindowDescriptor, TimingRecordsDescriptor, NDArray[np.int64]]:
+        return decode_dense_window(
+            source,
+            target,
+            facts,
+            requested,
+            region,
+            executable=self._executable,
+            artifact_budget=artifact_budget,
+            timeout=self._effective_timeout(timeout_seconds),
+        )
+
+    def audio_precision(
+        self, source: Path, *, timeout_seconds: float | None
+    ) -> AudioPrecisionFacts:
+        return probe_audio(
+            source, executable="ffprobe", timeout=self._effective_timeout(timeout_seconds)
+        )
+
+    def precision_window(
+        self,
+        source: Path,
+        facts: AudioPrecisionFacts,
+        requested: IndexRange,
+        *,
+        timeout_seconds: float | None,
+    ) -> DecodedAudioWindow:
+        return decode_audio_window(
+            source,
+            facts,
+            requested,
+            executable=self._executable,
+            timeout=self._effective_timeout(timeout_seconds),
+        )
 
     def normalized_audio(
         self,
@@ -415,3 +953,1376 @@ def _rewrite_existing(stream: BinaryIO, offset: int, data: bytes) -> None:
     stream.seek(offset)
     if stream.write(data) != len(data):
         raise _GeneratedArtifactWriteError
+
+
+@dataclass(frozen=True, slots=True)
+class _JpegStructure:
+    header: JpegHeader
+    tables: tuple[JpegQuantizationTable, ...]
+
+
+@dataclass(slots=True)
+class _JpegParser:
+    """Bounded marker parser; entropy is skipped, never decoded or repaired."""
+
+    data: bytes
+    header: JpegHeader | None = None
+    tables: dict[int, JpegQuantizationTable] = field(default_factory=dict)
+    huffman: set[tuple[int, int]] = field(default_factory=set)
+    progression: dict[tuple[int, int], int] = field(default_factory=dict)
+    marker_count: int = 0
+    payload_bytes: int = 0
+    scans: int = 0
+    restart_interval: int = 0
+
+    def marker(self) -> None:
+        self.marker_count += 1
+        if self.marker_count > _FORENSIC_POLICY.jpeg_markers:
+            raise PreprocessingError("resource_limit", "jpeg_structure_limit")
+
+    def parse(self) -> _JpegStructure:
+        if len(self.data) > _FORENSIC_POLICY.jpeg_input_bytes:
+            raise PreprocessingError("resource_limit", "jpeg_input_limit")
+        if not self.data.startswith(b"\xff\xd8"):
+            raise ValueError("signature")
+        self.marker()  # SOI is included in the total marker budget.
+        position = 2
+        while position < len(self.data):
+            self.marker()
+            if self.data[position] != 255:
+                raise ValueError("marker")
+            while position < len(self.data) and self.data[position] == 255:
+                position += 1
+            if position >= len(self.data):
+                raise ValueError("marker exhaustion")
+            marker = self.data[position]
+            position += 1
+            if marker == 0xD9:
+                if (
+                    position != len(self.data)
+                    or self.header is None
+                    or not self.scans
+                    or any(
+                        (c.component_id, 0) not in self.progression for c in self.header.components
+                    )
+                ):
+                    raise ValueError("incomplete image or trailing bytes")
+                return _JpegStructure(
+                    self.header, tuple(self.tables[k] for k in sorted(self.tables))
+                )
+            if (
+                marker not in {0xC0, 0xC2, 0xDB, 0xC4, 0xDD, 0xDA, 0xFE}
+                and not 0xE0 <= marker <= 0xEF
+            ):
+                raise ValueError("unsupported marker")
+            if position + 2 > len(self.data):
+                raise ValueError("length exhaustion")
+            length = int.from_bytes(self.data[position : position + 2], "big")
+            if length < 2 or position + length > len(self.data):
+                raise ValueError("segment length")
+            self.payload_bytes += length
+            if self.payload_bytes > _FORENSIC_POLICY.jpeg_marker_bytes:
+                raise PreprocessingError("resource_limit", "jpeg_structure_limit")
+            payload = self.data[position + 2 : position + length]
+            position += length
+            if marker in {0xC0, 0xC2}:
+                self.sof(payload, marker)
+            elif marker == 0xDB:
+                self.dqt(payload)
+            elif marker == 0xC4:
+                self.dht(payload)
+            elif marker == 0xDD:
+                if len(payload) != 2:
+                    raise ValueError("restart interval")
+                self.restart_interval = int.from_bytes(payload, "big")
+            elif marker == 0xDA:
+                self.sos(payload)
+                position = self.entropy_end(position)
+        raise ValueError("missing EOI")
+
+    def sof(self, payload: bytes, marker: int) -> None:
+        if self.header is not None or len(payload) < 6 or len(payload) != 6 + 3 * payload[5]:
+            raise ValueError("SOF definition")
+        if payload[0] != 8:
+            raise ValueError("unsupported sample precision")
+        self.header = JpegHeader(
+            width=int.from_bytes(payload[3:5], "big"),
+            height=int.from_bytes(payload[1:3], "big"),
+            precision_bits=8,
+            coding="baseline" if marker == 0xC0 else "progressive",
+            components=tuple(
+                JpegComponent(
+                    component_id=payload[i],
+                    horizontal_sampling=payload[i + 1] >> 4,
+                    vertical_sampling=payload[i + 1] & 15,
+                    quantization_table_id=payload[i + 2],
+                )
+                for i in range(6, len(payload), 3)
+            ),
+        )
+        try:
+            self.header.preflight(len(self.data))
+        except ValueError:
+            raise PreprocessingError("resource_limit", "jpeg_preflight") from None
+
+    def dqt(self, payload: bytes) -> None:
+        if not payload or self.scans:
+            raise ValueError("late or empty DQT")
+        position = 0
+        # Derive the JPEG zigzag positions rather than copying a decoder table.
+        zigzag: list[tuple[int, int]] = []
+        for diagonal in range(15):
+            rows = range(max(0, diagonal - 7), min(7, diagonal) + 1)
+            zigzag.extend(
+                (r, diagonal - r) for r in (reversed(rows) if diagonal % 2 == 0 else rows)
+            )
+        while position < len(payload):
+            precision, table_id = payload[position] >> 4, payload[position] & 15
+            position += 1
+            size = 64 * (precision + 1)
+            if (
+                precision > 1
+                or table_id > 3
+                or table_id in self.tables
+                or position + size > len(payload)
+            ):
+                raise ValueError("DQT definition")
+            values = [0] * 64
+            for index, (row, column) in enumerate(zigzag):
+                offset = position + index * (precision + 1)
+                values[row * 8 + column] = int.from_bytes(
+                    payload[offset : offset + precision + 1], "big"
+                )
+            self.tables[table_id] = JpegQuantizationTable(
+                table_id=table_id, precision_bits=8 if precision == 0 else 16, values=tuple(values)
+            )
+            position += size
+
+    def dht(self, payload: bytes) -> None:
+        position = 0
+        if not payload:
+            raise ValueError("empty DHT")
+        while position < len(payload):
+            if position + 17 > len(payload):
+                raise ValueError("DHT length")
+            table_class, table_id = payload[position] >> 4, payload[position] & 15
+            counts = payload[position + 1 : position + 17]
+            symbols = sum(counts)
+            slots = 1
+            for count in counts:
+                slots = slots * 2 - count
+                if slots < 0:
+                    raise ValueError("oversubscribed Huffman table")
+            if (
+                table_class > 1
+                or table_id > 3
+                or not 1 <= symbols <= 256
+                or position + 17 + symbols > len(payload)
+            ):
+                raise ValueError("DHT definition")
+            self.huffman.add((table_class, table_id))
+            position += 17 + symbols
+
+    def sos(self, payload: bytes) -> None:
+        if (
+            self.header is None
+            or len(payload) < 6
+            or not 1 <= payload[0] <= 4
+            or len(payload) != 4 + 2 * payload[0]
+        ):
+            raise ValueError("SOS length or ordering")
+        components = {c.component_id: c for c in self.header.components}
+        ids = payload[1:-3:2]
+        ss, se, approximation = payload[-3:]
+        ah, al = approximation >> 4, approximation & 15
+        if len(set(ids)) != len(ids) or any(c not in components for c in ids):
+            raise ValueError("SOS components")
+        if self.header.coding == "baseline":
+            if (ss, se, ah, al) != (0, 63, 0, 0) or any(
+                t.precision_bits != 8 for t in self.tables.values()
+            ):
+                raise ValueError("baseline scan")
+        elif (
+            not 0 <= ss <= se <= 63
+            or (ss == 0 and se != 0)
+            or (ss > 0 and len(ids) != 1)
+            or ah > 13
+            or al > 13
+            or (ah != 0 and ah != al + 1)
+        ):
+            raise ValueError("progressive scan")
+        for component_id, selector in zip(ids, payload[2:-3:2], strict=True):
+            if (
+                components[component_id].quantization_table_id not in self.tables
+                or selector >> 4 > 3
+                or selector & 15 > 3
+            ):
+                raise ValueError("missing quantization or invalid Huffman selector")
+            if (ss == 0 and ah == 0 and (0, selector >> 4) not in self.huffman) or (
+                se > 0 and (1, selector & 15) not in self.huffman
+            ):
+                raise ValueError("missing Huffman table")
+            for coefficient in range(ss, se + 1):
+                key = (component_id, coefficient)
+                if (ah == 0 and key in self.progression) or (
+                    ah and self.progression.get(key) != ah
+                ):
+                    raise ValueError("inconsistent scan progression")
+                self.progression[key] = al
+        self.scans += 1
+
+    def entropy_end(self, position: int) -> int:
+        restart = 0
+        while position < len(self.data):
+            position = self.data.find(b"\xff", position)
+            if position < 0:
+                break
+            start = position
+            position += 1
+            while position < len(self.data) and self.data[position] == 255:
+                position += 1
+            if position >= len(self.data):
+                break
+            marker = self.data[position]
+            if marker == 0:
+                position += 1
+            elif 0xD0 <= marker <= 0xD7:
+                self.marker()
+                if not self.restart_interval or marker != 0xD0 + restart:
+                    raise ValueError("restart ordering")
+                restart = (restart + 1) % 8
+                position += 1
+            else:
+                return start
+        raise ValueError("entropy exhaustion")
+
+
+def _parse_jpeg(data: bytes) -> _JpegStructure:
+    try:
+        return _JpegParser(data).parse()
+    except ValueError:
+        raise PreprocessingError("decode", "jpeg_structure") from None
+
+
+_JPEG_PROCESS_BYTES = 4096
+_JPEG_PROCESS_SECONDS = 30.0
+
+
+def _decode_jpeg_coefficients(
+    source: Path, source_sha256: str, *, timeout_seconds: float | None
+) -> None:
+    """Only the child imports jpegio. Files have already been registered and charged."""
+    if source.name != "source":
+        raise PreprocessingError("invariant", "jpeg_source_name")
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in {"SYSTEMROOT", "WINDIR", "TEMP", "TMP"}
+    }
+    # Coefficient projection needs no BLAS workers; bound NumPy's native pool.
+    environment["OPENBLAS_NUM_THREADS"] = "1"
+    executable = sys.executable
+    if os.name == "nt":
+        # The Windows venv executable is a redirector that spawns another process.
+        # Launch CPython itself so terminate/kill/reap own the actual decoder.
+        executable = vars(sys)["_base_executable"]
+        if not isinstance(executable, str) or not Path(executable).is_absolute():
+            raise PreprocessingError("invariant", "jpeg_interpreter")
+        environment["__PYVENV_LAUNCHER__"] = sys.executable
+    try:
+        result = run_bounded_process(
+            [
+                executable,
+                "-I",
+                "-c",
+                "from fakedetector.preprocessing._media_tools import _jpeg_child_main; "
+                "_jpeg_child_main()",
+                "--jpeg-child-v1",
+                source_sha256,
+            ],
+            cwd=source.parent,
+            timeout_seconds=min(_JPEG_PROCESS_SECONDS, timeout_seconds or _JPEG_PROCESS_SECONDS),
+            stdout_limit_bytes=_JPEG_PROCESS_BYTES,
+            stderr_limit_bytes=_JPEG_PROCESS_BYTES,
+            environment=environment,
+        )
+    except ProcessOutputLimitError:
+        raise PreprocessingError("resource_limit", "jpeg_native_output") from None
+    except ProcessTimeoutError:
+        raise PreprocessingError("media_tool", "jpeg_native_timeout") from None
+    except ProcessInfrastructureError as error:
+        raise PreprocessingError(
+            "infrastructure",
+            "jpeg_native_process",
+            _cleanup_safety_barrier=error._cleanup_safety_barrier,
+        ) from None
+    if result.return_code != 0:
+        raise PreprocessingError("decode", "jpeg_native_error")
+    if result.stderr:
+        raise PreprocessingError("decode", "jpeg_native_warning")
+    expected = json.dumps(
+        {"version": 1, "status": "clean", "source_sha256": source_sha256}, separators=(",", ":")
+    ).encode("ascii")
+    if result.stdout != expected or result.stderr != b"":
+        raise PreprocessingError("infrastructure", "jpeg_native_protocol")
+
+
+def _jpeg_child(source_sha256: str) -> None:
+    """Closed child entry: bounded source, preflight again, fixed-size mapped outputs."""
+    from fakedetector._filesystem import require_regular_file
+
+    source = Path("source")
+    require_regular_file(source)
+    with source.open("rb") as stream:
+        data = stream.read(_FORENSIC_POLICY.jpeg_input_bytes + 1)
+    structure = _parse_jpeg(data)
+    if hashlib.sha256(data).hexdigest() != source_sha256:
+        raise ValueError("source identity")
+    allocation = structure.header.preflight(len(data))
+    del data
+    targets = tuple(
+        Path(f"jpeg_component_{index}.raw") for index in range(len(allocation.block_shapes))
+    )
+    for target, shape in zip(targets, allocation.block_shapes, strict=True):
+        require_regular_file(target)
+        if target.stat().st_size != shape[0] * shape[1] * 64 * 4:
+            raise ValueError("output extent")
+    jpegio = importlib.import_module("jpegio")
+    decoded = jpegio.read("source")
+    if (
+        decoded is None
+        or len(decoded.coef_arrays) != len(targets)
+        or len(decoded.comp_info) != len(targets)
+    ):
+        raise ValueError("native components")
+    for component, actual in zip(structure.header.components, decoded.comp_info, strict=True):
+        if (
+            actual.component_id,
+            actual.h_samp_factor,
+            actual.v_samp_factor,
+            actual.quant_tbl_no,
+        ) != (
+            component.component_id,
+            component.horizontal_sampling,
+            component.vertical_sampling,
+            component.quantization_table_id,
+        ):
+            raise ValueError("native component mismatch")
+    if len(decoded.quant_tables) != len(structure.tables):
+        raise ValueError("native quantization count")
+    # pyjpegio exposes a compact list in ascending JPEG table-slot order;
+    # component selectors retain the original (possibly sparse) table IDs.
+    for table, native_table in zip(structure.tables, decoded.quant_tables, strict=True):
+        if native_table.shape != (8, 8) or tuple(int(v) for v in native_table.flat) != table.values:
+            raise ValueError("native quantization mismatch")
+    for target, shape, plane in zip(
+        targets, allocation.block_shapes, decoded.coef_arrays, strict=True
+    ):
+        rows, columns = shape
+        if (
+            plane.shape != (rows * 8, columns * 8)
+            or plane.dtype.kind not in {"i", "u"}
+            or int(plane.min()) < -(1 << 31)
+            or int(plane.max()) >= 1 << 31
+        ):
+            raise ValueError("native coefficient layout or range")
+        with (
+            target.open("r+b") as output,
+            mmap.mmap(output.fileno(), rows * columns * 256, access=mmap.ACCESS_WRITE) as mapped,
+        ):
+            for row in range(rows):
+                blocks = plane[row * 8 : (row + 1) * 8].reshape(8, columns, 8).transpose(1, 0, 2)
+                mapped[row * columns * 256 : (row + 1) * columns * 256] = blocks.astype(
+                    "<i4", copy=False
+                ).tobytes(order="C")
+            mapped.flush()
+    sys.stdout.write(
+        json.dumps(
+            {"version": 1, "status": "clean", "source_sha256": source_sha256}, separators=(",", ":")
+        )
+    )
+
+
+def _jpeg_child_main() -> None:
+    if len(sys.argv) != 3 or sys.argv[1] != "--jpeg-child-v1":
+        sys.exit(2)
+    try:
+        _jpeg_child(sys.argv[2])
+    except Exception:
+        # Do not emit native objects, paths, exception text, or a traceback.
+        sys.exit(2)
+
+
+_FORMATS = {"u8": 8, "s16": 16, "s32": 32, "flt": 32, "dbl": 64}
+_FRAME = re.compile(
+    rb"(?m)^\[Parsed_ashowinfo_\d+ @ [0-9a-fA-Fx]+\] "
+    rb"n:(\d+) pts:(-?\d+) pts_time:\S+ fmt:(\w+) channels:(\d+) "
+    rb"chlayout:([^\r\n]{1,64}?) rate:(\d+) nb_samples:(\d+) checksum:"
+)
+
+
+def select_audio_windows(
+    total_samples: int,
+    rate: int,
+    channels: int,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> tuple[IndexRange, ...]:
+    """Beginning/center/end; merge overlaps only while the merged extent fits policy.
+
+    Overlapping candidates whose union exceeds the ceiling are clipped at the
+    previous stop. This retains coverage without duplicate samples or larger windows.
+    """
+    policy.check_audio(1, channels, rate)
+    if type(total_samples) is not int or not 1 <= total_samples < 1 << 63:
+        raise ValueError("invalid declared audio duration")
+    size = min(
+        total_samples, policy.audio_window_seconds * rate, policy.audio_window_samples // channels
+    )
+    starts: tuple[int, ...] = (0, (total_samples - size) // 2, total_samples - size)
+    if policy.audio_windows == 1:
+        starts = (0,)
+    elif policy.audio_windows == 2:
+        starts = (0, total_samples - size)
+    result: list[IndexRange] = []
+    for start in sorted(set(starts)):
+        stop = start + size
+        if result and start <= result[-1].stop:
+            if stop - result[-1].start <= size:
+                result[-1] = IndexRange(start=result[-1].start, stop=stop)
+                continue
+            start = result[-1].stop
+        if stop > start:
+            result.append(IndexRange(start=start, stop=stop))
+    return tuple(result)
+
+
+def _process(
+    arguments: list[str], source: Path, timeout: float, limit: int, phase: str
+) -> ProcessResult:
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise PreprocessingError("invariant", "execution_budget")
+    try:
+        result = run_bounded_process(
+            arguments,
+            cwd=source.parent,
+            timeout_seconds=min(timeout, 30.0),
+            stdout_limit_bytes=limit,
+            stderr_limit_bytes=_FORENSIC_POLICY.timing_probe_bytes,
+        )
+    except ProcessOutputLimitError:
+        raise PreprocessingError("resource_limit", f"{phase}_overflow") from None
+    except ProcessTimeoutError:
+        raise PreprocessingError("media_tool", f"{phase}_timeout") from None
+    except ProcessInfrastructureError as error:
+        raise PreprocessingError(
+            "infrastructure",
+            f"{phase}_process",
+            _cleanup_safety_barrier=error._cleanup_safety_barrier,
+        ) from None
+    if result.return_code != 0 or result.stdout is None:
+        # Only the decoder's explicit invalid-data diagnostic establishes malformed
+        # media; other failures retain the unknown decoder-failure classification.
+        if b"Invalid data found when processing input" in (result.stderr or b""):
+            raise PreprocessingError("decode", f"{phase}_malformed_media")
+        raise PreprocessingError("decode", f"{phase}_decoder")
+    return result
+
+
+def probe_audio(source: Path, *, executable: str, timeout: float) -> AudioPrecisionFacts:
+    result = _process(
+        [
+            executable,
+            "-v",
+            "error",
+            "-protocol_whitelist",
+            "file",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=index,codec_name,sample_fmt,sample_rate,channels,channel_layout,"
+            "bits_per_sample,bits_per_raw_sample,duration,start_time",
+            "-of",
+            "json",
+            str(source.absolute()),
+        ],
+        source,
+        min(timeout, 15.0),
+        _FORENSIC_POLICY.timing_probe_bytes,
+        "audio_precision_probe",
+    )
+    try:
+        payload = json.loads(result.stdout or b"")
+        if not isinstance(payload, dict) or not isinstance(payload.get("streams"), list):
+            raise ValueError
+        stream = payload["streams"][0]
+        if len(payload["streams"]) != 1 or not isinstance(stream, dict):
+            raise ValueError
+        bits = int(stream.get("bits_per_sample", 0)) or None
+        raw_bits = int(stream.get("bits_per_raw_sample", 0)) or None
+        return AudioPrecisionFacts(
+            stream_index=int(stream["index"]),
+            codec=stream["codec_name"],
+            source_bits=raw_bits or bits,
+            decoder_format="unknown",
+            sample_rate=int(stream["sample_rate"]),
+            channels=int(stream["channels"]),
+            declared_bits_per_sample=bits,
+            declared_bits_per_raw_sample=raw_bits,
+            declared_sample_format=stream.get("sample_fmt"),
+            declared_channel_layout=stream.get("channel_layout"),
+            declared_duration_seconds=_optional_seconds(stream.get("duration")),
+            declared_start_seconds=_optional_seconds(stream.get("start_time")),
+        )
+    except (ValueError, TypeError, KeyError, IndexError):
+        raise PreprocessingError("decode", "audio_precision_malformed") from None
+
+
+def _optional_seconds(value: object) -> float | None:
+    if value is None or value == "N/A":
+        return None
+    if not isinstance(value, str):
+        raise ValueError
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError
+    return result
+
+
+@dataclass(frozen=True, slots=True)
+class DecodedAudioWindow:
+    facts: AudioPrecisionFacts
+    first_pts: int
+    values: NDArray[np.generic]
+
+
+def decode_audio_window(
+    source: Path,
+    facts: AudioPrecisionFacts,
+    requested: IndexRange,
+    *,
+    executable: str,
+    timeout: float,
+) -> DecodedAudioWindow:
+    try:
+        _FORENSIC_POLICY.check_audio(requested.count, facts.channels, facts.sample_rate)
+    except ValueError:
+        raise PreprocessingError("resource_limit", "audio_precision_preflight") from None
+    declared = facts.declared_sample_format or "unknown"
+    base = declared.removesuffix("p")
+    if base not in _FORMATS or base in ("u8", "s16", "s32") and (facts.source_bits or 0) > 32:
+        raise PreprocessingError("decode", "audio_precision_unsupported_format")
+    integer = base in ("u8", "s16", "s32")
+    encoding = "s32le" if integer else "f64le"
+    dtype = "<i4" if integer else "<f8"
+    rate = facts.sample_rate
+    result = _process(
+        [
+            executable,
+            "-hide_banner",
+            "-nostats",
+            "-v",
+            "info",
+            "-nostdin",
+            "-xerror",
+            "-err_detect",
+            "explode",
+            "-copyts",
+            "-protocol_whitelist",
+            "file",
+            "-ss",
+            format(requested.start / rate, ".12f"),
+            "-t",
+            format(requested.count / rate, ".12f"),
+            "-i",
+            str(source.absolute()),
+            "-map",
+            f"0:{facts.stream_index}",
+            "-vn",
+            "-sn",
+            "-dn",
+            "-af",
+            f"asettb=1/{rate},atrim=end_sample={requested.count},ashowinfo",
+            "-dither_method",
+            "none",
+            "-c:a",
+            f"pcm_{encoding}",
+            "-f",
+            encoding,
+            "pipe:1",
+        ],
+        source,
+        timeout,
+        requested.count * facts.channels * np.dtype(dtype).itemsize,
+        "audio_precision_window",
+    )
+    output = result.stdout or b""
+    records = _FRAME.findall(result.stderr or b"")
+    if not records or not output:
+        raise PreprocessingError("decode", "audio_precision_empty_window")
+    try:
+        first_pts = int(records[0][1])
+        expected_pts = first_pts
+        layout = records[0][4].decode("ascii")
+        count = 0
+        for ordinal, (
+            number,
+            pts,
+            fmt,
+            channels,
+            channel_layout,
+            sample_rate,
+            samples,
+        ) in enumerate(records):
+            if (
+                int(number) != ordinal
+                or int(pts) != expected_pts
+                or fmt.decode("ascii") != declared
+                or int(channels) != facts.channels
+                or int(sample_rate) != rate
+                or channel_layout.decode("ascii") != layout
+                or int(samples) <= 0
+            ):
+                raise ValueError
+            count += int(samples)
+            expected_pts += int(samples)
+        if (
+            count > requested.count
+            or len(output) != count * facts.channels * np.dtype(dtype).itemsize
+        ):
+            raise ValueError
+        values = np.frombuffer(output, dtype=dtype).reshape(count, facts.channels)
+        if not np.isfinite(values).all():
+            raise ValueError
+        shift = 0
+        if integer:
+            precision = _FORMATS[base]
+            if base == "s32" and facts.declared_bits_per_raw_sample is not None:
+                precision = facts.declared_bits_per_raw_sample
+            shift = 32 - precision
+            if shift < 0 or shift > 24 or np.any(values.astype(np.int64) % (1 << shift)):
+                raise ValueError
+            values = np.frombuffer((values >> shift).astype("<i4").tobytes(), dtype="<i4").reshape(
+                count, facts.channels
+            )
+        updated = facts.model_dump()
+        updated.update(
+            decoder_format=base,
+            decoded_planar=declared.endswith("p"),
+            decoder_storage_bits=_FORMATS[base],
+            decoded_sample_rate=rate,
+            decoded_channels=facts.channels,
+            integer_right_shift=shift,
+            decoded_channel_layout=layout,
+        )
+        observed = AudioPrecisionFacts.model_validate(updated)
+    except (ValueError, UnicodeError, TypeError):
+        raise PreprocessingError("decode", "audio_precision_observation_mismatch") from None
+    return DecodedAudioWindow(observed, first_pts, cast(NDArray[np.generic], values))
+
+
+def _freeze(values: NDArray[np.generic]) -> NDArray[np.generic]:
+    return np.frombuffer(values.tobytes(order="C"), dtype=values.dtype).reshape(values.shape)
+
+
+def validate_samples(
+    samples: NDArray[np.generic], rate: int, policy: ForensicResourcePolicy = _FORENSIC_POLICY
+) -> None:
+    if (
+        not isinstance(samples, np.ndarray)
+        or samples.ndim != 2
+        or samples.dtype.str not in ("<i4", "<f8")
+        or not samples.flags.c_contiguous
+        or not _has_immutable_backing(samples)
+    ):
+        raise ValueError("audio requires immutable little-endian sample/channel storage")
+    policy.check_audio(samples.shape[0], samples.shape[1], rate)
+    if not np.isfinite(samples).all():
+        raise ValueError("audio samples must be finite")
+
+
+@dataclass(frozen=True, slots=True)
+class AudioFrames:
+    """Read-only strided (frame, channel, sample) view with window-relative coverage."""
+
+    values: NDArray[np.generic]
+    hop: int
+    covered_samples: int
+    dropped_tail_samples: int
+
+
+def frame_audio(
+    samples: NDArray[np.generic],
+    *,
+    sample_rate: int,
+    frame_length: int,
+    hop: int,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> AudioFrames:
+    validate_samples(samples, sample_rate, policy)
+    policy.check_spectral(frame_length, hop, 1, 1)
+    count = max(0, 1 + (samples.shape[0] - frame_length) // hop)
+    if count:
+        policy.check_spectral(frame_length, hop, count * samples.shape[1], 1)
+        values = np.lib.stride_tricks.sliding_window_view(samples, frame_length, axis=0)[::hop]
+        covered = (count - 1) * hop + frame_length
+    else:
+        values = np.frombuffer(b"", dtype=samples.dtype).reshape(0, samples.shape[1], frame_length)
+        covered = 0
+    return AudioFrames(values, hop, covered, samples.shape[0] - covered)
+
+
+def periodic_hann(length: int) -> NDArray[np.generic]:
+    """w[k] = (1 - cos(2*pi*k/N))/2, k=0..N-1; N=1 gives [0]."""
+    if type(length) is not int or not 1 <= length <= _FORENSIC_POLICY.fft_size:
+        raise ValueError("Hann length exceeds policy")
+    return _freeze((0.5 - 0.5 * np.cos(2 * np.pi * np.arange(length) / length)).astype("<f8"))
+
+
+def frequency_bins(sample_rate: int, n_fft: int) -> NDArray[np.generic]:
+    _FORENSIC_POLICY.check_audio(1, 1, sample_rate)
+    _FORENSIC_POLICY.check_spectral(n_fft, n_fft, 1, 1)
+    return _freeze(np.arange(n_fft // 2 + 1, dtype="<f8") * (sample_rate / n_fft))
+
+
+@dataclass(frozen=True, slots=True)
+class SpectralBatch:
+    """Frame ordinals; sample start = window start + ordinal * hop."""
+
+    first_frame: int
+    values: NDArray[np.generic]
+
+
+def stft_batches(
+    samples: NDArray[np.generic],
+    *,
+    sample_rate: int,
+    n_fft: int,
+    hop: int,
+    scaling: Literal["complex", "magnitude", "power"] = "magnitude",
+    window: Literal["hann", "rectangular"] = "hann",
+    batch_size: int = 32,
+    policy: ForensicResourcePolicy = _FORENSIC_POLICY,
+) -> Iterator[SpectralBatch]:
+    """Unnormalized rFFT, independent channels, increasing nonnegative bins.
+
+    Power is abs(rFFT)**2, never PSD. No centering, padding, amplitude correction
+    or one-sided doubling. At most one float64/complex128 batch is materialized.
+    """
+    frames = frame_audio(
+        samples, sample_rate=sample_rate, frame_length=n_fft, hop=hop, policy=policy
+    )
+    policy.check_spectral(n_fft, hop, max(1, frames.values.shape[0] * samples.shape[1]), 1)
+    if type(batch_size) is not int or not 1 <= batch_size <= policy.spectral_batch:
+        raise ValueError("spectral batch exceeds policy")
+    if scaling not in ("complex", "magnitude", "power") or window not in ("hann", "rectangular"):
+        raise ValueError("unknown spectral definition")
+    # Includes input conversion, multiply, promoted FFT/workspace, output + immutable copy.
+    workspace = batch_size * samples.shape[1] * (n_fft * 16 + (n_fft // 2 + 1) * 64)
+    if workspace > policy.residual_workspace_bytes:
+        raise ValueError("spectral workspace exceeds policy")
+    weights = periodic_hann(n_fft) if window == "hann" else np.ones(n_fft, dtype="<f8")
+
+    def batches() -> Iterator[SpectralBatch]:
+        for start in range(0, frames.values.shape[0], batch_size):
+            values = frames.values[start : start + batch_size].astype("<f8") * weights
+            with np.errstate(over="ignore", invalid="ignore"):
+                spectrum = np.fft.rfft(values, n=n_fft, axis=-1, norm="backward")
+                output = spectrum if scaling == "complex" else np.abs(spectrum)
+                if scaling == "power":
+                    output = np.square(output)
+            if not np.isfinite(output).all():
+                raise ValueError("nonfinite spectral output")
+            yield SpectralBatch(
+                start, _freeze(output.astype("<c16" if scaling == "complex" else "<f8"))
+            )
+
+    return batches()
+
+
+_TIMING_COLUMNS = (0, 1, 2, 5, 6, 7, 8)
+_TIMING_PICTURES = {name: i + 1 for i, name in enumerate(("I", "P", "B", "S", "SI", "SP", "BI"))}
+
+
+def _timing_integer(value: object) -> int | None:
+    if value is None or value == "N/A":
+        return None
+    if isinstance(value, str) and re.fullmatch(r"-?\d{1,19}", value):
+        value = int(value)
+    if type(value) is not int or abs(value) >= 1 << 63:
+        raise ValueError("invalid bounded integer")
+    return value
+
+
+def _timing_positive_rational(value: object) -> tuple[int, int]:
+    try:
+        if not isinstance(value, str) or not re.fullmatch(r"\d{1,10}/\d{1,10}", value):
+            raise ValueError
+        num, den = map(int, value.split("/"))
+        if not 0 < num < 1 << 31 or not 0 < den < 1 << 31:
+            raise ValueError
+        return num, den
+    except ValueError:
+        raise PreprocessingError("decode", "timing_malformed_rational") from None
+
+
+def _timing_base(value: object) -> TimeBase:
+    num, den = _timing_positive_rational(value)
+    return TimeBase(numerator=num, denominator=den)
+
+
+def _timing_rate(value: object) -> TimingRate | None:
+    if value in (None, "N/A", "0/0", "0/1"):
+        return None
+    num, den = _timing_positive_rational(value)
+    return TimingRate(numerator=num, denominator=den)
+
+
+def _timing_decimal(value: object) -> TimingRational | None:
+    if value is None or value == "N/A":
+        return None
+    if not isinstance(value, str) or not re.fullmatch(r"-?\d{1,19}(\.\d{1,9})?", value):
+        raise ValueError("invalid declared time")
+    exact = Fraction(value)
+    return TimingRational(numerator=exact.numerator, denominator=exact.denominator)
+
+
+def _probe_timing(
+    source: Path, selection: str, entries: str, timeout: float, interval: str | None = None
+) -> dict[str, object]:
+    arguments = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file",
+        "-threads",
+        "1",
+        "-select_streams",
+        selection,
+        "-show_entries",
+        entries,
+        "-of",
+        "json",
+    ]
+    if interval is not None:
+        arguments.extend(["-read_intervals", interval])
+    arguments.append(str(source.absolute()))
+    result = _process(
+        arguments, source, min(timeout, 15.0), _FORENSIC_POLICY.timing_probe_bytes, "timing_probe"
+    )
+    try:
+        payload = json.loads(result.stdout or b"")
+        if not isinstance(payload, dict):
+            raise ValueError
+    except (ValueError, RecursionError):
+        raise PreprocessingError("decode", "timing_malformed_probe") from None
+    if result.stderr:
+        raise PreprocessingError("decode", "timing_probe_diagnostic")
+    return payload
+
+
+def probe_timing_stream(
+    source: Path, kind: Literal["audio", "video"], *, frames: bool, timeout: float
+) -> StreamTimingFacts | None:
+    payload = _probe_timing(
+        source,
+        "a:0" if kind == "audio" else "v:0",
+        "stream=index,codec_type,time_base,start_pts,duration_ts,start_time,"
+        "duration,avg_frame_rate,r_frame_rate,width,height",
+        timeout,
+    )
+    try:
+        streams = payload.get("streams")
+        if not isinstance(streams, list) or len(streams) > 1:
+            raise ValueError
+        if not streams:
+            return None
+        stream = streams[0]
+        if not isinstance(stream, dict) or stream.get("codec_type") != kind:
+            raise ValueError
+        if stream.get("time_base") in (None, "N/A"):
+            raise PreprocessingError("decode", "timing_unsupported_time_base")
+        base = _timing_base(stream["time_base"])
+        if frames and kind == "video":
+            width, height = (
+                _timing_integer(stream.get("width")),
+                _timing_integer(stream.get("height")),
+            )
+            if (
+                width is None
+                or height is None
+                or not 0 < width <= _FORENSIC_POLICY.native_video_width
+                or not 0 < height <= _FORENSIC_POLICY.native_video_height
+            ):
+                raise PreprocessingError("resource_limit", "timing_frame_geometry")
+        index = _timing_integer(stream.get("index"))
+        if index is None:
+            raise ValueError
+        return StreamTimingFacts(
+            stream_index=index,
+            stream_kind=kind,
+            time_base=base,
+            start_tick=_timing_integer(stream.get("start_pts")),
+            duration_ticks=_timing_integer(stream.get("duration_ts")),
+            declared_start=_timing_decimal(stream.get("start_time")),
+            declared_duration=_timing_decimal(stream.get("duration")),
+            native_width=_timing_integer(stream.get("width")) if kind == "video" else None,
+            native_height=_timing_integer(stream.get("height")) if kind == "video" else None,
+            avg_frame_rate=_timing_rate(stream.get("avg_frame_rate")),
+            r_frame_rate=_timing_rate(stream.get("r_frame_rate")),
+        )
+    except (ValueError, TypeError):
+        raise PreprocessingError("decode", "timing_malformed_stream") from None
+
+
+def select_timing_regions(facts: StreamTimingFacts) -> tuple[TimingInterval, ...]:
+    """Nominal two-second beginning/middle/end windows in stream ticks.
+
+    Unknown duration selects the beginning only. No declared duration is promoted
+    to observed coverage. Overlapping candidates are merged into their interval union.
+    """
+    base = facts.time_base
+    start = facts.start_tick
+    if start is None and facts.declared_start is not None:
+        start = (
+            facts.declared_start.numerator
+            * base.denominator
+            // (facts.declared_start.denominator * base.numerator)
+        )
+    start = start or 0
+    duration = facts.duration_ticks
+    if duration is None and facts.declared_duration is not None:
+        duration = (
+            facts.declared_duration.numerator
+            * base.denominator
+            // (facts.declared_duration.denominator * base.numerator)
+        )
+    size = max(1, 2 * base.denominator // base.numerator)
+    total = max(1, duration) if duration is not None else size
+    size = min(size, total)
+    starts = sorted({start, start + (total - size) // 2, start + total - size})
+    result: list[TimingInterval] = []
+    for offset in starts[: _FORENSIC_POLICY.timing_regions]:
+        stop = offset + size
+        if result and offset < result[-1].stop:
+            result[-1] = TimingInterval(start=result[-1].start, stop=max(result[-1].stop, stop))
+        else:
+            result.append(TimingInterval(start=offset, stop=stop))
+    return tuple(result)
+
+
+def _timing_seek(ticks: int, base: TimeBase) -> str:
+    # ffprobe accepts microsecond precision. Floor the request explicitly; stored
+    # requested ticks remain exact and observed seek position remains independent.
+    microseconds = ticks * base.numerator * 1_000_000 // base.denominator
+    sign = "-" if microseconds < 0 else ""
+    seconds, fraction = divmod(abs(microseconds), 1_000_000)
+    return f"{sign}{seconds}.{fraction:06d}"
+
+
+def _timing_coverage(
+    values: NDArray[np.generic], requested: TimingInterval
+) -> Literal["envelope", "partial", "unknown", "empty"]:
+    if not len(values):
+        return "empty"
+    if not all(int(row[4]) & 1 for row in values):
+        return "unknown"
+    # Python ints avoid overflow of signed int64 when adding durations.
+    first = min(int(row[0]) for row in values)
+    end = max(int(row[0]) + (int(row[2]) if int(row[4]) & 4 else 0) for row in values)
+    return "envelope" if first <= requested.start and end >= requested.stop else "partial"
+
+
+def probe_timing_records(
+    source: Path,
+    facts: StreamTimingFacts,
+    requested: TimingInterval,
+    region: int,
+    record_kind: Literal["packet", "frame"],
+    *,
+    timeout: float,
+) -> tuple[TimingRecordsDescriptor, NDArray[np.int64]]:
+    limit = (
+        _FORENSIC_POLICY.timing_packets
+        if record_kind == "packet"
+        else _FORENSIC_POLICY.timing_frames
+    )
+    fields = (
+        "stream_index,pts,dts,duration"
+        if record_kind == "packet"
+        else "stream_index,pts,pkt_dts,duration,best_effort_timestamp,"
+        "pkt_duration,key_frame,pict_type"
+    )
+    # The # limit bounds input packets even when frame output is absent. Frame
+    # output has an independent record cap (one packet need not mean one frame).
+    interval = f"{_timing_seek(requested.start, facts.time_base)}%+#{limit}"
+    payload = _probe_timing(
+        source,
+        str(facts.stream_index),
+        f"{record_kind}={fields}:frame_side_data=",
+        timeout,
+        interval,
+    )
+    try:
+        rows = payload.get(f"{record_kind}s")
+        if not isinstance(rows, list):
+            raise ValueError
+        if len(rows) > limit:
+            raise PreprocessingError("resource_limit", "timing_record_count")
+        values = np.zeros((len(rows), 9), dtype="<i8")
+        for ordinal, row in enumerate(rows):
+            if (
+                not isinstance(row, dict)
+                or _timing_integer(row.get("stream_index")) != facts.stream_index
+            ):
+                raise ValueError
+            fields_values = [
+                row.get("pts"),
+                row.get("dts" if record_kind == "packet" else "pkt_dts"),
+                row.get("duration"),
+                row.get("best_effort_timestamp"),
+                row.get("pkt_duration"),
+                row.get("key_frame"),
+                _TIMING_PICTURES.get(row.get("pict_type", "")),
+            ]
+            values[ordinal, 3] = ordinal
+            for bit, (column, value) in enumerate(zip(_TIMING_COLUMNS, fields_values, strict=True)):
+                parsed = _timing_integer(value)
+                if parsed is not None:
+                    values[ordinal, column] = parsed
+                    values[ordinal, 4] |= 1 << bit
+        descriptor = TimingRecordsDescriptor(
+            stream_index=facts.stream_index,
+            region=region,
+            record_kind=record_kind,
+            first_tick=int(values[0, 0]) if len(rows) and values[0, 4] & 1 else None,
+            last_tick=int(values[-1, 0]) if len(rows) and values[-1, 4] & 1 else None,
+            requested=requested,
+            coverage=_timing_coverage(values, requested),
+            decode_operation_id=uuid4().hex if record_kind == "frame" else None,
+            data=NumericArtifact(
+                artifact_id=f"timing_{facts.stream_index}_{region}_{record_kind}",
+                dtype="<i8",
+                shape=values.shape,
+            )
+            if rows
+            else None,
+        )
+        validate_timing_values(descriptor, values)
+        immutable = np.frombuffer(values.tobytes(), dtype="<i8").reshape(values.shape)
+        return descriptor, immutable
+    except (ValueError, TypeError, KeyError, OverflowError):
+        raise PreprocessingError("decode", "timing_malformed_records") from None
+
+
+def validate_timing_values(
+    descriptor: TimingRecordsDescriptor, values: NDArray[np.generic]
+) -> None:
+    """Validate typed storage again on the analyzer read boundary."""
+    if values.dtype != np.dtype("<i8") or values.shape != (descriptor.record_count, 9):
+        raise ValueError("malformed typed timing artifact")
+    for ordinal, row in enumerate(values):
+        mask = int(row[4])
+        if row[3] != ordinal or not 0 <= mask <= 127:
+            raise ValueError("malformed timing ordinal/mask")
+        for bit, column in enumerate(_TIMING_COLUMNS):
+            if not mask & (1 << bit) and row[column] != 0:
+                raise ValueError("missing timing value must be zero")
+            if int(row[column]) == -(1 << 63):
+                raise ValueError("timing value exceeds signed bound")
+        if (
+            row[2] < 0
+            or row[6] < 0
+            or row[7] not in (0, 1)
+            or not 0 <= row[8] <= 7
+            or mask & 64
+            and row[8] == 0
+        ):
+            raise ValueError("malformed timing duration/key/picture")
+        if descriptor.record_kind == "packet" and (mask & ~7 or any(row[5:])):
+            raise ValueError("packet cannot contain decoded-frame facts")
+    first = int(values[0, 0]) if len(values) and values[0, 4] & 1 else None
+    last = int(values[-1, 0]) if len(values) and values[-1, 4] & 1 else None
+    if (
+        first != descriptor.first_tick
+        or last != descriptor.last_tick
+        or _timing_coverage(values, descriptor.requested) != descriptor.coverage
+    ):
+        raise ValueError("timing coverage does not match observed records")
+
+
+_DENSE_LINE = re.compile(
+    rb"n:\s*(\d+) pts:\s*(-?\d+|NOPTS) pts_time:\S+\s+"
+    rb"(?:duration:\s*(-?\d+|NOPTS) duration_time:\S+\s+)?"
+    rb"fmt:([a-zA-Z0-9_]+) (?:cl:\S+ )?sar:\d+/\d+ s:(\d+)x(\d+) "
+    rb"i:[PTB?] iskey:([01]) type:([A-Z?]+) checksum:([0-9A-Fa-f]{8}) "
+    rb"plane_checksum:\[[0-9A-Fa-f ]+\] mean:\[[0-9. ]+\] stdev:\[[0-9. ]+\]"
+)
+
+
+def dense_geometry(facts: StreamTimingFacts) -> tuple[int, int]:
+    width, height = facts.native_width, facts.native_height
+    policy = _FORENSIC_POLICY
+    if (
+        facts.stream_kind != "video"
+        or width is None
+        or height is None
+        or not 0 < width <= policy.native_video_width
+        or not 0 < height <= policy.native_video_height
+    ):
+        raise PreprocessingError("decode", "dense_unsupported_geometry")
+    scale = min(
+        Fraction(1), Fraction(policy.dense_width, width), Fraction(policy.dense_height, height)
+    )
+    return max(1, int(width * scale)), max(1, int(height * scale))
+
+
+def _dense_records(
+    stderr: bytes,
+    facts: StreamTimingFacts,
+    requested: TimingInterval,
+    region: int,
+    geometry: tuple[int, int],
+    operation: str,
+) -> tuple[TimingRecordsDescriptor, NDArray[np.int64], tuple[int, ...]]:
+    observations: dict[str, list[tuple[bytes | None, ...]]] = {"native": [], "dense": []}
+    bases: dict[str, list[TimeBase]] = {"native": [], "dense": []}
+    try:
+        for line in stderr.splitlines():
+            tagged = re.fullmatch(rb"\[showinfo@(native|dense) @ [0-9a-fA-Fx]+\] (.*)", line)
+            if tagged is None:
+                continue
+            label = tagged[1].decode("ascii")
+            body = tagged[2].strip()
+            if body.startswith(b"config in time_base:"):
+                match = re.fullmatch(rb"config in time_base: (\d+/\d+), frame_rate: \d+/\d+", body)
+                if match is None:
+                    raise ValueError
+                bases[label].append(_timing_base(match[1].decode("ascii")))
+            elif (
+                not body
+                or re.fullmatch(rb"User Data=[0-9A-Fa-f]*", body)
+                or body.startswith((b"config out time_base:", b"color_range:", b"side data -"))
+            ):
+                continue
+            else:
+                match = _DENSE_LINE.fullmatch(body)
+                if match is None:
+                    raise ValueError
+                observations[label].append(match.groups())
+                if len(observations[label]) > _FORENSIC_POLICY.dense_frames:
+                    raise PreprocessingError("resource_limit", "dense_frame_count")
+        if any(len(bases[label]) != 1 for label in bases):
+            raise ValueError
+        if any(bases[label] != [facts.time_base] for label in bases):
+            raise PreprocessingError("decode", "dense_unsupported_time_base")
+        native, output = observations["native"], observations["dense"]
+        if len(native) != len(output):
+            raise PreprocessingError("decode", "dense_timing_count")
+        values = np.zeros((len(output), 9), dtype="<i8")
+        checksums = []
+        for ordinal, (raw, retained) in enumerate(zip(native, output, strict=True)):
+            n, pts, duration, fmt, width, height, key, picture, checksum = retained
+            if (
+                int(n or b"-1") != ordinal
+                or raw[:3] != retained[:3]
+                or raw[6:8] != retained[6:8]
+                or (int(raw[4] or b"0"), int(raw[5] or b"0"))
+                != (facts.native_width, facts.native_height)
+                or fmt != b"rgb24"
+                or (int(width or b"0"), int(height or b"0")) != geometry
+            ):
+                raise ValueError
+            if pts == b"NOPTS":
+                raise PreprocessingError("decode", "dense_unsupported_timestamp")
+            tick = int(pts or b"0")
+            values[ordinal, 0] = tick
+            values[ordinal, 3] = ordinal
+            values[ordinal, 4] = 1 | 32
+            values[ordinal, 7] = int(key or b"0")
+            if duration not in (None, b"NOPTS"):
+                values[ordinal, 2] = int(duration)
+                values[ordinal, 4] |= 4
+            kind = _TIMING_PICTURES.get((picture or b"").decode("ascii"))
+            if kind is not None:
+                values[ordinal, 8] = kind
+                values[ordinal, 4] |= 64
+            checksums.append(int(checksum or b"0", 16))
+        if len(values):
+            span = facts.time_base.seconds(int(values[:, 0].max()) - int(values[:, 0].min()))
+            if span > _FORENSIC_POLICY.dense_window_seconds:
+                raise ValueError
+        descriptor = TimingRecordsDescriptor(
+            stream_index=facts.stream_index,
+            region=region,
+            record_kind="frame",
+            purpose="dense",
+            first_tick=int(values[0, 0]) if len(values) else None,
+            last_tick=int(values[-1, 0]) if len(values) else None,
+            requested=requested,
+            coverage=_timing_coverage(values, requested),
+            stop_reason="dense_limits_or_eof",
+            decode_operation_id=operation,
+            data=NumericArtifact(
+                artifact_id=f"dense_timing_{facts.stream_index}_{region}_frame",
+                dtype="<i8",
+                shape=values.shape,
+            )
+            if len(values)
+            else None,
+        )
+        validate_timing_values(descriptor, values)
+        return (
+            descriptor,
+            np.frombuffer(values.tobytes(), dtype="<i8").reshape(values.shape),
+            tuple(checksums),
+        )
+    except (ValueError, TypeError, OverflowError, UnicodeError):
+        raise PreprocessingError("decode", "dense_malformed_timing") from None
+
+
+def decode_dense_window(
+    source: Path,
+    target: Path,
+    facts: StreamTimingFacts,
+    requested: TimingInterval,
+    region: int,
+    *,
+    executable: str,
+    artifact_budget: _GeneratedArtifactBudget,
+    timeout: float,
+) -> tuple[DenseVideoWindowDescriptor, TimingRecordsDescriptor, NDArray[np.int64]]:
+    width, height = dense_geometry(facts)
+    policy = _FORENSIC_POLICY
+    frame_bytes = width * height * 3
+    maximum = policy.dense_frames * frame_bytes
+    try:
+        artifact_budget.ensure_feasible(maximum)
+    except _GeneratedArtifactLimitError:
+        raise PreprocessingError("resource_limit", "dense_artifacts") from None
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise PreprocessingError("invariant", "execution_budget")
+    base = facts.time_base
+    stop = min(
+        requested.stop,
+        requested.start + max(1, policy.dense_window_seconds * base.denominator // base.numerator),
+    )
+    operation = uuid4().hex
+    # Separate trim filters enforce BOTH timestamp and frame limits and signal EOF.
+    # Input -t would include keyframe preroll and can erase a late requested window.
+    filters = (
+        f"trim=start_pts={requested.start}:end_pts={stop},trim=end_frame={policy.dense_frames},"
+        f"showinfo@native,scale={width}:{height}:flags=bilinear,format=rgb24,showinfo@dense"
+    )
+    arguments = [
+        executable,
+        "-hide_banner",
+        "-nostats",
+        "-v",
+        "info",
+        "-nostdin",
+        "-xerror",
+        "-err_detect",
+        "explode",
+        "-copyts",
+        "-protocol_whitelist",
+        "file",
+        "-threads",
+        "1",
+        "-filter_threads",
+        "1",
+        "-noautorotate",
+        "-seek_timestamp",
+        "1",
+        "-noaccurate_seek",
+        "-ss",
+        _timing_seek(requested.start, base),
+        "-i",
+        str(source.absolute()),
+        "-map",
+        f"0:{facts.stream_index}",
+        "-an",
+        "-sn",
+        "-dn",
+        "-vf",
+        filters,
+        "-frames:v",
+        str(policy.dense_frames),
+        "-fps_mode",
+        "passthrough",
+        "-c:v",
+        "rawvideo",
+        "-threads:v",
+        "1",
+        "-pix_fmt",
+        "rgb24",
+        "-f",
+        "rawvideo",
+        "pipe:1",
+    ]
+    try:
+        with artifact_budget.open_output(target) as output:
+            result = run_bounded_process(
+                arguments,
+                cwd=source.parent,
+                timeout_seconds=min(timeout, 30.0),
+                stdout_limit_bytes=maximum,
+                stdout_sink=output,
+                stderr_limit_bytes=policy.timing_probe_bytes,
+            )
+    except ProcessOutputLimitError as error:
+        raise PreprocessingError("resource_limit", f"dense_{error.stream}_overflow") from None
+    except ProcessTimeoutError:
+        raise PreprocessingError("media_tool", "dense_timeout") from None
+    except ProcessInfrastructureError as error:
+        if error.phase == "stdout_write":
+            raise PreprocessingError("artifact_write", "dense_pixels") from None
+        raise PreprocessingError(
+            "infrastructure", "dense_process", _cleanup_safety_barrier=error._cleanup_safety_barrier
+        ) from None
+    except _GeneratedArtifactLimitError:
+        raise PreprocessingError("resource_limit", "dense_artifacts") from None
+    except _GeneratedArtifactWriteError:
+        raise PreprocessingError("artifact_write", "dense_pixels") from None
+    if result.return_code != 0:
+        phase = (
+            "dense_malformed_media"
+            if b"Invalid data found when processing input" in (result.stderr or b"")
+            else "dense_decoder"
+        )
+        raise PreprocessingError("decode", phase)
+    records, values, checksums = _dense_records(
+        result.stderr or b"", facts, requested, region, (width, height), operation
+    )
+    try:
+        size = target.stat().st_size
+        if size % frame_bytes:
+            raise PreprocessingError("decode", "dense_partial_frame")
+        if size // frame_bytes != records.record_count:
+            raise PreprocessingError("decode", "dense_pixel_timing_count")
+        if not size:
+            raise PreprocessingError("decode", "dense_empty_coverage")
+        with target.open("rb") as stream:
+            for checksum in checksums:
+                if zlib.adler32(stream.read(frame_bytes), 0) != checksum:
+                    raise PreprocessingError("decode", "dense_pixel_timing_checksum")
+    except OSError:
+        raise PreprocessingError("artifact_write", "dense_pixels") from None
+    pixels = NumericArtifact(
+        artifact_id=f"dense_{facts.stream_index}_{region}",
+        dtype="|u1",
+        shape=(records.record_count, height, width, 3),
+    )
+    assert (
+        records.data is not None
+        and facts.native_width is not None
+        and facts.native_height is not None
+    )
+    dense = DenseVideoWindowDescriptor(
+        timing_artifact_id=records.data.artifact_id,
+        decode_operation_id=operation,
+        pixels=pixels,
+        native_width=facts.native_width,
+        native_height=facts.native_height,
+    )
+    return dense, records, values

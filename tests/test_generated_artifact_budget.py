@@ -11,12 +11,15 @@ import yaml
 from pydantic import ValidationError
 
 from fakedetector._generated_artifact_budget import (
+    _BoundedArtifactWriter,
     _GeneratedArtifactBudget,
     _GeneratedArtifactLimitError,
     _GeneratedArtifactWriteError,
 )
 from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig
+from fakedetector.core._bounded_process import ProcessInfrastructureError, ProcessTimeoutError
+from fakedetector.core._cleanup_safety import _CleanupSafetyInterruption
 from fakedetector.domain import MediaType
 from fakedetector.lifecycle.artifacts import WorkspaceArtifactRegistry
 
@@ -170,3 +173,91 @@ def test_bounded_writer_exposes_only_seekable_write_operations(tmp_path: Path) -
 
     assert output.closed is True
     output.close()
+
+
+@pytest.mark.parametrize("primary_kind", ["process", "preprocessing", "interruption"])
+@pytest.mark.parametrize("interruption_type", [KeyboardInterrupt, SystemExit])
+def test_close_interruption_preserves_primary_cleanup_barrier(
+    tmp_path, monkeypatch, primary_kind, interruption_type
+):
+    from fakedetector.preprocessing._errors import PreprocessingError
+
+    class Barrier:
+        def try_confirm_safe(self):
+            return False
+
+    barrier = Barrier()
+    primary = {
+        "process": ProcessInfrastructureError("termination", _cleanup_safety_barrier=barrier),
+        "preprocessing": PreprocessingError(
+            "infrastructure", "test", _cleanup_safety_barrier=barrier
+        ),
+        "interruption": _CleanupSafetyInterruption(KeyboardInterrupt(), barrier),
+    }[primary_kind]
+    secondary = interruption_type()
+    close = _BoundedArtifactWriter.close
+
+    def interrupt(writer):
+        close(writer)
+        raise secondary
+
+    monkeypatch.setattr(_BoundedArtifactWriter, "close", interrupt)
+    with (
+        pytest.raises(_CleanupSafetyInterruption) as caught,
+        _image_budget().open_output(tmp_path / "output"),
+    ):
+        raise primary
+    assert caught.value.interruption is secondary
+    assert caught.value._cleanup_safety_barrier is barrier
+    assert not barrier.try_confirm_safe()
+    assert str(tmp_path) not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "primary", [None, ProcessTimeoutError(), ProcessInfrastructureError("wait")]
+)
+@pytest.mark.parametrize(
+    "secondary", [_GeneratedArtifactWriteError(), KeyboardInterrupt(), ValueError()]
+)
+def test_close_failure_precedence_without_cleanup_barrier(
+    tmp_path, monkeypatch, primary, secondary
+):
+    close = _BoundedArtifactWriter.close
+
+    def fail(writer):
+        close(writer)
+        raise secondary
+
+    monkeypatch.setattr(_BoundedArtifactWriter, "close", fail)
+    expected = (
+        primary
+        if primary is not None and isinstance(secondary, _GeneratedArtifactWriteError)
+        else secondary
+    )
+    with pytest.raises(type(expected)) as caught, _image_budget().open_output(tmp_path / "output"):
+        if primary is not None:
+            raise primary
+    assert caught.value is expected
+
+
+def test_ordinary_close_write_failure_preserves_unresolved_primary(tmp_path, monkeypatch):
+    class Barrier:
+        def try_confirm_safe(self):
+            return False
+
+    barrier = Barrier()
+    primary = ProcessInfrastructureError("termination", _cleanup_safety_barrier=barrier)
+    close = _BoundedArtifactWriter.close
+
+    def fail(writer):
+        close(writer)
+        raise _GeneratedArtifactWriteError
+
+    monkeypatch.setattr(_BoundedArtifactWriter, "close", fail)
+    with (
+        pytest.raises(ProcessInfrastructureError) as caught,
+        _image_budget().open_output(tmp_path / "output"),
+    ):
+        raise primary
+    assert caught.value is primary
+    assert caught.value._cleanup_safety_barrier is barrier

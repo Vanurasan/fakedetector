@@ -21,7 +21,131 @@ from fakedetector.core._cleanup_safety import _CleanupSafetyInterruption
 
 
 def python_child(source: str, *arguments: str) -> list[str]:
-    return [sys.executable, "-c", source, *arguments]
+    # These stdlib-only probes must reap the interpreter, not a venv redirector.
+    executable = vars(sys)["_base_executable"] if sys.platform == "win32" else sys.executable
+    return [executable, "-I", "-c", source, *arguments]
+
+
+@pytest.mark.parametrize("timeout", [float("nan"), float("inf"), -float("inf"), 0, -1])
+def test_invalid_deadline_is_rejected_before_child(tmp_path, monkeypatch, timeout):
+    monkeypatch.setattr(
+        bounded_process_module, "_start_process", lambda *a, **k: pytest.fail("child started")
+    )
+    with pytest.raises(ValueError):
+        run_bounded_process(["trusted"], cwd=tmp_path, timeout_seconds=timeout)
+
+
+@pytest.mark.parametrize(
+    "failure,expected",
+    [
+        (ProcessInfrastructureError("stdout_read"), "stdout_read"),
+        (ProcessInfrastructureError("stderr_read"), "stderr_read"),
+        (ProcessInfrastructureError("stdout_write"), "stdout_write"),
+        (ProcessInfrastructureError("wait"), "stdout_close"),
+        (ProcessTimeoutError(), "stdout_close"),
+        (ProcessOutputLimitError(), "stdout_close"),
+        (KeyboardInterrupt(), None),
+    ],
+)
+@pytest.mark.parametrize("stderr_close", [False, True])
+def test_execution_failure_and_two_close_failures_have_stable_precedence(
+    tmp_path, monkeypatch, failure, expected, stderr_close
+):
+    closed = []
+
+    class Pipe:
+        def __init__(self, name):
+            self.name = name
+
+        def close(self):
+            closed.append(self.name)
+            if self.name == "stdout" or stderr_close:
+                raise OSError("PRIVATE diagnostic")
+
+    process = _FakeProcess(stdout=Pipe("stdout"))
+    process.stderr = Pipe("stderr")
+    monkeypatch.setattr(bounded_process_module, "_start_process", lambda *a, **k: process)
+
+    def fail(*a, **k):
+        raise failure
+
+    monkeypatch.setattr(bounded_process_module, "_wait_with_bounded_capture", fail)
+    with pytest.raises(
+        KeyboardInterrupt if expected is None else ProcessInfrastructureError
+    ) as caught:
+        run_bounded_process(
+            ["trusted"],
+            cwd=tmp_path,
+            timeout_seconds=1,
+            stdout_limit_bytes=1,
+            stderr_limit_bytes=1,
+        )
+    if expected is not None:
+        assert caught.value.phase == expected
+    else:
+        assert caught.value is failure
+    assert closed == ["stdout", "stderr"]
+    assert process.wait_calls >= 1
+    assert "PRIVATE" not in str(caught.value)
+
+
+def test_stdout_and_stderr_are_drained_concurrently(tmp_path: Path) -> None:
+    result = run_bounded_process(
+        python_child(
+            "import os\nfor _ in range(64):\n os.write(1, b'a'*8192)\n os.write(2, b'b'*8192)"
+        ),
+        cwd=tmp_path,
+        timeout_seconds=5,
+        stdout_limit_bytes=524288,
+        stderr_limit_bytes=524288,
+    )
+    assert result.return_code == 0
+    assert result.stdout == b"a" * 524288
+    assert result.stderr == b"b" * 524288
+
+
+@pytest.mark.parametrize("descriptor", [1, 2])
+def test_either_pipe_overflow_reaps_child(tmp_path, monkeypatch, descriptor):
+    processes = []
+    real_popen = subprocess.Popen
+
+    def record(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(bounded_process_module.subprocess, "Popen", record)
+    with pytest.raises(ProcessOutputLimitError):
+        run_bounded_process(
+            python_child(f"import os,time; os.write({descriptor}, b'x'*65536); time.sleep(10)"),
+            cwd=tmp_path,
+            timeout_seconds=2,
+            stdout_limit_bytes=64,
+            stderr_limit_bytes=64,
+        )
+    assert len(processes) == 1 and processes[0].poll() is not None
+    assert processes[0].stdout.closed and processes[0].stderr.closed
+
+
+def test_stderr_capture_timeout_reaps_child(tmp_path, monkeypatch):
+    processes = []
+    real_popen = subprocess.Popen
+
+    def record(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(bounded_process_module.subprocess, "Popen", record)
+    with pytest.raises(ProcessTimeoutError):
+        run_bounded_process(
+            python_child("import os,time; os.write(2,b'warning'); time.sleep(10)"),
+            cwd=tmp_path,
+            timeout_seconds=0.2,
+            stdout_limit_bytes=64,
+            stderr_limit_bytes=64,
+        )
+    assert processes[0].poll() is not None
 
 
 def test_successful_process_discards_stdout(tmp_path: Path) -> None:
@@ -279,6 +403,7 @@ def test_process_start_uses_safe_fixed_boundary(
         "stdout": expected_stdout,
         "stderr": subprocess.DEVNULL,
         "cwd": tmp_path,
+        "env": None,
     }
 
 
@@ -323,6 +448,7 @@ class _FailingSink:
 class _FakeProcess:
     def __init__(self, *, stdout: object | None = None) -> None:
         self.stdout = stdout
+        self.stderr = None
         self.killed = False
         self.terminated = False
         self.wait_calls = 0
@@ -347,6 +473,24 @@ class _WaitFailureProcess(_FakeProcess):
         if self.wait_calls == 1:
             raise OSError("PRIVATE wait detail")
         return 0
+
+
+@pytest.mark.parametrize("fail_close,phase", [(False, "stderr_read"), (True, "stderr_close")])
+def test_stderr_failure_is_safe_and_both_streams_close(tmp_path, monkeypatch, fail_close, phase):
+    process = _FakeProcess(stdout=BytesIO())
+    process.stderr = _FailingStdout(fail_close=fail_close)
+    monkeypatch.setattr(bounded_process_module.subprocess, "Popen", lambda *a, **k: process)
+    monkeypatch.setattr(bounded_process_module, "_make_stdout_nonblocking", lambda stream: None)
+    with pytest.raises(ProcessInfrastructureError) as error:
+        run_bounded_process(
+            ["trusted"],
+            cwd=tmp_path,
+            timeout_seconds=1,
+            stdout_limit_bytes=64,
+            stderr_limit_bytes=64,
+        )
+    assert error.value.phase == phase and "PRIVATE" not in str(error.value)
+    assert process.stdout.closed and process.wait_calls == 1
 
 
 class _NeverReapedProcess(_FakeProcess):
