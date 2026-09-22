@@ -135,9 +135,14 @@ uv run pre-commit run --all-files
 uv run fakedetector --help
 ```
 
-Источники истины: [PROJECT](docs/PROJECT.md), [CONTRACTS](docs/CONTRACTS.md),
-[ROADMAP](docs/ROADMAP.md), [REFERENCES](docs/REFERENCES.md) и
-[CHANGELOG](docs/CHANGELOG.md).
+Источники истины по областям: [AGENTS](AGENTS.md) — процесс работы агента,
+[PROJECT](docs/PROJECT.md) — архитектура и продуктовые политики,
+[CONTRACTS](docs/CONTRACTS.md) — интерфейсы и данные,
+[METHODS](docs/METHODS.md) — принятая методология,
+[REFERENCES](docs/REFERENCES.md) — provenance/licensing,
+[ROADMAP](docs/ROADMAP.md) — план и статус.
+[CHANGELOG](docs/CHANGELOG.md) хранит историю;
+[research](docs/research/README.md) — исследовательские свидетельства.
 
 ## Лицензия
 

@@ -28,7 +28,10 @@
 - обязательные проверки;
 - границу MVP и работ после MVP.
 
-Документ не повторяет архитектуру и контракты. При необходимости он ссылается на `PROJECT.md` и `CONTRACTS.md`.
+Документ не повторяет архитектуру, общие контракты или алгоритмические
+спецификации: их владельцы — `PROJECT.md`, `CONTRACTS.md` и `METHODS.md`.
+Происхождение/лицензии принадлежат `REFERENCES.md`, workflow агента —
+`../AGENTS.md`. Имя кандидата в плане не разрешает реализацию метода.
 
 ---
 
@@ -78,7 +81,9 @@ AFTER_MVP
 - выполнены все обязательные задачи;
 - выполнены критерии завершения;
 - проходят связанные тесты;
-- код соответствует `PROJECT.md` и `CONTRACTS.md`;
+- код соответствует применимым каноническим решениям в `PROJECT.md`,
+  `CONTRACTS.md`, `METHODS.md` и `REFERENCES.md`;
+- получена приёмка владельца по `../AGENTS.md`;
 - обновлены чек-листы;
 - принятое проектное изменение внесено в `CHANGELOG.md`, если оно было;
 - отсутствуют скрытые заглушки, выданные за готовую функцию.
@@ -103,7 +108,8 @@ AFTER_MVP
   решения само по себе не останавливает независимую разрешённую работу;
 - в разделе «Блокеры и решения» фиксируется конкретный вопрос;
 - агент предлагает варианты и последствия;
-- после выбора обновляется владелец области (`PROJECT.md` или `CONTRACTS.md`);
+- после выбора обновляется документ владельца соответствующей области
+  по карте `PROJECT.md` §0.2;
 - изменение вносится в `CHANGELOG.md`;
 - работа продолжается.
 
@@ -118,16 +124,16 @@ AFTER_MVP
 Текущий этап: Stage 12 — Analyzer Expansion, Licensing & Product Validation
 Статус Stage 11: DONE / CLOSED
 Статус Macros 0–8 Stage 11: DONE / owner accepted
-Последний завершённый Macro: Stage 12 Macro 1 — Forensic Preprocessing Foundations (DONE / CLOSED / owner accepted)
+Последний завершённый Macro: Stage 12 Macro 1 — Forensic Preprocessing Foundations (DONE / CLOSED / owner accepted / merged)
 Статус Stage 12: IN_PROGRESS
-Текущий Macro: отсутствует; Macro 1 — DONE / CLOSED / owner accepted
+Текущий Macro: Macro 2 — Image Analyzer Expansion — Wave 1 (IN_PROGRESS)
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Последний завершённый increment: M1-H — independent closure audit (DONE / PASS)
-Следующее действие: owner review и commit документационного закрытия Macro 1; затем lifecycle ветки, описанный в §2.2
-Следующий Macro: Macro 2 — Image Analyzer Expansion — Wave 1 (NOT_STARTED; ветка ещё не создана)
-Будущие работы: Stage 12 Macros 2–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
-Критические блокеры: отсутствуют
+Текущий increment: M2-A — BLOCKED на обязательном method/provenance gate; изменений кода нет
+Следующее действие: целевое исследование DQ/grid, выбор методов и принятие владельцем записей METHODS.md
+Будущие работы: Stage 12 Macros 3–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
+Критические блокеры: M2-A не имеет принятых спецификаций DQ/grid в METHODS.md
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
 Документационная база: сформирована
 ```
@@ -158,11 +164,17 @@ Macro 0 — `DONE / merged`. Macro 1 — Forensic Preprocessing Foundations —
 аудит — `PASS`, M1H-F01 и M1H-F02 — `CLOSED`, замечаний к исправлению — **0**.
 Свидетельства закрытия и принятые ограничения приведены в разделе M1-H ниже.
 
-Ближайшее действие — review и commit этого документационного закрытия владельцем.
-Далее владелец выполняет push ветки Macro 1 → PR Macro 1 в `main` → merge →
-синхронизацию `main` → создание ветки Macro 2 → начало
-**Macro 2 — Image Analyzer Expansion — Wave 1**. Macro 2 пока только запланирован
-(`NOT_STARTED`), его ветка не создана. Stage 12 остаётся `IN_PROGRESS`.
+Macro 1 — `DONE / CLOSED / merged`. Macro 2 — **IN_PROGRESS**; текущая ветка —
+`feat/stage12-macro2-image-analyzer-expansion-wave1`. Попытка M2-A корректно
+остановлена (`STOPPED / BLOCKED`) на обязательном method/provenance gate:
+названия DQ/grid в плане не задают конкретный принятый production-метод.
+Изменений кода M2-A нет.
+
+Следующая предпосылка — отдельное целевое исследование DQ/grid, выбор методов,
+фиксация provenance и явное принятие владельцем спецификаций в `METHODS.md`.
+Только после появления принятых записей разрешено возобновить реализацию M2-A.
+Текущая задача Source-of-Truth & Agent Workflow Hardening меняет только
+документацию/process; она не выполняет исследование и не снимает этот gate.
 
 ---
 
@@ -200,7 +212,7 @@ Macro 0 — `DONE / merged`. Macro 1 — Forensic Preprocessing Foundations —
 - [x] `ROADMAP.md` назначен владельцем плана и текущего состояния;
 - [x] `CHANGELOG.md` назначен владельцем истории изменений;
 - [x] старые MD-файлы признаны архивными;
-- [x] определён приоритет источников истины;
+- [x] разграничены области ответственности источников истины;
 - [x] сформированы правила работы ИИ-агента.
 
 ## Критерий завершения
@@ -2255,23 +2267,11 @@ GPT-6 Astra High — `PASS`; strict clean-SHA certification — `PASS`; фина
 
 ### Graphify — принятая владельцем REBUILD_POLICY
 
-Финальная рекомендация `GRAPHIFY_RECOMMENDATION=REBUILD_POLICY` принята владельцем.
-Текущий локальный граф — `STALE`: он не является достоверным доказательством
-архитектуры. Graphify остаётся вспомогательным инструментом, не production
-dependency. `graphify-out/` остаётся ignored; сгенерированные данные должны
-оставаться ignored/untracked и не попадать в source distributions. Это включает
-`graph.json`, `graph.html`, cache, memory, reflections, generated learning data
-и локальные маркеры interpreter/root.
-
-Генерация выполняется только вручную и явно после существенных изменений
-структуры модулей, composition, импортов, lifecycle, каталога анализаторов,
-release tooling или нормативных архитектурных контрактов. При генерации
-фиксируются source/build SHA либо эквивалентный fingerprint исходников.
-Статус `CURRENT` допустим только при соответствии provenance текущим исходникам;
-иначе граф считается `STALE` и не используется как архитектурное доказательство.
-Валидация должна проверять охват исходников/модулей, существование путей и
-символов, provenance генератора и его версии, а также репрезентативные связи.
-В рамках этого закрытия Graphify не пересобирался; команда генерации не задаётся.
+Финальная рекомендация `GRAPHIFY_RECOMMENDATION=REBUILD_POLICY` была принята
+владельцем при закрытии Stage 11. Нормативные правила перенесены в
+`../AGENTS.md`, раздел «Graphify — REBUILD_POLICY». На момент закрытия Stage 11
+локальный граф был `STALE`, пересборка в том проходе не выполнялась;
+свидетельства последующей пересборки Macro 1 приведены в M1-H.
 
 ## Гарантии MVP, обязательные к сохранению
 
@@ -2345,7 +2345,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 |---:|---|---|---|
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE / merged | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
-| 2 | Image Analyzer Expansion — Wave 1 | NOT_STARTED | После 1: согласованный набор image-методов, provenance, применимость, признаки и тесты |
+| 2 | Image Analyzer Expansion — Wave 1 | IN_PROGRESS | M2-A BLOCKED: исследование DQ/grid, provenance и owner acceptance спецификаций METHODS.md до реализации |
 | 3 | Audio Analyzer Expansion — Wave 1 | NOT_STARTED | После 1 и планового закрытия 2: согласованный audio-набор на общих представлениях |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
@@ -2426,6 +2426,8 @@ tests/test_release_verification.py` прошла: **47 passed**, включая 
 | Video / Macro 4 | `video_encoding_structure_consistency`, `video_timestamp_consistency`, `video_motion_consistency`, `video_audio_timing_consistency` |
 | Расширение текущего / Macro 4 | усиление анализа повторов/замирания в ответственности `video_sampled_frame_quality`, без дублирующего анализатора |
 
+Принятые методы оформляются в `METHODS.md` по его gate; источники и лицензии —
+в `REFERENCES.md`. Research-материалы сами по себе не разрешают реализацию.
 Перед каждой волной согласуются конкретные методы и IDs, входные представления,
 CPU/resource budgets, применимость и ограничения, семейства свидетельств,
 права на код/данные и критерии проверки. Для каждого допускаемого метода нужны
@@ -2514,7 +2516,7 @@ M1-H — `DONE / PASS`: независимый аудит закрытия за�
 | M1-G — integration/hardening — DONE | B–F | Совместные count/byte/CPU budgets, безопасная сериализация, timeout/overflow/crash/reap/cleanup matrix, существующие consumers без изменения поведения; sdist → wheel → внешняя runtime-среда без checkout и dev packages |
 | M1-H — independent closure audit — DONE / PASS | G | Первичный аудит REMEDIATE; targeted remediation принята и закоммичена; финальный независимый повторный аудит PASS, M1H-F01/F02 CLOSED, actionable findings 0 |
 
-Следующее действие — owner review и commit документационного закрытия; lifecycle до Macro 2 указан в §2.2.
+Документационное закрытие Macro 1 завершено и merged; текущая работа Macro 2 указана в §2.2.
 A задаёт общие contracts/limits для B–F;
 точные реализованные ограничения принадлежат `CONTRACTS.md` §7.5. Предложения
 Pass 1 ниже сохраняются как исходные критерии выполненной проверки A/G, не production
@@ -2881,7 +2883,7 @@ runtime correctness и не источником полномочий для pac
 `POST /api/v1/analyses`, `GET /api/v1/analyses/{analysis_id}` и
 `GET /api/v1/analyses/{analysis_id}/result`; каталог остаётся ровно из четырёх
 анализаторов с версиями, перечисленных в начале Stage 12. Новые анализаторы
-Macro 2 не установлены и не активированы; Macro 2 — только план.
+Macro 2 не установлены и не активированы. Текущий статус Macro 2 и gate M2-A — в §2.2.
 
 ### Критерии ресурсов и достоверности для A/G
 
@@ -2976,6 +2978,24 @@ Macro 2 не установлены и не активированы; Macro 2 �
 
 В Pass 1 не запускались project test suite, release certification и пересборка
 Graphify. Изменения реализации и Git mutations не выполнялись.
+
+## Macro 2 — Image Analyzer Expansion — Wave 1 — IN_PROGRESS
+
+### M2-A — BLOCKED: method/provenance gate
+
+Попытка реализации корректно остановлена до изменений кода: DQ/grid названы
+как кандидаты, но канонических принятых спецификаций конкретного измерения,
+применимости, правил решения и обоснованных порогов нет. Подготовленные в
+Macro 1 представления и provenance компонентов не заменяют принятие метода.
+
+- [ ] Провести целевое исследование DQ/grid и сравнение конкретных методов.
+- [ ] Оформить применимые provenance/licensing записи в `REFERENCES.md`.
+- [ ] Получить принятие владельцем полных записей DQ/grid в `METHODS.md`.
+- [ ] Только после закрытия gate возобновить реализацию M2-A в согласованном scope.
+
+M2-A не DONE; code changes отсутствуют, новые анализаторы не production-active.
+Пять image-кандидатов и их методологический допуск перечислены в `METHODS.md`;
+исследовательские отчёты подчиняются `research/README.md`.
 
 ## Macro 6 — корреляция и смысл результата
 
