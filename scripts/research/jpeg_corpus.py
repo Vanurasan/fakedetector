@@ -25,8 +25,8 @@ class Case:
     sha256: str
     size_bytes: int
     first_quality: int | None
-    final_quality: int
-    subsampling: int
+    final_quality: int | None
+    subsampling: int | None
     progressive: bool
     orientation: int
     shift: tuple[int, int]

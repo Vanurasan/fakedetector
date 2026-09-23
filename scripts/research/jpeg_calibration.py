@@ -1,6 +1,7 @@
 """Run: uv run python -m scripts.research.jpeg_calibration --output ABSOLUTE_PATH.
 
-Only self-generated controlled cases are admitted. Production services own all
+This CLI generates controlled cases; jpeg_pilot supplies admitted external cases
+to the same measurement path. Production services own intake validation,
 measurement preprocessing, numeric access and temporary artifact cleanup.
 """
 
@@ -16,6 +17,7 @@ import time
 import tracemalloc
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 from typing import cast
@@ -33,8 +35,15 @@ from fakedetector.analyzers._models import (
 )
 from fakedetector.config._snapshot import _ConfigSnapshot
 from fakedetector.config.models import AppConfig, ImagePreprocessingConfig
-from fakedetector.domain import ImageTechnicalParameters, MediaType, ValidatedFileDescriptor
+from fakedetector.domain import (
+    ImageTechnicalParameters,
+    InputFileDescriptor,
+    MediaType,
+    SourceContext,
+)
+from fakedetector.intake.service import ControlledInput
 from fakedetector.intake.temporary_input import LocalTemporaryInputOwner, PreparedSourceRef
+from fakedetector.intake.validation import FileValidator
 from fakedetector.lifecycle.artifacts import WorkspaceArtifactRegistry
 from fakedetector.preprocessing._errors import PreprocessingError
 from fakedetector.preprocessing._models import OriginalImageFacts
@@ -62,35 +71,55 @@ class Measurement:
     measurement_peak_traced_bytes: int | None
 
 
-def measure(case: Case, root: Path, config: AppConfig) -> Measurement:
-    path = root / "corpus" / f"{case.case_id}.jpg"
-    if hashlib.sha256(path.read_bytes()).hexdigest() != case.sha256:
-        raise ValueError("generated input identity changed")
-    descriptor = ValidatedFileDescriptor(
-        original_name=path.name,
-        extension="jpg",
-        declared_mime_type=None,
-        detected_mime_type="image/jpeg",
-        media_type=MediaType.IMAGE,
-        size_bytes=case.size_bytes,
-        sha256=case.sha256,
-        signature_match=True,
-        safe_read=True,
-        technical_parameters=ImageTechnicalParameters(
-            width=case.width,
-            height=case.height,
-            format="JPEG",
-            color_mode=case.mode,
-            frame_count=1,
-            has_metadata=True,
-        ),
-    )
+class AdmissionError(ValueError):
+    """Factual intake rejection, never a negative forensic measurement."""
+
+
+def measure(
+    case: Case, root: Path, config: AppConfig, *, input_path: Path | None = None
+) -> Measurement:
+    path = input_path if input_path is not None else root / "corpus" / f"{case.case_id}.jpg"
     analysis_id = hashlib.sha256(case.case_id.encode()).hexdigest()[:32]
     owner = LocalTemporaryInputOwner(root / "workspace")
     temporary = owner.create(analysis_id)
-    with path.open("rb") as stream:
-        owner.ingest(temporary, stream, case.size_bytes + 1)
-    accepted = owner.transfer(temporary)
+    try:
+        with path.open("rb") as stream:
+            facts = owner.ingest(temporary, stream, config.limits.max_file_size_mb.image * 2**20)
+        if facts.sha256 != case.sha256 or facts.size_bytes != case.size_bytes:
+            raise AdmissionError("input_identity_changed")
+        now = datetime.now(UTC)
+        validation = FileValidator(config=config, temporary_input_owner=owner).validate(
+            ControlledInput(
+                analysis_id=analysis_id,
+                registered_at=now,
+                source=SourceContext(channel="api"),
+                input_file=InputFileDescriptor(
+                    original_name=path.name,
+                    declared_content_type=None,
+                    size_bytes=facts.size_bytes,
+                    received_at=now,
+                ),
+                sha256=facts.sha256,
+                owned_source=temporary,
+            )
+        )
+        if not validation.accepted:
+            raise AdmissionError(validation.errors[0].code)
+        descriptor = validation.validated_file
+        assert descriptor is not None
+        technical = descriptor.technical_parameters
+        if not isinstance(technical, ImageTechnicalParameters) or technical.format != "JPEG":
+            raise AdmissionError("research_requires_jpeg")
+        if (technical.width, technical.height, technical.color_mode) != (
+            case.width,
+            case.height,
+            case.mode,
+        ):
+            raise AdmissionError("manifest_geometry_mismatch")
+        accepted = owner.transfer(temporary)
+    except BaseException:
+        owner.cleanup(temporary)
+        raise
     registry = WorkspaceArtifactRegistry(root / "workspace" / analysis_id)
     started = time.perf_counter()
 

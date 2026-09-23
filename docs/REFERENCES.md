@@ -807,6 +807,31 @@ strict clean-tree certification остаётся отдельной провер
   per-image rights review; возможен отдельный challenge после проверки.
   Подвыборка 1000 оригиналов: оценка 1–10 GB, уточнить по metadata.
 
+<a id="research-rawpy-m2r3b"></a>
+## M2-R3B — исследовательская RAW-проявка
+
+- Инструмент: `rawpy==0.27.1`, wrapper LibRaw; владелец явно разрешил его только
+  в отдельном внешнем research environment. В runtime FakeDetector, lock,
+  requirements, metadata и release artifacts инструмент не включён.
+- Источник: [официальный PyPI release](https://pypi.org/project/rawpy/0.27.1/),
+  binary wheel `rawpy-0.27.1-cp312-cp312-win_amd64.whl`, 921 403 bytes;
+  SHA-256 `e9d9c83cd0422e84b2052a02eb9d612839ac68dfae4d6d3751740e08024599b1`,
+  проверен по JSON PyPI и bytes скачанного wheel. Сборка из исходников не выполнялась.
+- rawpy — [MIT](https://github.com/letmaik/rawpy/blob/v0.27.1/LICENSE).
+  В поставке wheel присутствует [LICENSE.LibRaw, LGPL 2.1](https://github.com/letmaik/rawpy/blob/v0.27.1/LICENSE.LibRaw).
+  Загруженная библиотека сообщает LibRaw `0.22.1`; GPL2/GPL3 demosaic packs
+  отключены согласно `rawpy.flags`. Компоненты wheel не перелицензируются
+  лицензией собственного кода проекта. Wheel и license snapshots хранятся вне Git.
+- Среда измерения: Windows 11 x64, CPython 3.12.10, NumPy 2.5.2, Pillow 12.3.0;
+  binary-only установка во внешнее venv. Полные platform/build flags и hashes
+  находятся во внешнем provenance bundle.
+- [Параметры rawpy](https://letmaik.github.io/rawpy/api/rawpy.Params.html)
+  определяют значения postprocess. Фактически использованный единый профиль,
+  ограничения CFA, преобразование master и результаты воспроизведения
+  документированы в [отчёте пилота](research/2026-09-24-jpeg-real-corpus-pilot.md).
+  Embedded previews не являются masters; это offline research preprocessing,
+  не расширение production intake и не принятие DQ/Grid.
+
 ## Общие библиотеки и инструменты
 
 ### Python standard library
