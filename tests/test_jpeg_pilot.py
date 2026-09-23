@@ -324,3 +324,20 @@ def test_source_group_bound(tmp_path, pilot):
     manifest["records"] = []
     with pytest.raises(ValidationError, match="owner bound"):
         load_manifest(save(tmp_path, manifest))
+
+
+def test_dq_only_skips_grid_without_changing_measurements(tmp_path, pilot, monkeypatch):
+    from scripts.research import jpeg_calibration
+
+    manifest, config = pilot
+    record = manifest["records"][0]
+    case = Case(**record["case"])
+    regular = measure(case, tmp_path / "regular", config, input_path=Path(record["path"]))
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("DQ-only execution called Grid")
+
+    monkeypatch.setattr(jpeg_calibration, "measure_grid", forbidden)
+    dq = measure(case, tmp_path / "dq", config, input_path=Path(record["path"]), dq_only=True)
+    assert dq.dq == regular.dq
+    assert dq.grid == ()

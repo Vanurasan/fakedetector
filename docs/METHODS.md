@@ -146,6 +146,17 @@ population FPR. Для всех нерешённых порогов класса
 корпус с provenance/правами и заданный владельцем operating target.
 Предлагаемая общая correlation group сохраняется; принятие методов отсутствует.
 
+**Исследовательское продолжение M2-R3C от 2026-09-24.** По явному разрешению
+задания подготовлено полное research-only правило `DQ-R3C-1`: выбор семьи
+на 200 calibration groups, фиксированные support/aggregation/abstention semantics,
+канонический freeze artifact и отдельная validation на 100 группах. Точная процедура,
+hashes и результаты находятся в
+[отчёте R3C](research/2026-09-24-jpeg-dq-final-calibration.md).
+Это proposed complete research rule, не production threshold или `ACCEPTED`.
+Измерительные формулы DQ-HIST-1 ниже не изменены; агрегация используется только
+в отдельном исследовательском правиле. DQ-G1–G4 не закрыты; untouched holdout
+и принятие владельцем остаются отдельными шагами. Grid не перекалибровывался.
+
 `insufficient-evidence` ниже — смысл результата, не новый `AnalyzerStatus`.
 Предлагается: известное несоответствие входа области метода — `not_applicable`;
 пустая/вырожденная статистическая опора после корректного измерения —

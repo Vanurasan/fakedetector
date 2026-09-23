@@ -76,7 +76,12 @@ class AdmissionError(ValueError):
 
 
 def measure(
-    case: Case, root: Path, config: AppConfig, *, input_path: Path | None = None
+    case: Case,
+    root: Path,
+    config: AppConfig,
+    *,
+    input_path: Path | None = None,
+    dq_only: bool = False,
 ) -> Measurement:
     path = input_path if input_path is not None else root / "corpus" / f"{case.case_id}.jpg"
     analysis_id = hashlib.sha256(case.case_id.encode()).hexdigest()[:32]
@@ -185,7 +190,8 @@ def measure(
         grid: tuple[GridWindow, ...] = ()
         state = "not_applicable"
         if (
-            original.jpeg
+            not dq_only
+            and original.jpeg
             and original.source_mode in ("L", "RGB")
             and original.coordinates.orientation
         ):
