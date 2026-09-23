@@ -703,6 +703,110 @@ strict clean-tree certification остаётся отдельной провер
   implementation diff, attribution и обязательства фактически используемых
   артефактов; сейчас production/provenance acceptance не заявляется.
 
+<a id="m2-r3a-datasets"></a>
+## M2-R3A — кандидаты реального корпуса, 2026-09-24
+
+Инженерная проверка опубликованных условий для внутренней калибровки
+коммерчески применимого FakeDetector. Это не юридическое заключение и не
+принятие dataset в production. Методический план и сравнение находятся в
+[отчёте R3A](research/2026-09-24-jpeg-real-corpus-operating-point-design.md).
+Медиа не скачивались; прочитаны страницы и metadata. Никакие dataset files,
+производные изображения или внешние реализации не включаются в Git/поставку.
+Для R3B нужны per-record manifest, hashes и сохранённые условия выбранных файлов;
+проверка страницы набора не заменяет admission каждой записи. Права на
+изображённых людей/чужие произведения проверяются отдельно от copyright dataset.
+
+<a id="dataset-raise"></a>
+### DATASET-RAISE — не допущен для предполагаемой калибровки
+
+- Категория: `DATASET`, технически рассмотренный кандидат; MMLab, DISI,
+  University of Trento. Авторы: Dang-Nguyen, Pasquini, Conotter, Boato;
+  *RAISE – A Raw Images Dataset for Digital Image Forensics*, MMSys 2015.
+- Provenance: [официальный сайт](https://loki.disi.unitn.it/RAISE/),
+  [guide и форматы](https://loki.disi.unitn.it/RAISE/guide.html),
+  [правообладатель/контакт](https://loki.disi.unitn.it/RAISE/contact.html).
+  8156 camera-native фотографий; NEF и TIFF — связанные версии, не независимые
+  samples; три Nikon-модели, природные и бытовые сцены.
+- Условия: [download](https://loki.disi.unitn.it/RAISE/download.html) разрешает
+  non-commercial research/education с цитированием. Публичная загрузка и
+  исследовательское назначение не разрешают автоматически коммерческую калибровку.
+- Внутренняя калибровка FakeDetector: **требуется выяснение**, до письменного
+  разрешения/уточнения owner/legal использовать нельзя. Включение в CORE не разрешено.
+- Распространение исходников/производных: разрешение не установлено.
+  Публикация research results предусмотрена с цитированием в разрешённом режиме;
+  право коммерческого использования результатов требует отдельного выяснения.
+  Размер полной поставки заявлен ~350 GB; есть меньшие поднаборы.
+
+<a id="dataset-pixls-cc0"></a>
+### DATASET-PIXLS-CC0 — рекомендуемое отобранное подмножество
+
+- Категория: `DATASET`; PIXLS.US и индивидуальные авторы вкладов.
+  Provenance: [сайт/правила приёма](https://raw.pixls.us/),
+  [живой metadata-каталог](https://raw.pixls.us/json/getrepository.php?set=all).
+  Поставщик просит camera-native RAW, но есть разные режимы/лицензии; история
+  каждого master проверяется отдельно. Это camera-compatibility коллекция,
+  не случайная выборка пользователей FakeDetector.
+- Срез 2026-09-24: 2016 записей, из них 1870 с CC0 URL и 146 с другими
+  условиями; 925 точных make/model пар среди CC0, 922 без учёта регистра.
+  Показанные kB/MB дают ~55,740 GB при десятичном прочтении и ~58,448 GB при
+  двоичном; планировать ~60 GB без производных. Числа получены из metadata, не
+  подтверждают столько независимых сцен или устройств. Снимок/hash вне Git.
+- Лицензия выбранных записей: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
+  Внутренняя калибровка, коммерческое использование, копирование/адаптация и
+  распространение разрешены в пределах переданных copyright прав. Attribution
+  не является условием CC0, но URL/автор/hash сохраняются для provenance.
+- Изображения/производные и собственные агрегаты допускают публикацию в этих
+  пределах; CC0 не снимает privacy/trademark/чужие права. Не-CC0 записи не
+  входят в рекомендацию. Итог: **пригоден для указанного внутреннего сценария
+  после per-record проверки**, не blanket-разрешение на весь архив.
+
+<a id="dataset-vision"></a>
+### DATASET-VISION — рекомендуемая внешняя workflow-проверка
+
+- Категория: `DATASET`; CSP Lab, Department of Information Engineering,
+  University of Florence. Shullani, Fontani, Iuliani, Al Shaya, Piva,
+  *VISION: a video and image dataset for source identification*, 2017,
+  [DOI/статья](https://doi.org/10.1186/s13635-017-0067-2).
+- Provenance: [официальная поставка](https://lesc.dinfo.unifi.it/VISION/),
+  [dataset README](https://lesc.dinfo.unifi.it/VISION/README.txt).
+  11 732 native изображения, 34 427 с социальными версиями; 35 portable devices,
+  11 брендов. В scope только JPEG-изображения и их группы native/social,
+  не 1914 видео. Native не доказывает число внутренних JPEG-проходов камеры.
+- **Dataset — CC BY-SA 4.0**, как прямо указано в README, не CC BY 4.0 статьи.
+  [Условия лицензии](https://creativecommons.org/licenses/by-sa/4.0/)
+  допускают коммерческое использование и внутреннюю калибровку.
+- При передаче изображений/адаптаций сохранить attribution, ссылку на условия,
+  обозначение изменений, применимый ShareAlike; не вводить дополнительные
+  ограничения. Apache-2.0 собственного кода не перелицензирует фотографии.
+- Собственные агрегированные измерения без воспроизведения фото можно
+  публиковать с цитированием; существенное переиздание базы/адаптаций требует
+  отдельного рассмотрения ShareAlike/database rights. Итог: **пригоден для
+  внутренней workflow-проверки при выполнении условий**, не разрешение bundling.
+  Размер выбранных 600 групп ещё не измерен; план 2–10 GB с социальными версиями.
+
+<a id="dataset-openimages-v7"></a>
+### DATASET-OPENIMAGES-V7 — резервный challenge, не single-history corpus
+
+- Категория: `DATASET`; Google LLC — dataset/аннотации, авторы исходных
+  фотографий — права на изображения, CVDF — канал доставки.
+  [V7 description/licensing](https://storage.googleapis.com/openimages/web/factsfigures_v7.html),
+  [download/metadata](https://storage.googleapis.com/openimages/web/download_v7.html).
+  Около 9 млн разнообразных изображений; JPEG-поставка не гарантирует ни
+  native resolution, ни известную JPEG-историю, ни physical device ID.
+- Фото заявлены CC BY 2.0; аннотации — CC BY 4.0. Издатель прямо не гарантирует
+  лицензию каждого фото и требует самостоятельной проверки. `OriginalURL`,
+  `OriginalLandingURL`, `License`, `Author`, `Title`, `OriginalMD5/Size`
+  позволяют документировать конкретную запись, но сами не заменяют проверку.
+- По [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) коммерческая
+  калибровка и распространение фото/адаптаций возможны с attribution и
+  применимым указанием изменений; сохранить предоставленные title/notices,
+  не вводить ограничений сверх лицензии. Неясные записи **непригодны до
+  уточнения прав**, даже для internal use.
+- Собственные агрегаты без фото отделять от перепубликации dataset. Итог:
+  **не выбран в основной acquisition** из-за unknown history и стоимости
+  per-image rights review; возможен отдельный challenge после проверки.
+  Подвыборка 1000 оригиналов: оценка 1–10 GB, уточнить по metadata.
+
 ## Общие библиотеки и инструменты
 
 ### Python standard library
