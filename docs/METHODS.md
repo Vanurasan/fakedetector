@@ -75,26 +75,32 @@
 
 ## Кандидаты Stage 12 / Macro 2
 
-Ниже перечислены рабочие имена, не утверждённые analyzer IDs или контракты.
-Ни один из пяти методов не принят. Для DQ/grid ниже подготовлены предложения
-**PROPOSED / PENDING OWNER ACCEPTANCE**, readiness — **NOT_READY**;
-остальные сохраняют **CANDIDATE / METHOD NOT YET ACCEPTED**.
+DQ-HIST-1 / DQ-R3C-1 для `image_jpeg_double_quantization@1.0.0` принят
+владельцем 2026-09-24: **ACCEPTED** в точном scope записи ниже. Остальные
+имена остаются рабочими кандидатами; Grid сохраняет
+**DEFERRED_RESEARCH_ONLY**, readiness — **NOT_READY**.
+Остальные сохраняют **CANDIDATE / METHOD NOT YET ACCEPTED**.
 Текущий статус работ и очередность хранятся только в `ROADMAP.md`.
 
 | Рабочее имя | Методологический gate |
 |---|---|
-| `image_jpeg_double_quantization` | M2-A: реализация BLOCKED до целевого исследования DQ, полной спецификации и принятия владельцем |
-| `image_jpeg_grid_consistency` | M2-A: реализация BLOCKED до целевого исследования grid, полной спецификации и принятия владельцем |
+| `image_jpeg_double_quantization` | DQ-HIST-1 / DQ-R3C-1 ACCEPTED; DQ-G1–G4 CLOSED; разрешена реализация точного принятого scope |
+| `image_jpeg_grid_consistency` | DEFERRED_RESEARCH_ONLY; реализация Grid не разрешена, требуется отдельное принятие метода |
 | `image_noise_residual_consistency` | Конкретный метод ещё не принят; требуется общий gate выше |
 | `image_resampling_consistency` | Конкретный метод ещё не принят; требуется общий gate выше |
 | `image_embedded_thumbnail_consistency` | Конкретный метод ещё не принят; требуется общий gate выше |
 
 Исследование M2-R1 сохранено в
 [отчёте от 2026-09-23](research/2026-09-23-jpeg-dq-grid-method-selection.md).
-Ниже определены предлагаемые измерительные протоколы, но не приняты правила
-production findings. Наличие точной формулы измерения не закрывает этот пробел.
+Запись DQ ниже включает принятое правило и semantics production findings.
+Принятие разрешает реализацию, но не означает готовность, включение в каталог,
+прохождение тестов или release certification. Grid остаётся предложением.
 
-## M2-R1: общие границы предложений
+## M2-R1–M2-R4: основания и границы предложений
+
+Абзацы M2-R1–M2-R3D ниже описывают состояние соответствующего инкремента.
+Текущая принятая спецификация DQ дана в записи DQ-HIST-1; DQ-G1–G4 закрыты
+явным решением владельца M2-R4 от 2026-09-24.
 
 Дата предложения: 2026-09-23. M2-R1 принят владельцем как исследовательское
 свидетельство согласно заданию M2-R2; принятие production-методов отсутствует.
@@ -170,8 +176,18 @@ Hashes, состав, границы независимости и strata — в
 гарантия для JPEG. Coverage 96,25% против 98% в validation описывается без
 нового acceptance threshold; интерпретация остаётся владельцу. Ограниченная
 чувствительность reverse/same-DQT/close-quality из R3C не устранена.
-Method acceptance, DQ-G1–G4 и production promotion остаются открыты;
-правило сохраняет research-only статус, M2-A не разблокирован.
+На завершение R3D method acceptance, DQ-G1–G4 и production promotion
+оставались открыты; M2-A не был разблокирован.
+
+**Owner acceptance M2-R4 от 2026-09-24.** Владелец явно принял полную
+спецификацию DQ-HIST-1 / `DQ-R3C-1` для production implementation в точном
+документированном scope, включая все support gates, boundary behavior,
+Finding semantics, insufficient_evidence, полноту, ресурсы и ограничения
+переносимости. Статус метода — `ACCEPTED`, DQ-G1–G4 — `CLOSED`.
+Принятие исследовательской цепочки M2-R1–M2-R3D сохранено.
+Новых измерений, tuning или переинтерпретации final holdout нет. Grid остаётся
+`DEFERRED_RESEARCH_ONLY`: в R3B multiple phases наблюдались у 9/20 локальных
+patches и 8/20 benign crop/recompress, что не даёт достаточного различения.
 
 `insufficient-evidence` ниже — смысл результата, не новый `AnalyzerStatus`.
 Предлагается: известное несоответствие входа области метода — `not_applicable`;
@@ -185,9 +201,13 @@ Method acceptance, DQ-G1–G4 и production promotion остаются откр�
 
 ### Идентичность, принятие и цель
 
-- Рабочий Analyzer ID: `image_jpeg_double_quantization`; окончательный ID и
-  версия анализатора не утверждены.
-- **PROPOSED / PENDING OWNER ACCEPTANCE; NOT_READY** для production findings.
+- Принятый Analyzer ID: `image_jpeg_double_quantization`, начальная версия
+  будущего анализатора `1.0.0`; регистрация ещё не выполнена.
+- **ACCEPTED**: явное решение владельца M2-R4 от **2026-09-24** принимает
+  полную спецификацию ниже без изменения frozen rule и ограничений.
+  Разрешена только реализация; анализатор не реализован, не активен в каталоге,
+  не прошёл production tests или release certification.
+- Evidence family / correlation group: `image_jpeg_compression_history`.
 - Наблюдение: заполненность, нулевые значения и спектральная структура
   гистограмм квантованных AC-коэффициентов по отдельным компонентам/частотам.
 - Методическая основа: [JPEG-PF04](REFERENCES.md#jpeg-pf04),
@@ -209,8 +229,14 @@ Planes — `<i4`, `(block_y, block_x, 8, 8)`, native SOF order; DQT — natural
 row-major, не zigzag. Компоненты не называются Y/Cb/Cr по одному индексу:
 manifest не гарантирует такую семантическую маркировку. Каждая plane измеряется
 отдельно; никаких объединённых chroma/luma histogram и голосования каналов.
-Grayscale — один компонент. Поддержка 4:4:4, 4:2:2, 4:2:0 относится к
-измерениям, не к доказанной одинаковой чувствительности.
+Production scope предложения — source mode `L` с одним компонентом или `RGB`
+с тремя компонентами. Для RGB sampling в SOF order: `(1,1),(1,1),(1,1)`;
+`(2,1),(1,1),(1,1)`; `(2,2),(1,1),(1,1)` — соответственно 4:4:4/4:2:2/4:2:0.
+Для L — `(1,1)`. Это исследованные component layouts, не утверждение одинаковой
+чувствительности. Иные/неизвестные source modes и layouts вне production scope
+дают `not_applicable`, если предобработка уже успешно предоставила факты.
+Прежний измерительный протокол может описывать до четырёх компонентов;
+это не расширяет область применения предлагаемого decision rule.
 
 Non-JPEG — `not_applicable`. Unsupported coding/precision и превышение
 preflight limits обрабатываются действующим preprocessing; анализатор их не
@@ -255,7 +281,13 @@ scans. Последовательность scans сама по себе не я
 6. Обход SOF components и F фиксирован. Не агрегировать пики в общую оценку
    риска, не выбирать «самый подозрительный» канал. До 36 записей скалярных
    диагностик; полные histograms/spectra остаются внутренними и не передаются
-   в `raw_metrics`, metadata или ответ worker.
+   в `raw_metrics`, metadata или ответ worker. В production scope максимум
+   27 записей; правило ниже использует только девять modes первого компонента.
+
+Эти измерения, включая диагностическую FFT, сохраняются без изменения.
+FFT amplitude/frequency и остальные компоненты не участвуют в решении.
+Привязка индексов: `u` — первая частотная ось 8×8, `v` — вторая;
+`q2=table.values[8*u+v]`. Нельзя менять порядок SOF по component ID.
 
 Нулевой/однозначный histogram и один блок измеримы, но не дают статистической
 доказательности. Преобладание нулей, sparse tails, гладкая огибающая и обрезание
@@ -291,7 +323,48 @@ q на выбранных modes. Shifted-grid recompression не соответ�
 нынешнему header нельзя, поэтому это ограничение inference, не проверяемый
 флаг применимости.
 
-### Решения, пороги и семантика
+### DQ-G1 — фиксированный профиль решения
+
+Правило `DQ-R3C-1` применяется к измерениям выше. Только первый компонент
+**в SOF order**, независимо от его числового ID, даёт голоса. F содержит ровно
+`(0,1),(0,2),(0,3),(1,0),(1,1),(1,2),(2,0),(2,1),(3,0)`.
+Не выбирать компонент, mode или metric по величине сигнала.
+
+Valid mode одновременно удовлетворяет всем условиям:
+
+- состояние histogram — `measured`: `N>0`, `2<=R<=65536`;
+- полных native blocks `N>=1024`;
+- nonzero observations `N-round(N*zero_fraction)>=256`, где
+  `zero_fraction=H(0)/N`; используется Python `round` (ties-to-even), как в R3C;
+- `occupied=count(H>0)>=8`;
+- `span=R>=16`.
+
+Счётчики исходного histogram целочисленные; восстановление nonzero из
+`H(0)/N` сохраняет точное число в данном bounded диапазоне. Округление
+диагностик до проверки опоры запрещено. `no_full_blocks`, `constant`,
+`histogram_limit` и modes ниже любой границы исключаются, а не получают score=0.
+Отсутствующая/повторная mode, несогласованный manifest, NaN/Infinity либо
+некорректная измеренная метрика — ошибка, не статистическое воздержание.
+
+Для каждого valid mode `empty_fraction=(span-occupied)/span` на **полном signed
+диапазоне от min до max включительно**, с пустыми bins и без удаления нулевого
+bin, если он входит в диапазон; при нуле вне диапазона `H(0)=0`.
+Никакого tail trimming, удаления нуля, объединения знаков или подбора q2 нет.
+Требуется минимум **5 valid modes из 9** первого компонента. При меньшем числе
+image score отсутствует и решение — `insufficient_evidence`, никогда negative.
+При достаточной опоре image score — `statistics.median` их `empty_fraction`:
+для чётного числа — арифметическое среднее двух центральных значений.
+
+Числа — Python float / binary64, без предварительного округления, epsilon,
+clamp и адаптации к размеру/quality. Positive строго при
+`score > 0.6005747126436781`; равенство и меньший score — отсутствие сигнала.
+Здесь `score` — внутреннее измерение, не поле `AnalyzerResult.score`.
+Пять modes и все support boundaries включаются по `>=`; R=65536 допустим,
+R=65537 исключает mode до dense allocation. Повтор на тех же коэффициентах
+должен давать те же support, score и decision. Cross-platform bit identity
+всего native decoding/FFT принятой цепочкой не установлена.
+
+### DQ-G2 — происхождение порога и переносимость
 
 | Условие/параметр | Класс и основание | Разрешённый смысл |
 |---|---|---|
@@ -299,45 +372,271 @@ q на выбранных modes. Shifted-grid recompression не соответ�
 | N=0, R=1 | D; пустая/вырожденная выборка | Нет статистической опоры/спектра |
 | R<=65536, девять AC modes | D для памяти; modes — параметр собственного профиля | Ограничение вычисления, не качество детектора |
 | n=0, период T | B; идеальная модель выше | Объяснение механизма, не positive rule |
-| Минимум блоков/nonzero observations для forensic вывода | C; **не задан** | Требуется корпус по q2/component/content |
-| Порог periodicity/empty-bin density и согласия modes | C; **не задан** | Production finding запрещён |
-| Severity, confidence, вероятность, оценка q1 | Не определены для production | Не подставлять константы |
+| N>=1024, nonzero>=256, occupied>=8, span>=16; минимум 5 modes | Предобъявленные support gates R3C, не универсальная граница информативности | Ниже опоры — `insufficient_evidence` |
+| Медиана empty_fraction > 0.6005747126436781 | C; calibration R3C, затем untouched R3D | Только узкий recompression-history signal |
 
-В предлагаемом измерительном режиме findings отсутствуют при любых значениях.
-Будущий positive finding после калибровки может означать только «распределение
-коэффициентов согласуется с предшествующим JPEG requantization». Нельзя
-утверждать подделку, злой умысел, число сохранений, редактор, хронологию или
-подлинность при отсутствии сигнала. Экспорт, пересылка через сервисы, повторное
-сохранение, поворот/кадрирование и обычная коррекция изображения — benign
-причины истории JPEG. Отдельно различать истинное обнаружение benign
-recompression и ложное обнаружение recompression на single JPEG.
+R3C сравнил ровно две предобъявленные семьи: медианы `empty_fraction` и
+`amplitude` на одинаковой опоре. Порог каждой — максимум применимых primary
+negative scores calibration200 (97 pilot + 103 новых RAW source groups).
+Выбрана empty fraction по большей unconditional aligned40to90 sensitivity:
+136/200 против 2/200; tie rule отдавал предпочтение empty fraction.
+Порог не подбирался по validation/holdout. Calibration 0/191 primary FP не
+является независимой проверкой после выбора; дополнительный парный single90
+дал 1/199 FP, и этот результат не был устранён настройкой.
 
-### Локализация, ресурсы, валидация и gates
+Независимая validation100: 0/98 primary FP, abstentions 2,
+one-sided exact 95% upper 3,0106198695%. Final untouched holdout:
+assigned/admitted 320/320, applicable 308, FP 0, abstentions 12,
+admission failures 0; observed FPR 0%, one-sided exact 95% Clopper–Pearson
+upper **0,9679255009% <=1%**, `FINAL_HOLDOUT_PASS`.
+Граница при нуле ошибок — `1-0.05^(1/308)`; знаменатель не 320 и не число
+производных. Это эмпирическое свидетельство для применимой части оценённой
+целевой популяции, не универсальная гарантия ≤1% на всех JPEG и не вероятность
+ложности отдельного Finding. Принятое в R4 свидетельство coverage — 96,25%
+против 98% validation; отдельный coverage PASS/FAIL задним числом не вводится.
+
+Финальный canonical rule SHA-256:
+`2b958bf4fb94926c7f7de0a9a7b74f3897667a22cb802fb85592bab4dd5fd5be`.
+Measurement implementation fingerprint R3C:
+`f71d85640aa1624ad116a0da6e66401e329220231df642b0b25ca49ea43a21cf`.
+Holdout membership SHA-256:
+`99e52cc1f785bcaaaa8ca423e1c0c5487cb882d56b5e01bcf5f0027e8687a189`.
+Это привязки принятых свидетельств, не fingerprint будущей реализации.
+
+Population — отобранные PIXLS CC0 RAW, фиксированная AHD/LibRaw проявка в RGB8,
+Lanczos без upscale до 1280 по стороне / 1 000 000 pixels, Pillow JPEG.
+Primary negative — один single-history endpoint/source group: quality
+40/75/95, RGB sampling 4:4:4/4:2:2/4:2:0, каждый десятый grayscale,
+каждый пятый progressive. Grayscale и progressive связаны дизайном.
+Quality labels — настройки encoder, не q2 из DQT. Source/scene/hash/session
+QA и outcome-blind freeze описаны в R3C/R3D; holdout включает все 320
+пригодных групп по pre-outcome owner decision без post-outcome добора.
+
+Пределы переноса обязательны в интерпретации результата:
+
+- compatibility corpus не является репрезентативной случайной выборкой всех
+  камер, контента или пользовательских workflows; у 118/320 holdout sources
+  неизвестна дата сессии, make/model не доказывает физическое устройство;
+- visual/hash QA не доказывает исчерпывающую независимость сцен; малые
+  device/content strata не имеют собственного подтверждения ≤1%; периодических
+  текстур в validation и holdout только по две группы, noise/ISO strata не заданы;
+- RAW development/resize могут сглаживать шум и текстуру. Camera-native JPEG,
+  другие encoders, custom/trellis DQT, большие размеры и неизвестные сложные
+  workflows не получают подтверждённого FPR из этого опыта, даже если
+  технически допускаются Macro 1 и профилем. Resize для обхода лимитов запрещён;
+- VISION pilot — отдельное exploratory свидетельство, не validation frozen
+  rule и не добавка к primary n; новый VISION stress/holdout здесь не выполнен;
+- sensitivity validation остаётся стратифицированной: aligned40to90 —
+  **65/99 applicable (65/100 unconditional)**; reverse90to40 — **0/95**,
+  same75 — **0/99**, close85to90 — **0/99**; benign repeat — **58/99**.
+  Holdout проверял negatives и не улучшает эти sensitivity estimates.
+
+DQ-HIST-1 не является универсальным double-JPEG detector. Новых thresholds,
+подстройки по q2/device/content и fallback на amplitude/BP12/Grid нет.
+Изменение frozen procedure/support/rule требует отдельного owner gate,
+нового исследования и независимой проверки; R4 их не разрешает.
+
+### DQ-G3 — Finding, отсутствие сигнала и полнота
+
+При достаточной опоре и positive выдаётся ровно один candidate Finding на файл,
+нормализуемый существующим `FindingFormationService` (`CONTRACTS.md` §9):
+
+| Существующее поле | Предлагаемое значение / смысл |
+|---|---|
+| `group` | `image` |
+| `type` | `jpeg_recompression_pattern`; строковый type, не новый enum/schema field |
+| `severity` | `weak`: косвенный технический признак, возможный при обычном экспорте/пересылке |
+| `source_analyzer_id`, `source_analyzer_version` | `image_jpeg_double_quantization`, `1.0.0` после реализации и принятия |
+| `description` | «Статистика коэффициентов JPEG содержит рисунок, согласующийся с поддержанным сценарием повторного JPEG-сжатия с совпадающей блочной сеткой. Признак возможен при обычном повторном сохранении и не устанавливает подделку или злой умысел». |
+| `localization` | `{"type":"file"}`; глобальное измерение, без карты изменённых областей |
+| `correlation_group` | `image_jpeg_compression_history` |
+| `source_score`, `score_impact` | `null`, `null` |
+| `critical_override_eligible` | `false` |
+| `evidence_refs` | `[]`: публичные artifacts не создаются |
+
+`finding_id` формируется штатно по §9.5. `AnalyzerResult.score=null`,
+`score_name=null` при всех исходах, в соответствии с §9.4. Полей `confidence`
+или `evidence_strength` в текущем Finding нет: их не добавлять. Ни величина
+empty_fraction, ни upper FPR не являются confidence или вероятностью подделки.
+Severity не повышается с ростом score или числом valid modes.
+
+Технические сведения помещаются только в существующий `raw_metrics`:
+идентификаторы DQ-HIST-1 / DQ-R3C-1, метрика `empty_fraction`, точный threshold,
+image-level median (либо null), трёхзначное решение (positive / no_signal /
+insufficient_evidence), первый component ID и valid-mode count. Для каждой
+component/mode — ограниченные скаляры: ID, u/v, q2, N, excluded blocks,
+state, min/max/span, occupied, zero_fraction, empty_fraction, frequency,
+amplitude; для modes первого компонента также valid/support outcome.
+Новые top-level поля не вводятся; пути, коэффициентные массивы, histograms,
+spectra и corpus records не публикуются. Название внутреннего score всегда
+сопровождается пояснением «медиана доли пустых bins», не «вероятность».
+
+| Исход | Статус и данные | `summary` / ограничение |
+|---|---|---|
+| Positive | `completed`, `applicable=true`, один candidate | «Обнаружен статистический рисунок, согласующийся с поддержанным сценарием повторного JPEG-сжатия с совпадающей сеткой». |
+| Достаточная опора, score<=threshold | `completed`, `applicable=true`, findings=[]; измеренная median сохранена | «Поддержанный статистический рисунок повторного JPEG-сжатия не обнаружен. Это не подтверждает подлинность и не исключает повторное сжатие». |
+| Меньше 5 valid modes | `completed`, `applicable=true`, findings=[], median=null; счётчики и явное предупреждение | «Недостаточно статистической опоры для вывода об этом рисунке повторного JPEG-сжатия» (`insufficient_evidence`). |
+| Non-JPEG или source mode/layout вне scope | `not_applicable`, `applicable=false`, findings=[], score/score_name=null | Указать конкретную известную причину неприменимости; не выводить negative. |
+| Повреждение required representation / identity / shape / length | Действующая ошибка execution/infrastructure | Не Finding, не no_signal и не insufficient_evidence. |
+
+Всегда явно сообщать узкую sensitivity/portability область. В частности,
+`insufficient_evidence` — смысл измерения, **не новый AnalyzerStatus** и не
+`AnalysisCompleteness.status=insufficient`. По неизменному §10 CONTRACTS
+такой `completed` учитывается в completed/applicable counts и не добавляется
+в `missing_capabilities`. Поэтому итог может быть `complete`, хотя DQ
+воздержался: это полнота выполнения активного плана, не полнота forensic
+свидетельств. Предупреждение и null median обязательны; отсутствие сигнала
+или опоры нельзя называть успешной проверкой подлинности. Research coverage
+308/320 — доля поддержанных решений, не runtime `coverage_ratio`.
+
+Рекомендательное пояснение при positive: «Сопоставьте признак с известной
+историей экспорта и передачи файла; если происхождение важно для решения,
+проверьте источник по независимому каналу». Это пояснение в `summary`, не
+новый объект Recommendation и не автоматическое действие. Итоговая
+`Recommendation` остаётся по `CONTRACTS.md` §12.3: один weak Finding при
+complete даёт 5 баллов/low и `no_additional_action`. Метод не переопределяет
+эту политику и не обещает обязательной ручной проверки. При недостатке опоры
+пояснить ограничение исходного JPEG; повтор на тех же bytes не создаёт опору.
+
+Запрещены категорические утверждения manipulated/forged/fake/tampered,
+«точно повторно сжат», вероятность манипуляции, злой умысел, точное предыдущее
+качество/q1, число сохранений/правок, редактор/application identity и подлинность
+при отсутствии сигнала. Экспорт, пересылка, обычная коррекция, поворот или
+кадрирование могут сопровождаться benign recompression. Обнаружение такой
+истории не равно false positive на single JPEG и не доказывает malicious intent.
+
+### DQ-G4 — локализация, ресурсы и scope
 
 Локализация — только файл/фактически учтённые полные блоки; карта изменённых
 областей не выводится из глобального histogram. Края исключены и учитываются
-в coverage. Correlation — общая группа M2-R1 выше, включая будущие локальные
-расширения; компонент или mode не являются независимым доказательством.
+в coverage. Correlation — `image_jpeg_compression_history`, включая будущие
+JPEG history analyzers и локальные расширения этого семейства. Компонент,
+mode, регион или другой analyzer ID не создают независимое доказательство.
+По `CONTRACTS.md` §11.4 в группе учитывается максимальный вклад severity,
+остальные findings остаются объяснением без повторного вклада. Grid не активируется.
+
+Demand — только существующий `jpeg_coefficients`; зависимости
+`jpeg_structure`, `image_coordinates`, `original_image` раскрываются штатно.
+Нормализованный PNG остаётся обязательным продуктом preprocessing, но DQ его
+не читает, не вычисляет DCT из pixels и не запрашивает residual/grid pipeline.
+Границы `CONTRACTS.md` §7.5 / `ForensicResourcePolicy` сохраняются: JPEG input
+32 MiB (и более строгий configured intake limit), 256 markers/scans, 1 MiB
+marker payload, суммарно `2^22` native **MCU-padded** coefficients, raster
+`2^22` pixels. Это hard envelope, не доказательство переносимости порога.
 
 Пусть B — сумма полных блоков: `B<=2^22/64=65536`. Histogram passes — O(9B),
-FFT — до 36 преобразований длины 65536, O(36 L log L). Planes читать
-последовательно: совокупный int32 output Macro 1 до 16 MiB, один рабочий
-histogram/spectrum — единицы MiB; не держать массивы всех modes одновременно.
-Это аналитическая оценка, не измеренный RSS/time. Сохраняются общий remaining
-timeout и worker response <=65536 bytes; сериализованный результат необходимо
-проверить до допуска. Новых artifacts, runtime dependencies, YAML/schema нет.
+в предлагаемом L/RGB scope FFT — до 27 преобразований длины не более 65536,
+O(27 L log L). Компоненты и modes обрабатываются последовательно, не
+накапливаются planes/histograms/spectra всех modes. Совокупные int32 planes
+Macro 1 — до 16 MiB, native 16-bit coefficients — до 8 MiB в decoder child;
+это не сумма полного RSS процессов.
+
+Bounded workspace одного mode (максимум 65536 observations/bins): contiguous
+int32 values до 256 KiB, перевод/смещение int64 — до двух буферов по 512 KiB,
+int64 histogram до 512 KiB, normalized/padded float64 vectors — до двух
+буферов по 512 KiB, complex128 rFFT — до 524 304 bytes и amplitude float64
+до 262 152 bytes. Явные числовые temporaries вместе <4 MiB на mode;
+профиль выделяет им максимум 8 MiB с запасом, без нового config/policy поля.
+Одна читаемая immutable plane до 16 MiB; transient копии controlled reader,
+FFT/native allocator и Python overhead не выдаются за включённые в эти 8 MiB.
+Их фактический общий RSS проверяется в будущей реализации. Не использовать
+32 MiB residual workspace как дополнительный JPEG artifact budget.
+
+Новых видов artifacts нет: существующие numeric component files и PNG
+учитываются вместе с прочими файлами в `_GeneratedArtifactBudget` и лимите
+256 artifacts, регистрируются до записи и удаляются общим lifecycle.
+64 MiB на numeric artifact не отменяют более строгий JPEG ceiling и общий
+configured budget. В R2 2048² noise был корректно отклонён, потому что PNG
+плюс 16 MiB coefficients превышали общий 20 MiB budget; лимит не увеличивается,
+downsampling и fallback для получения решения запрещены.
+
+Принятые измерения, не новый benchmark: в R3C validation700 сумма DQ 13,21 s,
+preprocessing 251,65 s; в R3D на 320 endpoints DQ 6,622 s, preprocessing
+129,429 s, весь measurement/reporting wall 140,655 s. Максимальный numeric
+artifact 12 138 240 bytes. Средний DQ R3D около 20,7 ms на endpoint не является
+worst-case timeout. R3C parent peak snapshots 112 705 536 / 102 428 672 bytes
+для calibration/validation не измеряют совокупный parent+child peak. Offline
+RAW worker RSS не относится к production JPEG budget. Среда — Windows 11 x64,
+Python 3.12.10, NumPy 2.5.2, Pillow 12.3.0, pyjpegio 0.3.0. Это свидетельства
+приемлемого bounded research execution, не сертификация будущего worker.
+
+Preprocessing остаётся владельцем decode/preflight/resource failures:
+unsupported coding/precision, native warning/error/timeout, превышение
+artifact/input/coefficient budget не превращаются в Finding, `not_applicable`
+или no_signal. Применимость проверяется только после успешной предобработки.
+Native child использует `min(30 s, remaining budget)`; analyzer worker —
+существующий analyzer timeout и remaining overall budget (§8.5–8.6).
+Обычный analyzer `timeout` возможен только после подтверждённого reap;
+неостановленный reader сохраняет infrastructure failure/cleanup barrier.
+Resource exhaustion во время измерения — контролируемый сбой, не abstention;
+исключение mode при R>65536 — заранее определённое ограничение опоры,
+а не перехват ошибки выделения памяти.
+
+Сохраняются manifest <=16 384 bytes, metadata request <=32 768 bytes,
+worker response <=65 536 bytes (AnalyzerResult <=65 509 bytes). Только
+ограниченные скалярные diagnostics и максимум один Finding; размер проверяется
+штатно после нормализации, overflow — error. R2 diagnostics <=22 079 bytes
+не доказывают размер будущего production-конверта: boundary tests обязательны.
+Новые runtime dependencies не нужны: NumPy/stdlib считают histogram, FFT и
+median, уже принятый pyjpegio предоставляет coefficients через Macro 1.
+SciPy, rawpy/LibRaw research environment, модели и сетевой доступ в runtime
+не добавляются. Новых YAML/API/schema полей и fallback реализаций нет.
 
 Validation matrix — [DQ-01–DQ-12 и общие проверки](research/2026-09-23-jpeg-dq-grid-method-selection.md#validation).
 Особые challenge cases: плоское изображение, синтетические текстуры, мелкий
 текст, малое N, сильное квантование, trellis/custom tables, clipping.
 Provenance и собственный вклад — [JPEG-M2R1-PROPOSAL](REFERENCES.md#jpeg-m2r1-proposal).
 
-Открытые gates: **DQ-G1** — принять измерительный профиль либо выбрать и
-полностью специфицировать BP12 likelihood-профиль; **DQ-G2** — корпусная
-калибровка support/decision thresholds и оценка переносимости; **DQ-G3** —
-finding semantics/severity и смысл полноты измерительного режима; **DQ-G4** —
-принятие точного scope владельцем и ресурсная проверка в будущей задаче.
-DQ-G2/G3 нельзя закрыть голосованием владельца за произвольное число.
+### Свидетельства, приёмочная матрица и owner decision
+
+Принятая исследовательская цепочка:
+
+| Инкремент | Основание для предложения |
+|---|---|
+| [M2-R1](research/2026-09-23-jpeg-dq-grid-method-selection.md) | Выбор DQ-HIST-1 и собственный bounded профиль, сравнение альтернатив и provenance |
+| [M2-R2](research/2026-09-23-jpeg-dq-grid-calibration.md) | Арифметика/synthetic challenges; CALIBRATION_NOT_READY не заменял population evidence |
+| [M2-R3A](research/2026-09-24-jpeg-real-corpus-operating-point-design.md) | Права, source-safe split и operating target BALANCED TRIAGE ≤1% |
+| [M2-R3B](research/2026-09-24-jpeg-real-corpus-pilot.md) | DQ USEFUL_SIGNAL; Grid WEAK_SIGNAL и DEFERRED_RESEARCH_ONLY |
+| [M2-R3C](research/2026-09-24-jpeg-dq-final-calibration.md) | Calibration200, freeze DQ-R3C-1, независимая validation100 и narrow sensitivity |
+| [M2-R3D](research/2026-09-24-jpeg-dq-final-holdout.md) | Untouched DQ-only holdout, FINAL_HOLDOUT_PASS без изменения rule/endpoint |
+
+Corpus provenance — [DATASET-PIXLS-CC0](REFERENCES.md#dataset-pixls-cc0),
+pilot stress — [DATASET-VISION](REFERENCES.md#dataset-vision), offline development —
+[RESEARCH-RAWPY-M2R3B](REFERENCES.md#research-rawpy-m2r3b).
+Исследовательская реализация измерения/правила —
+`scripts/research/jpeg_measurements.py`, `scripts/research/jpeg_dq_rule.py`;
+они служат проверяемым oracle, не production import/dependency.
+Новых внешних источников или недостающих provenance linkages не выявлено.
+
+Будущая задача реализации должна проверить следующую матрицу без tuning:
+
+| Область | Обязательная проверка |
+|---|---|
+| Measurement equivalence | Signed/zero histogram, DQT natural order, native full-block crop, SOF order при нестандартных IDs; совпадение diagnostics/median/decision с frozen research oracle |
+| Support/boundary | N 1023/1024, nonzero 255/256, occupied 7/8, span 15/16 и 65536/65537, 4/5 valid modes, constant/no-full-blocks, odd/even median, equality/соседние binary64 значения около threshold |
+| Scope и determinism | L/RGB, три sampling layouts, SOF0/SOF2 после всех scans, EXIF 1–8/unknown без изменения native score; non-JPEG/CMYK/unsupported layout; повтор на тех же coefficients |
+| Finding / полнота / корреляция | Один weak positive; null public scores; no_signal отдельно от insufficient_evidence; предупреждения и штатные completed counts; одна family без повторного вклада |
+| Negatives / positives / benign | R3C/R3D evidence сохраняется; aligned40to90, reverse/same/close, repeated benign export; synthetic textures, flat, clipping, custom/trellis как challenges, не новое независимое n |
+| Failure / ресурсы | Missing/corrupt source-bound artifacts, identity/length/shape mismatch, preflight и общий artifact budget, histogram ceiling, worker response boundary, remaining budget, reap/cleanup и peak RSS при допустимой concurrency |
+
+Research tests и measurements уже свидетельствуют об арифметике и frozen rule;
+они не объявляют пройденными production integration/resource tests. Новая
+реализация потребует focused tests и полного quality barrier; strict installed
+certification возможна только по правилам clean committed SHA.
+
+| Gate | Owner gate M2-R4 от 2026-09-24 | Принятое решение |
+|---|---|---|
+| DQ-G1 | `CLOSED` | Измерение DQ-HIST-1 и точное support/median правило DQ-R3C-1 без изменений |
+| DQ-G2 | `CLOSED` | Frozen threshold, независимые свидетельства и явные population/portability limits |
+| DQ-G3 | `CLOSED` | Один weak Finding, null public scores, отдельные no_signal/insufficient semantics в существующих контрактах |
+| DQ-G4 | `CLOSED` | Только image JPEG L/RGB на Macro 1, bounded workspace, прежние budgets/failures, без новых dependencies |
+
+Обязательный owner gate полной записи закрыт решением от 2026-09-24:
+метод `ACCEPTED`, M2-A — `READY_FOR_IMPLEMENTATION` только в принятом DQ scope.
+Production analyzer не реализован; тестирование, activation и release
+certification этим решением не подтверждены. Grid не включён в разрешение.
+Если реализация потребует отклонения от DQ-R3C-1 или ослабления лимитов —
+STOP / OWNER GATE, а не скрытая адаптация.
 
 ## GRID-PHASE-1 — локальные фазы blocking artifacts
 
@@ -345,6 +644,8 @@ DQ-G2/G3 нельзя закрыть голосованием владельца
 
 - Рабочий Analyzer ID: `image_jpeg_grid_consistency`.
 - **PROPOSED / PENDING OWNER ACCEPTANCE; NOT_READY**.
+- Текущий допуск: **DEFERRED_RESEARCH_ONLY**; R4 не меняет измерение,
+  калибровку или activation Grid.
 - Семейство: JPEG compression history; наблюдение — локально доминирующие
   фазы периодических границ, а не общая сила обычного JPEG blocking.
 - Основа: [JPEG-GRID20](REFERENCES.md#jpeg-grid20), Algorithm 1, §§2.1–2.5.

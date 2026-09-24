@@ -129,12 +129,12 @@ AFTER_MVP
 Текущий Macro: Macro 2 — Image Analyzer Expansion — Wave 1 (IN_PROGRESS)
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
-Последний завершённый increment: M1-H — independent closure audit (DONE / PASS)
-Текущая исследовательская работа: M2-R3D — исполнен, ожидает owner acceptance; DQ — FINAL_HOLDOUT_PASS, Grid — DEFERRED_RESEARCH_ONLY
-Реализация M2-A: BLOCKED на обязательном method/provenance gate
-Следующее действие: owner review M2-R3D и отдельное решение по DQ method gates; production promotion не разрешена
+Последний завершённый increment: M2-R4 — OWNER_ACCEPTED (2026-09-24)
+Исследовательская цепочка M2-R1–M2-R3D: OWNER_ACCEPTED; DQ — FINAL_HOLDOUT_PASS, Grid — DEFERRED_RESEARCH_ONLY
+Реализация M2-A: NOT_STARTED / READY_FOR_IMPLEMENTATION только в принятом DQ scope
+Следующее действие: реализация принятого DQ-HIST-1 / DQ-R3C-1; Grid не активируется
 Будущие работы: Stage 12 Macros 3–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
-Критические блокеры: M2-A не имеет принятых спецификаций DQ/grid в METHODS.md
+Критические блокеры принятого DQ scope M2-A: отсутствуют; остальные методы требуют собственных gates
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
 Документационная база: сформирована
 ```
@@ -166,17 +166,18 @@ Macro 0 — `DONE / merged`. Macro 1 — Forensic Preprocessing Foundations —
 Свидетельства закрытия и принятые ограничения приведены в разделе M1-H ниже.
 
 Macro 1 — `DONE / CLOSED / merged`. Macro 2 — **IN_PROGRESS**; текущая ветка —
-`feat/stage12-macro2-image-analyzer-expansion-wave1`. Попытка M2-A корректно
-остановлена (`STOPPED / BLOCKED`) на обязательном method/provenance gate:
-названия DQ/grid в плане не задают конкретный принятый production-метод.
-Изменений кода M2-A нет.
+`feat/stage12-macro2-image-analyzer-expansion-wave1`. Первоначальная попытка
+M2-A была остановлена на method/provenance gate. Решением владельца M2-R4
+от 2026-09-24 принят DQ-HIST-1 / DQ-R3C-1; M2-A —
+`NOT_STARTED / READY_FOR_IMPLEMENTATION` только в принятом DQ scope.
+Изменений кода M2-A нет. Ниже сохранены свидетельства исследовательской цепочки.
 
 M2-R1 от 2026-09-23 принят владельцем как исследовательское свидетельство
 (подтверждено заданием M2-R2); это не принятие production-методов.
 M2-R2: по ограниченному разрешению владельца реализован research-only harness,
 подготовлены controlled corpus и
 [калибровочный отчёт](research/2026-09-23-jpeg-dq-grid-calibration.md) для owner review.
-DQ/Grid сохраняют `RESEARCH_ONLY_NOT_READY`; оба калибровочных вывода —
+На завершение M2-R2 DQ/Grid сохраняли `RESEARCH_ONLY_NOT_READY`; оба калибровочных вывода —
 `CALIBRATION_NOT_READY`, production thresholds не предложены. Следующая
 предпосылка — независимый real corpus с правами/provenance и закрытие
 calibration/profile/semantics gates из `METHODS.md`; operating target выбран ниже.
@@ -204,7 +205,8 @@ acquisition QA, 107 проявлены разрешённым внешним raw
 В M2-R3D владелец до открытия исходов заменил target 500 на максимальное число
 пригодных независимых PIXLS CC0 групп после полной QA, без downsampling:
 зафиксированы 320 групп. Acquisition composition и endpoint записаны до открытия.
-DQ pilot signal достаточен для FINAL_CALIBRATION; production acceptance и порога нет.
+На завершение R3B DQ pilot signal был достаточен для FINAL_CALIBRATION;
+production acceptance и порога тогда не было.
 Grid — WEAK_SIGNAL, `RESEARCH_ONLY_NOT_READY / DEFERRED`: направление не отвергнуто
 навсегда, но исключено из текущего Stage 12 primary statistical holdout.
 Primary endpoint — **DQ ONLY**, одно изображение на source group, target
@@ -217,7 +219,8 @@ Grid не использует этот holdout для второй незави
 Native VISION support остаётся 0/43; production resource limits не ослабляются,
 native samples не уменьшаются скрыто для изменения этого результата.
 VISION остаётся отдельным external stress; source grouping и все derivatives
-в одной partition сохраняются. Production acceptance DQ/Grid отсутствует; M2-A остаётся BLOCKED.
+в одной partition сохраняются. Принятие production DQ оформлено в M2-R4;
+Grid остаётся `DEFERRED_RESEARCH_ONLY`.
 
 M2-R3C — **OWNER_ACCEPTED** согласно заданию M2-R3D.
 [Отчёт финальной калибровки](research/2026-09-24-jpeg-dq-final-calibration.md):
@@ -229,18 +232,27 @@ same-DQT и close-quality истории — 0 detections. Исследоват�
 `READY_FOR_FINAL_HOLDOUT`, без утверждения доказанного ≤1% FPR или production
 acceptance. На момент R3C holdout не открывался.
 
-M2-R3D — исследовательское исполнение завершено, **ожидает owner acceptance**.
+M2-R3D — **OWNER_ACCEPTED** согласно заданию M2-R4.
 [Отчёт финального holdout](research/2026-09-24-jpeg-dq-final-holdout.md):
 все 320 пригодных независимых групп заморожены до первого DQ outcome;
 308 applicable, 12 abstentions, 0 admission failures, 0 FP;
 exact one-sided 95% upper **0,9679255009% ≤1%**, `FINAL_HOLDOUT_PASS`.
-Applicability 96,25% против 98% в R3C; coverage требует owner interpretation.
+Applicability 96,25% против 98% в R3C; coverage остаётся описательным
+свидетельством без нового post-hoc acceptance threshold.
 Правило и hashes сохранены, adaptive supplementation отсутствует.
-Focused suite 163 PASS; полный barrier: 2685 passed, 17 skipped, один ожидаемый
-untracked sdist provenance failure; повтор после Git-действий владельца —
-`OWNER_VERIFY_REQUIRED`. Это не strict certification.
-DQ остаётся research-only, production promotion не рекомендована до закрытия
-method gates; Grid остаётся `DEFERRED_RESEARCH_ONLY`, M2-A — BLOCKED.
+Focused suite 163 PASS. Повтор полного barrier после staging выполнен
+владельцем: **2686 passed, 17 skipped**, **CLI smoke PASS**, `git status` clean;
+R3D committed SHA — `7216fdc037e7e85fee6557cdd71bb5902c4cf2fd`.
+Verification — **DONE** по свидетельству владельца в closure M2-R4;
+это не strict certification и не новый запуск проверок агентом.
+
+M2-R4 — **OWNER_ACCEPTED**, решение от **2026-09-24**. Полная спецификация
+[DQ-HIST-1 / DQ-R3C-1](METHODS.md#dq-hist-1--гистограммное-измерение-dct)
+получила `ACCEPTED`, DQ-G1–G4 — `CLOSED`. Разрешена реализация точного
+документированного DQ scope без изменения правила, semantics и ограничений.
+M2-A — `NOT_STARTED / READY_FOR_IMPLEMENTATION`; это не DONE, не catalog
+activation, не пройденные production tests и не release certification.
+Grid остаётся `DEFERRED_RESEARCH_ONLY`.
 
 ---
 
@@ -2411,7 +2423,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 |---:|---|---|---|
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE / merged | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
-| 2 | Image Analyzer Expansion — Wave 1 | IN_PROGRESS | M2-A BLOCKED: исследование DQ/grid, provenance и owner acceptance спецификаций METHODS.md до реализации |
+| 2 | Image Analyzer Expansion — Wave 1 | IN_PROGRESS | M2-R4 OWNER_ACCEPTED; M2-A READY_FOR_IMPLEMENTATION в принятом DQ scope; Grid DEFERRED_RESEARCH_ONLY |
 | 3 | Audio Analyzer Expansion — Wave 1 | NOT_STARTED | После 1 и планового закрытия 2: согласованный audio-набор на общих представлениях |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
@@ -3047,12 +3059,13 @@ Graphify. Изменения реализации и Git mutations не выпо
 
 ## Macro 2 — Image Analyzer Expansion — Wave 1 — IN_PROGRESS
 
-### M2-A — BLOCKED: method/provenance gate
+### M2-A — NOT_STARTED / READY_FOR_IMPLEMENTATION: принятый DQ scope
 
-Попытка реализации корректно остановлена до изменений кода: DQ/grid названы
-как кандидаты, но канонических принятых спецификаций конкретного измерения,
-применимости, правил решения и обоснованных порогов нет. Подготовленные в
-Macro 1 представления и provenance компонентов не заменяют принятие метода.
+Первоначальная попытка реализации корректно остановлена до изменений кода:
+DQ/grid были только кандидатами без полных принятых спецификаций. В M2-R4
+владелец 2026-09-24 принял полную запись DQ-HIST-1 / DQ-R3C-1 и закрыл
+DQ-G1–G4. M2-A разблокирован только для реализации принятого DQ scope;
+Grid и другие непринятые методы в это разрешение не входят.
 
 - [x] M2-R1: подготовить целевое исследование DQ/grid и сравнение методов;
   [отчёт от 2026-09-23](research/2026-09-23-jpeg-dq-grid-method-selection.md)
@@ -3063,8 +3076,8 @@ Macro 1 представления и provenance компонентов не з�
   harness, арифметические тесты, controlled corpus вне Git и
   [отчёт](research/2026-09-23-jpeg-dq-grid-calibration.md). Работа представлена
   для owner review; вывод обоих методов — `CALIBRATION_NOT_READY`.
-- [ ] M2-R2: получить owner acceptance исследовательских результатов;
-  self-report не является приёмкой.
+- [x] M2-R2: owner acceptance исследовательских результатов подтверждён
+  владельцем в задании M2-R4; это не принятие production-метода.
 - [x] M2-R3A: подготовить дизайн real corpus, сравнение прав, source-safe split,
   расчёт holdout и варианты operating point; M2-R3A принят владельцем в задании R3B.
 - [x] M2-R3A owner decision remediation: выбран BALANCED TRIAGE ≤1%; расширенный
@@ -3096,14 +3109,26 @@ Macro 1 представления и provenance компонентов не з�
   0/308 FP, upper 0,9679255009%, `FINAL_HOLDOUT_PASS`;
   [отчёт R3D](research/2026-09-24-jpeg-dq-final-holdout.md).
   Без tuning и адаптивного добора; VISION/challenges вне primary FPR, Grid исключён.
-- [ ] M2-R3D: получить owner acceptance результата и интерпретацию coverage;
-  self-report не закрывает этап. Повторить full barrier после Git-действий
-  владельца из-за ожидаемого untracked-source provenance failure.
-- [ ] Закрыть DQ profile/calibration/semantics gates из предложений `METHODS.md`
-  и получить production acceptance полной записи DQ. Production threshold пока нет.
-  Grid сохраняет `RESEARCH_ONLY_NOT_READY / DEFERRED`; возврат к его калибровке
-  требует отдельного плана и не включён в текущий DQ primary holdout.
-- [ ] Только после закрытия gate возобновить реализацию M2-A в согласованном scope.
+- [x] M2-R3D: owner acceptance исследовательского результата подтверждён
+  заданием M2-R4. Coverage остаётся описательным свидетельством; новый
+  post-hoc acceptance threshold не вводится.
+- [x] R3D package/full barrier verification — DONE: владелец подтвердил
+  успешный повтор после staging — 2686 passed, 17 skipped; CLI smoke PASS;
+  git status clean. R3D committed SHA:
+  `7216fdc037e7e85fee6557cdd71bb5902c4cf2fd`. Это свидетельство владельца,
+  не новый запуск M2-R4 и не strict certification.
+- [x] M2-R4: подготовить полную спецификацию
+  [DQ-HIST-1](METHODS.md#dq-hist-1--гистограммное-измерение-dct):
+  DQ-G1–G4 `CLOSED`, статус метода `ACCEPTED`. Frozen rule, threshold и final-holdout
+  interpretation не изменены; Findings, полнота, correlation и ресурсный scope
+  описаны в METHODS без изменения общих контрактов и production code.
+- [x] M2-R4 — OWNER_ACCEPTED: явное решение владельца от 2026-09-24 принимает
+  полную запись DQ в METHODS и разрешает её production implementation.
+  M2-A — READY_FOR_IMPLEMENTATION в точном принятом scope;
+  принятие не означает реализацию, activation, tests или release certification.
+  Grid сохраняет `DEFERRED_RESEARCH_ONLY`: слабое различение локальных patches
+  и benign crop/recompress в R3B; возврат требует отдельного плана.
+- [ ] Реализовать M2-A в принятом DQ scope; Grid не активировать.
 
 M2-A не DONE; production code changes отсутствуют, новые анализаторы не production-active.
 Исследовательский код M2-R2 не регистрирует IDs и не влияет на риск/полноту.
