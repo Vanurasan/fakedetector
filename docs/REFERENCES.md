@@ -832,6 +832,56 @@ strict clean-tree certification остаётся отдельной провер
   Embedded previews не являются masters; это offline research preprocessing,
   не расширение production intake и не принятие DQ/Grid.
 
+## M2-BR1 — классические residual/resampling методы, 2026-09-24
+
+Все записи этого раздела — **RESEARCH_REFERENCE**, без допуска production-кода.
+Сравнение, фактически выполненные проверки и ограничения находятся в
+[исследовательском отчёте](research/2026-09-24-image-noise-resampling-method-selection.md).
+Из публикаций заимствованы концепции, не код, изображения, текст алгоритмов
+или их числовые пороги. Внешние реализации не запускались и не копировались.
+Публичность PDF/GitHub не означает разрешение включения в Apache-2.0 CORE.
+
+| ID | Первичный источник | Принцип и граница рассмотрения |
+|---|---|---|
+| `NR-MS09` | Babak Mahdian, Stanislav Saic. *Using noise inconsistencies for blind image forensics*, 2009. [DOI](https://doi.org/10.1016/j.imavis.2009.02.001), [авторский PDF в ÚTIA](https://library.utia.cas.cz/separaty/2009/ZOI/saic-using%20noise%20inconsistencies%20for%20blind%20image%20forensics.pdf) | Сегментация по локальным уровням аддитивного белого гауссова шума. Проверен индексируемый abstract/первая страница; полный PDF при повторном доступе недоступен. Детали воспроизведения не подтверждены |
+| `NR-CB13` | Miguel Colom, Antoni Buades. *Analysis and Extension of the Ponomarenko et al. Method, Estimating a Noise Curve from a Single Image*, 2013. [DOI/страница](https://doi.org/10.5201/ipol.2013.45), [полный текст](https://www.ipol.im/pub/art/2013/45/article.pdf) | Оценка по высокочастотным DCT-компонентам блоков с малой низкочастотной энергией; зависимость от яркости. Статья прочитана как источник концепции matching; опубликованные параметры не перенесены |
+| `RS-PF05` | Alin C. Popescu, Hany Farid. *Exposing Digital Forgeries by Detecting Traces of Resampling*, 2005. [DOI](https://doi.org/10.1109/TSP.2004.839932), [авторский PDF](https://farid.berkeley.edu/downloads/publications/sp05.pdf) | EM-оценка локального предсказателя, периодичность p-map, сравнение спектров. Полный текст; EM-профиль не реализован |
+| `RS-MS08` | Babak Mahdian, Stanislav Saic. *Blind Authentication Using Periodic Properties of Interpolation*, 2008. [DOI](https://doi.org/10.1109/TIFS.2004.924603), [авторский PDF в ÚTIA](https://library.utia.cas.cz/separaty/2008/ZOI/saic-blind%20authentication%20using%20periodic%20properties%20ofinterpolation.pdf) | Периодичность ковариации интерполированного сигнала и производных. Проверен индексируемый abstract/первая страница; полный PDF недоступен. Полная Radon-процедура не воспроизведена |
+| `RS-K08` | Matthias Kirchner. *Fast and Reliable Resampling Detection by Spectral Analysis of Fixed Linear Predictor Residue*, 2008. [DOI](https://doi.org/10.1145/1411328.1411333), [авторский PDF](https://ws.binghamton.edu/kirchner/papers/2008_MMSec.pdf) | Фиксированный линейный предсказатель вместо EM, спектр остатка и cumulative periodogram. Полный текст; собственный BR1 descriptor не объявляется реализацией статьи |
+| `RS-KG09` | Matthias Kirchner, Thomas Gloe. *On Resampling Detection in Re-compressed Images*, 2009. [авторский PDF](https://ws.binghamton.edu/kirchner/papers/2009_WIFS.pdf) | Преобразованные JPEG-следы могут усиливать resampling peaks; последующее сжатие подавляет сигнал и добавляет пики. Полный текст; вариант на JPEG-решётке не выбран |
+
+Лицензии и использование: `NR-MS09` — Elsevier, на первой странице all rights
+reserved; `NR-CB13` — на статье CC BY-NC-SA; `RS-K08` — ACM copyright с
+ограниченным разрешением personal/classroom copies; `RS-PF05`, `RS-MS08`,
+`RS-KG09` — научные IEEE-публикации, разрешительная лицензия реализации не
+установлена. Эти сведения о статьях не являются лицензиями программ.
+Ни архив IPOL C++, ни внешние forensic repositories не изучались как исходный
+код; упоминание доступной реализации не означает её лицензионный допуск.
+Никакие PDF, сторонние исходники, модели или веса в поставку не добавлены.
+
+### NR-RS-BR1-FIRSTPARTY — собственные исследовательские профили
+
+- Method source: project-specific heuristic, концептуальные основания — записи
+  выше. `N-MAD-MATCH-1` и `R-D2-MATCH-1` — собственные exploratory profiles,
+  не Noiseprint, PRNU или source-camera identification.
+- Implementation source: **FIRSTPARTY_CODE**, оригинальные внешние scripts
+  M2-BR1; повторно использованы private NumPy kernels Macro 1. Building blocks:
+  установленный NumPy 2.5.2, OpenCV 4.14.0 (`opencv-python-headless` из lock),
+  Pillow 12.3.0 из существующего окружения, Python 3.12.10 и standard library.
+  Новых dependencies, SciPy, ML, весов и runtime network нет.
+- Данные: 20 VISION native JPEG из уже reviewed exploration manifest M2-R3B,
+  не DQ calibration/validation/holdout; лицензия и attribution —
+  [DATASET-VISION](#dataset-vision--рекомендуемая-внешняя-workflow-проверка).
+  Native не означает отсутствие внутрикамерной обработки. Хэши исходников и
+  снимка условий сверены; crop/контролируемые преобразования явно записаны.
+- Фотографии, вырезки и contact sheet остаются внешними материалами с
+  CC BY-SA 4.0 и attribution CSP Lab/авторов VISION; не перелицензируются в
+  Apache-2.0. Четыре процедурных контроля созданы собственным кодом.
+  Manifest, scripts, результаты и hashes находятся только в заданном root
+  `FakeDetector-Work/research/M2-BR1-noise-resampling/`; в Git — отчёт и ссылки.
+- Итог допуска: только исследование. Production promotion, точная спецификация
+  Findings и thresholds требуют отдельного gate METHODS и приёмки владельца.
+
 ## Общие библиотеки и инструменты
 
 ### Python standard library

@@ -86,8 +86,8 @@ DQ-HIST-1 / DQ-R3C-1 для `image_jpeg_double_quantization@1.0.0` принят
 |---|---|
 | `image_jpeg_double_quantization` | DQ-HIST-1 / DQ-R3C-1 ACCEPTED; DQ-G1–G4 CLOSED; разрешена реализация точного принятого scope |
 | `image_jpeg_grid_consistency` | DEFERRED_RESEARCH_ONLY; реализация Grid не разрешена, требуется отдельное принятие метода |
-| `image_noise_residual_consistency` | Конкретный метод ещё не принят; требуется общий gate выше |
-| `image_resampling_consistency` | Конкретный метод ещё не принят; требуется общий gate выше |
+| `image_noise_residual_consistency` | M2-BR1: N-MAD-MATCH-1, рекомендация RESEARCH_ONLY / WEAK_SIGNAL; production-метод не принят |
+| `image_resampling_consistency` | M2-BR1: R-D2-MATCH-1, рекомендация RESEARCH_ONLY / WEAK_SIGNAL; production-метод не принят |
 | `image_embedded_thumbnail_consistency` | Конкретный метод ещё не принят; требуется общий gate выше |
 
 Исследование M2-R1 сохранено в
@@ -95,6 +95,16 @@ DQ-HIST-1 / DQ-R3C-1 для `image_jpeg_double_quantization@1.0.0` принят
 Запись DQ ниже включает принятое правило и semantics production findings.
 Принятие разрешает реализацию, но не означает готовность, включение в каталог,
 прохождение тестов или release certification. Grid остаётся предложением.
+
+Исследовательский gate M2-BR1 сохранён в
+[отчёте от 2026-09-24](research/2026-09-24-image-noise-resampling-method-selection.md).
+Точные exploratory profiles и micro-pilot не являются нормативными методами:
+у N не подтверждена устойчивость после brightness/texture matching, у R —
+различение при JPEG и periodic texture. Production thresholds, severity и
+Finding types не выбраны; общий gate принятия остаётся открытым для обоих.
+Предложенная общая N/R correlation group и её отношения с существующими
+группами требуют отдельного решения, не меняют scoring. Provenance —
+[M2-BR1 в REFERENCES](REFERENCES.md#m2-br1--классические-residualresampling-методы-2026-09-24).
 
 ## M2-R1–M2-R4: основания и границы предложений
 

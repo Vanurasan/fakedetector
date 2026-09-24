@@ -129,10 +129,11 @@ AFTER_MVP
 Текущий Macro: Macro 2 — Image Analyzer Expansion — Wave 1 (IN_PROGRESS)
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
-Последний завершённый increment: M2-R4 — OWNER_ACCEPTED (2026-09-24)
+Последний принятый increment: M2-BR1 — DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE
 Исследовательская цепочка M2-R1–M2-R3D: OWNER_ACCEPTED; DQ — FINAL_HOLDOUT_PASS, Grid — DEFERRED_RESEARCH_ONLY
-Реализация M2-A: IN_PROGRESS / реализация подготовлена к приёмке владельцем
-Следующее действие: приёмка реализации M2-A с packaging remediation владельцем; Grid не активируется
+Реализация M2-A: DONE / OWNER ACCEPTED / PRODUCTION IMPLEMENTED
+M2-BR1: DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE; noise и resampling — RESEARCH_ONLY / WEAK_SIGNAL
+Следующее действие: отдельное решение о дальнейшем targeted research для noise/resampling; production calibration и implementation не разрешены
 Будущие работы: Stage 12 Macros 3–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры принятого DQ scope M2-A: отсутствуют; остальные методы требуют собственных gates
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
@@ -168,9 +169,12 @@ Macro 0 — `DONE / merged`. Macro 1 — Forensic Preprocessing Foundations —
 Macro 1 — `DONE / CLOSED / merged`. Macro 2 — **IN_PROGRESS**; текущая ветка —
 `feat/stage12-macro2-image-analyzer-expansion-wave1`. Первоначальная попытка
 M2-A была остановлена на method/provenance gate. Решением владельца M2-R4
-от 2026-09-24 принят DQ-HIST-1 / DQ-R3C-1; M2-A —
-`NOT_STARTED / READY_FOR_IMPLEMENTATION` только в принятом DQ scope.
-Изменений кода M2-A нет. Ниже сохранены свидетельства исследовательской цепочки.
+от 2026-09-24 принят DQ-HIST-1 / DQ-R3C-1. Задание M2-BR1 явно подтверждает
+M2-A — `DONE / OWNER ACCEPTED / PRODUCTION IMPLEMENTED`; каталог содержит
+пять анализаторов. DQ не переоткрывается, Grid остаётся `DEFERRED_RESEARCH_ONLY`.
+M2-BR1 — `DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE`: владелец принял только
+исследовательское закрытие; production-методы не приняты (раздел ниже).
+Ниже сохранены свидетельства предыдущей исследовательской цепочки.
 
 M2-R1 от 2026-09-23 принят владельцем как исследовательское свидетельство
 (подтверждено заданием M2-R2); это не принятие production-методов.
@@ -250,8 +254,8 @@ M2-R4 — **OWNER_ACCEPTED**, решение от **2026-09-24**. Полная �
 [DQ-HIST-1 / DQ-R3C-1](METHODS.md#dq-hist-1--гистограммное-измерение-dct)
 получила `ACCEPTED`, DQ-G1–G4 — `CLOSED`. Разрешена реализация точного
 документированного DQ scope без изменения правила, semantics и ограничений.
-M2-A — `IN_PROGRESS`: реализация принятого scope добавлена в каталог.
-Приёмка владельцем и strict release certification этим не подтверждены.
+M2-A — `DONE / OWNER ACCEPTED / PRODUCTION IMPLEMENTED`: приёмка реализации
+явно подтверждена владельцем в задании M2-BR1. Это не новая strict certification.
 Grid остаётся `DEFERRED_RESEARCH_ONLY`.
 
 ---
@@ -2423,7 +2427,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 |---:|---|---|---|
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE / merged | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
-| 2 | Image Analyzer Expansion — Wave 1 | IN_PROGRESS | M2-R4 OWNER_ACCEPTED; реализация M2-A ожидает приёмки; Grid DEFERRED_RESEARCH_ONLY |
+| 2 | Image Analyzer Expansion — Wave 1 | IN_PROGRESS | M2-A OWNER_ACCEPTED / PRODUCTION IMPLEMENTED; M2-BR1 OWNER_ACCEPTED_RESEARCH_CLOSURE; Grid DEFERRED_RESEARCH_ONLY |
 | 3 | Audio Analyzer Expansion — Wave 1 | NOT_STARTED | После 1 и планового закрытия 2: согласованный audio-набор на общих представлениях |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
@@ -3059,7 +3063,11 @@ Graphify. Изменения реализации и Git mutations не выпо
 
 ## Macro 2 — Image Analyzer Expansion — Wave 1 — IN_PROGRESS
 
-### M2-A — IN_PROGRESS / ожидает приёмки реализации владельцем
+### M2-A — DONE / OWNER ACCEPTED / PRODUCTION IMPLEMENTED
+
+Приёмка реализации с packaging remediation подтверждена явным current-state
+свидетельством владельца в задании M2-BR1 от 2026-09-24. Ниже сохранён ход
+проверок M2-A; их прежние ограничения относятся к состоянию до этой приёмки.
 
 Первоначальная попытка реализации корректно остановлена до изменений кода:
 DQ/grid были только кандидатами без полных принятых спецификаций. В M2-R4
@@ -3130,7 +3138,7 @@ Grid и другие непринятые методы в это разреше�
   и benign crop/recompress в R3B; возврат требует отдельного плана.
 - [x] Реализовать M2-A в принятом DQ scope; Grid не активировать.
 - [x] Повторить package provenance после staging владельцем и исправить packaging regression.
-- [ ] Получить приёмку реализации владельцем.
+- [x] Получить приёмку реализации владельцем — подтверждено заданием M2-BR1.
 
 M2-A реализует `image_jpeg_double_quantization@1.0.0` через существующий
 каталог, controlled numeric reader и Stage 6 candidate formation. Каталог
@@ -3151,7 +3159,8 @@ pre-commit. При четырёх одновременных worker executions �
 байт; выборочный суммарный worker RSS — 300 916 736 байт (шаг 5 ms).
 Это измерение workers, не совокупный peak с preprocessing; допустимый JPEG
 2048² и ресурсные отказы проверены отдельно. Это development verification,
-не strict certification; M2-A и Macro 2 не объявляются принятыми владельцем.
+не strict certification; на момент этого прогона приёмка M2-A была открыта.
+Macro 2 этим не закрывается.
 
 Packaging remediation M2-A: после staging владельцем выявлено устаревшее
 ожидание четырёх регистраций в installed-wheel probe. Проверка теперь сверяет
@@ -3162,7 +3171,8 @@ Profile B/default enabled и реализация DQ не изменены. То
 1 passed; связанные release tests — 99 passed; `uv run poe check` — PASS:
 **2792 passed, 17 skipped in 143.07s (0:02:23)**, pre-commit/mypy/CLI smoke PASS.
 Прежний `OWNER_VERIFY_REQUIRED` по package provenance закрыт этим повтором.
-Это development verification; приёмка владельцем остаётся открытой.
+Это development verification; последующая приёмка реализации подтверждена
+заданием M2-BR1, без повторного открытия DQ.
 
 Исследовательский код M2-R2 не регистрирует IDs и не влияет на риск/полноту.
 Проверки M2-R2: focused suite — 89 passed; полный quality barrier —
@@ -3172,6 +3182,33 @@ sdist после Git-действий владельца — `OWNER_VERIFY_REQUI
 tracked provenance сохранено. Полные свидетельства находятся в отчёте M2-R2.
 Пять image-кандидатов и их методологический допуск перечислены в `METHODS.md`;
 исследовательские отчёты подчиняются `research/README.md`.
+
+### M2-BR1 — DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE
+
+Владелец завершил review и явно принял **исследовательское закрытие M2-BR1**.
+Это решение не является принятием ни одного production-метода.
+
+- [x] Изучить реальные Macro 1 capabilities и первичные classical references
+  для noise residual и resampling; сравнить distinct/correlated evidence с
+  metadata, copy-move, DQ и deferred Grid.
+- [x] Зафиксировать exploratory profiles до outcomes и выполнить bounded pilot:
+  20 VISION crops + 4 synthetic controls, 360 measurements; repeat360 идентичен.
+- [x] Подготовить [отчёт отбора](research/2026-09-24-image-noise-resampling-method-selection.md)
+  и provenance; оба результата — рекомендация **RESEARCH_ONLY / WEAK_SIGNAL**.
+  У noise matching подавляет added-noise signal; у resampling JPEG/texture
+  overlap и abstention не позволяют перейти к production threshold calibration.
+- [x] Получить owner acceptance исследовательского закрытия M2-BR1.
+
+Методы сохраняют `CANDIDATE / METHOD NOT YET ACCEPTED`. Профили N-MAD-MATCH-1
+и R-D2-MATCH-1 остаются `RESEARCH_ONLY / WEAK_SIGNAL`: production-методы не
+приняты, production calibration и production implementation не разрешены;
+thresholds/severity не выбраны. Дальнейшее targeted research требует отдельного решения.
+Следующий возможный scope — отдельное исследование нерешённых confounds из
+отчёта, не автоматическая калибровка/реализация. Новых runtime dependencies,
+analyzers, config/API/scoring/completeness changes нет; каталог — пять.
+M2-A не менялся; Grid — `DEFERRED_RESEARCH_ONLY`; Macro 2 / Stage 12 остаются
+`IN_PROGRESS`. Все внешние BR1 материалы находятся только в заданных
+`FakeDetector-Work/research|reviews|tmp/M2-BR1-noise-resampling/`.
 
 ## Macro 6 — корреляция и смысл результата
 
