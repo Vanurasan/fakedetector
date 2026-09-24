@@ -88,7 +88,7 @@ DQ-HIST-1 / DQ-R3C-1 для `image_jpeg_double_quantization@1.0.0` принят
 | `image_jpeg_grid_consistency` | DEFERRED_RESEARCH_ONLY; реализация Grid не разрешена, требуется отдельное принятие метода |
 | `image_noise_residual_consistency` | M2-BR1: N-MAD-MATCH-1, рекомендация RESEARCH_ONLY / WEAK_SIGNAL; production-метод не принят |
 | `image_resampling_consistency` | M2-BR1: R-D2-MATCH-1, рекомендация RESEARCH_ONLY / WEAK_SIGNAL; production-метод не принят |
-| `image_embedded_thumbnail_consistency` | Конкретный метод ещё не принят; требуется общий gate выше |
+| `image_embedded_thumbnail_consistency` | M2-CR1: THUMB-NCC-GRAD-1, рекомендация RESEARCH_ONLY / WEAK_SIGNAL; production-метод не принят |
 
 Исследование M2-R1 сохранено в
 [отчёте от 2026-09-23](research/2026-09-23-jpeg-dq-grid-method-selection.md).
@@ -105,6 +105,18 @@ Finding types не выбраны; общий gate принятия остаёт
 Предложенная общая N/R correlation group и её отношения с существующими
 группами требуют отдельного решения, не меняют scoring. Provenance —
 [M2-BR1 в REFERENCES](REFERENCES.md#m2-br1--классические-residualresampling-методы-2026-09-24).
+
+Исследовательский gate M2-CR1 сохранён в
+[отчёте thumbnail](research/2026-09-24-image-embedded-thumbnail-method-selection.md).
+Узкий исследованный scope — стандартный EXIF IFD1 JPEG thumbnail внутри JPEG;
+MakerNote и другие previews не включены. Content comparison отличается от
+проверки metadata, но benign crop и неустановленная geometry не позволяют
+рекомендовать production-калибровку. Нужны отдельный допуск bounded preprocessing
+capability и согласование отсутствия/ошибок вложенного изображения; существующие
+metadata checks этим не расширяются. THUMB-NCC-GRAD-1 — только exploratory
+профиль, без production threshold, severity, Finding type и принятой correlation
+group. Общий gate остаётся открытым; provenance —
+[M2-CR1 в REFERENCES](REFERENCES.md#thumbnail-m2cr1).
 
 ## M2-R1–M2-R4: основания и границы предложений
 

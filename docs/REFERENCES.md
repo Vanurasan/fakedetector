@@ -882,6 +882,57 @@ reserved; `NR-CB13` — на статье CC BY-NC-SA; `RS-K08` — ACM copyrigh
 - Итог допуска: только исследование. Production promotion, точная спецификация
   Findings и thresholds требуют отдельного gate METHODS и приёмки владельца.
 
+<a id="thumbnail-m2cr1"></a>
+## M2-CR1 — EXIF thumbnail, 2026-09-24
+
+Исследовательский допуск, не production-метод. Проверка выполнена агентом
+2026-09-24 для внутреннего пилота; owner acceptance остаётся отдельно.
+Факты, применение и результаты — в
+[отчёте](research/2026-09-24-image-embedded-thumbnail-method-selection.md).
+Моделей/весов нет, чужой код не копировался; публикации и стандарты цитируются,
+не включаются в wheel/ZIP. Доступность текста не означает разрешения его
+переиздания или патентной лицензии.
+
+| Стабильный ID / категория | Источник, версия, URL | Точный использованный факт / граница |
+|---|---|---|
+| `TH-EXIF31` / `RESEARCH_REFERENCE` | CIPA / JEITA, *Exchangeable image file format for digital still cameras: Exif Version 3.1*, CIPA DC-008-Translation-2026 / JEITA CP-3451H, январь 2026; [официальная загрузка](https://www.cipa.jp/std/documents/download_e.html?CIPA_DC-008-2026-E), [каталог](https://www.cipa.jp/e/std/std-sec.html) | §4.5.8, 4.6.2, 4.6.5.1.6, 4.6.5.2.4–5, Table 21, §4.7.2 и 4.8.2: IFD1 JPEG/несжатый thumbnail, offset/length относительно TIFF, optional IFD1 Orientation, отсутствие thumbnail допустимо. Это семантика хранения, не forensic threshold |
+| `TH-TIFF6` / `RESEARCH_REFERENCE` | Aldus Corporation, *TIFF Revision 6.0*, 3 июня 1992; [спецификация, зеркало](https://image-js.github.io/tiff/media/TIFF6.pdf), [официальная навигация LibTIFF](https://libtiff.gitlab.io/libtiff/specification/index.html) | §2 и baseline RGB: II/MM, header 42, IFD count/entries/next, inline value против offset, порядок tags и strip storage. Старый JPEG-in-TIFF не расширяет наш Exif scope |
+| `TH-KF10` / `RESEARCH_REFERENCE` | Eric Kee, Hany Farid, Dartmouth College, *Digital Image Authentication from Thumbnails*, SPIE Electronic Imaging, 2010; [авторский PDF](https://erickee.com/papers/spie10.pdf), [авторский каталог](https://erickee.com/publications.html) | §2.1–2.2: crop/padding, pre/post filtering, contrast/brightness и JPEG входят в модель thumbnail generation. Исследуется подпись процесса генерации, не универсальный threshold content mismatch; модель/optimizer не переносились |
+| `TH-PIL123` / `IMPLEMENTATION_REFERENCE` | Pillow contributors, Pillow 12.3.0, 2026; [Image/Exif API](https://pillow.readthedocs.io/en/stable/reference/Image.html), [ImageFile API](https://pillow.readthedocs.io/en/stable/reference/ImageFile.html), [versioned ImageFile.py](https://github.com/python-pillow/Pillow/blob/12.3.0/src/PIL/ImageFile.py) | Изучены установленные `Image.py` (`Exif.get_ifd`) и `ImageFile.py` (`get_child_images`): IFD1 доступен, helper читает offset/length и декодирует children, но не реализует project provenance/budgets. MIT-CMU, copyright/notice требования — запись Pillow ниже; исходный код не копировался |
+| `TH-CV-NCC` / `IMPLEMENTATION_REFERENCE` | OpenCV contributors, документация OpenCV 4.13.0, просмотр 2026-09-24; [TemplateMatchModes](https://docs.opencv.org/4.13.0/df/dfb/group__imgproc__object.html) | Формула TM_CCOEFF_NORMED мотивирует mean-centered normalized correlation. Собственная реализация NumPy, не копия исходного кода. Пилот использует установленный OpenCV 4.14.0 для resize/blur; лицензии ниже |
+| `TH-JFIF` / `RESEARCH_REFERENCE` | ITU-T / ISO/IEC, *JPEG File Interchange Format (JFIF)*, T.871 (05/2011); [официальная запись](https://www.itu.int/rec/T-REC-T.871-201105-I/en) | JFIF — отдельная спецификация контейнерного thumbnail, не EXIF IFD1; в выбранный профиль не включён. Только классификация scope, не реализация |
+
+`TH-EXIF31`: официальный PDF получен через форму CIPA после чтения disclaimer;
+сохранён только снаружи, SHA-256
+`9cc36399a46ab7aa4a65473bb8a4945d3b044da739b8f16a01b0be11886dcff9`.
+Текст и стандарт не перелицензируются Apache-2.0; CIPA не предоставляет
+гарантии отсутствия чужих IP rights. Для текущего сценария допускается
+использование как исследовательского источника, не bundling документа.
+Исследовательское чтение PDF использовало изолированный `uv --no-project`
+environment с `pypdf[crypto]` только во внешнем `tmp/M2-CR1-thumbnail/`;
+это не runtime dependency проекта и не компонент поставки.
+
+### TH-M2CR1-FIRSTPARTY — профиль и данные пилота
+
+- Категории: собственная исследовательская реализация + `DATASET-VISION`.
+  THUMB-NCC-GRAD-1, bounded two-IFD prototype, fixture generator и tests написаны
+  для задачи; чужой parser/forensic implementation не копировался. Исходники,
+  предрегистрация, SHA-256 и результаты находятся во внешнем research root;
+  воспроизведение описано в отчёте. Допуск — только исследование.
+- 30 исходных VISION JPEG: 20 native сцен десяти devices и 10 natFBH экспортов.
+  Per-file URL, attribution, SHA-256, license URL и выбор до outcomes —
+  `provenance/sources.json`; права и обязанности — [DATASET-VISION](#dataset-vision).
+  Файлы извлечены по hash из ранее сохранённого `originals.zip`, не из BR1 crops.
+  Нет новой лицензии или blanket-допуска всего архива. Применяется CC BY-SA 4.0,
+  фотографии/производные не включены в Git/поставку.
+- Четыре synthetic источника созданы локально алгоритмически без внешних медиа;
+  генератор — собственный код. Производные VISION сохраняют исходные attribution,
+  условия и описание изменений; собственный код/агрегаты не перелицензируют фото.
+  Корпус не измеряет population FPR, native history и независимость сцен не
+  выводятся из имени файла. Коммерческий сценарий/переиздание фото ограничены
+  уже записанными условиями DATASET-VISION; отдельной проверки patent clearance
+  алгоритмов не проводилось. Production-допуск остаётся через METHODS gate.
+
 ## Общие библиотеки и инструменты
 
 ### Python standard library

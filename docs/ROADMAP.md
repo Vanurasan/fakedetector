@@ -2427,7 +2427,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 |---:|---|---|---|
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE / merged | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
-| 2 | Image Analyzer Expansion — Wave 1 | IN_PROGRESS | M2-A OWNER_ACCEPTED / PRODUCTION IMPLEMENTED; M2-BR1 OWNER_ACCEPTED_RESEARCH_CLOSURE; Grid DEFERRED_RESEARCH_ONLY |
+| 2 | Image Analyzer Expansion — Wave 1 | IN_PROGRESS | M2-A OWNER_ACCEPTED / PRODUCTION IMPLEMENTED; M2-BR1 и M2-CR1 OWNER_ACCEPTED_RESEARCH_CLOSURE; Grid DEFERRED_RESEARCH_ONLY |
 | 3 | Audio Analyzer Expansion — Wave 1 | NOT_STARTED | После 1 и планового закрытия 2: согласованный audio-набор на общих представлениях |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
@@ -3209,6 +3209,37 @@ analyzers, config/API/scoring/completeness changes нет; каталог — п
 M2-A не менялся; Grid — `DEFERRED_RESEARCH_ONLY`; Macro 2 / Stage 12 остаются
 `IN_PROGRESS`. Все внешние BR1 материалы находятся только в заданных
 `FakeDetector-Work/research|reviews|tmp/M2-BR1-noise-resampling/`.
+
+### M2-CR1 — DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE
+
+Владелец завершил review и явно принял **исследовательское закрытие M2-CR1**.
+Это решение не является принятием production-метода.
+
+- [x] Проверить EXIF/TIFF, фактические preprocessing capabilities и границу
+  ответственности `image_metadata_consistency`; сохранить
+  [отчёт](research/2026-09-24-image-embedded-thumbnail-method-selection.md)
+  и [provenance](REFERENCES.md#thumbnail-m2cr1).
+- [x] До outcomes закрепить THUMB-NCC-GRAD-1; исследовать 30 VISION файлов
+  и 360 controlled cases на 20 native сценах + 4 synthetic controls.
+  Resize/compression/orientation устойчивы в пилоте; benign crop пересекается
+  с transplanted-thumbnail measurements. Производственная применимость
+  ограничена ещё и raster budget; пилот не является интеграционной проверкой.
+- [x] Подготовить рекомендацию **RESEARCH_ONLY / WEAK_SIGNAL**, без production
+  thresholds, severity, Finding types, analyzer или preprocessing implementation.
+- [x] Получить owner acceptance исследовательского закрытия M2-CR1.
+
+THUMB-NCC-GRAD-1 сохраняет `RESEARCH_ONLY / WEAK_SIGNAL`: production-метод
+не принят, production calibration и production implementation не разрешены.
+Поддержка standard EXIF IFD1 относится только к исследовательскому прототипу;
+production thumbnail preprocessing capability не реализована и не принята.
+Vendor previews остаются вне scope. Отдельные gates — bounded extraction/decode
+и семантика optional representation failures, подтверждение geometry и benign-edit
+challenge. Дальнейшее targeted research требует отдельного решения владельца;
+принятие исследовательского закрытия не разрешает калибровку или реализацию.
+Структурные checks не реализуются здесь.
+Каталог остаётся пять, DQ не меняется, Grid — `DEFERRED_RESEARCH_ONLY`,
+noise/resampling — `RESEARCH_ONLY`. Macro 2 и Stage 12 остаются `IN_PROGRESS`.
+Внешние материалы — только `FakeDetector-Work/research|reviews|tmp/M2-CR1-thumbnail/`.
 
 ## Macro 6 — корреляция и смысл результата
 
