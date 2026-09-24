@@ -790,9 +790,10 @@ task-level processing failure, а не набор обычных analyzer timeou
 риск или итоговый JSON. Он возвращает `AnalyzerResult` с кандидатами признаков;
 их нормализация принадлежит `FindingFormationService`.
 
-Рабочий набор — закрытый статический каталог четырёх доверенных встроенных
+Рабочий набор — закрытый статический каталог пяти доверенных встроенных
 анализаторов в `analyzers/_catalog.py`: `image_metadata_consistency`,
-`image_copy_move_correspondence`, `audio_pcm_quality`, `video_sampled_frame_quality`.
+`image_copy_move_correspondence`, `image_jpeg_double_quantization`,
+`audio_pcm_quality`, `video_sampled_frame_quality`.
 Из каталога выводятся регистрации, разрешение рабочих процессов, требования
 предобработки и метаданные проверки результатов. Динамическая загрузка и plugin API
 отсутствуют. Fake-анализаторы находятся только в `tests/support`, исключены из

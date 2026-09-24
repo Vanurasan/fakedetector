@@ -131,8 +131,8 @@ AFTER_MVP
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Последний завершённый increment: M2-R4 — OWNER_ACCEPTED (2026-09-24)
 Исследовательская цепочка M2-R1–M2-R3D: OWNER_ACCEPTED; DQ — FINAL_HOLDOUT_PASS, Grid — DEFERRED_RESEARCH_ONLY
-Реализация M2-A: NOT_STARTED / READY_FOR_IMPLEMENTATION только в принятом DQ scope
-Следующее действие: реализация принятого DQ-HIST-1 / DQ-R3C-1; Grid не активируется
+Реализация M2-A: IN_PROGRESS / реализация подготовлена к приёмке владельцем
+Следующее действие: приёмка реализации M2-A с packaging remediation владельцем; Grid не активируется
 Будущие работы: Stage 12 Macros 3–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры принятого DQ scope M2-A: отсутствуют; остальные методы требуют собственных gates
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
@@ -250,8 +250,8 @@ M2-R4 — **OWNER_ACCEPTED**, решение от **2026-09-24**. Полная �
 [DQ-HIST-1 / DQ-R3C-1](METHODS.md#dq-hist-1--гистограммное-измерение-dct)
 получила `ACCEPTED`, DQ-G1–G4 — `CLOSED`. Разрешена реализация точного
 документированного DQ scope без изменения правила, semantics и ограничений.
-M2-A — `NOT_STARTED / READY_FOR_IMPLEMENTATION`; это не DONE, не catalog
-activation, не пройденные production tests и не release certification.
+M2-A — `IN_PROGRESS`: реализация принятого scope добавлена в каталог.
+Приёмка владельцем и strict release certification этим не подтверждены.
 Grid остаётся `DEFERRED_RESEARCH_ONLY`.
 
 ---
@@ -2423,7 +2423,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 |---:|---|---|---|
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE / merged | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
-| 2 | Image Analyzer Expansion — Wave 1 | IN_PROGRESS | M2-R4 OWNER_ACCEPTED; M2-A READY_FOR_IMPLEMENTATION в принятом DQ scope; Grid DEFERRED_RESEARCH_ONLY |
+| 2 | Image Analyzer Expansion — Wave 1 | IN_PROGRESS | M2-R4 OWNER_ACCEPTED; реализация M2-A ожидает приёмки; Grid DEFERRED_RESEARCH_ONLY |
 | 3 | Audio Analyzer Expansion — Wave 1 | NOT_STARTED | После 1 и планового закрытия 2: согласованный audio-набор на общих представлениях |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
@@ -3059,7 +3059,7 @@ Graphify. Изменения реализации и Git mutations не выпо
 
 ## Macro 2 — Image Analyzer Expansion — Wave 1 — IN_PROGRESS
 
-### M2-A — NOT_STARTED / READY_FOR_IMPLEMENTATION: принятый DQ scope
+### M2-A — IN_PROGRESS / ожидает приёмки реализации владельцем
 
 Первоначальная попытка реализации корректно остановлена до изменений кода:
 DQ/grid были только кандидатами без полных принятых спецификаций. В M2-R4
@@ -3128,9 +3128,42 @@ Grid и другие непринятые методы в это разреше�
   принятие не означает реализацию, activation, tests или release certification.
   Grid сохраняет `DEFERRED_RESEARCH_ONLY`: слабое различение локальных patches
   и benign crop/recompress в R3B; возврат требует отдельного плана.
-- [ ] Реализовать M2-A в принятом DQ scope; Grid не активировать.
+- [x] Реализовать M2-A в принятом DQ scope; Grid не активировать.
+- [x] Повторить package provenance после staging владельцем и исправить packaging regression.
+- [ ] Получить приёмку реализации владельцем.
 
-M2-A не DONE; production code changes отсутствуют, новые анализаторы не production-active.
+M2-A реализует `image_jpeg_double_quantization@1.0.0` через существующий
+каталог, controlled numeric reader и Stage 6 candidate formation. Каталог
+содержит пять анализаторов. DQ выбирается существующим списком
+`analyzers.image.enabled`; конфигурационный пример Profile B не расширен.
+Новых настроек, зависимостей или публичных полей нет. Принятые измерения,
+правило решения и ограничения METHODS сохранены; Grid не реализован.
+
+Проверки M2-A: focused/integration suite — 599 passed; дополнительные
+first-SOF/payload boundary проверки — 4 passed. `uv run poe check`:
+**2791 passed, 17 skipped, 1 failed** — только sdist provenance нового
+untracked `_image_jpeg_dq.py`. Новые production/test файлы остаются unstaged;
+повтор package verification после staging владельцем — `OWNER_VERIFY_REQUIRED`.
+Pre-commit, mypy и отдельно выполненный CLI smoke — PASS; повтор проверок
+каталога после уточнения assertions — 88 passed. Новые файлы отдельно проверены
+pre-commit. При четырёх одновременных worker executions с максимальной plane
+16 MiB и FFT до 65536 bins peak working set каждого — 75 272 192–75 583 488
+байт; выборочный суммарный worker RSS — 300 916 736 байт (шаг 5 ms).
+Это измерение workers, не совокупный peak с preprocessing; допустимый JPEG
+2048² и ресурсные отказы проверены отдельно. Это development verification,
+не strict certification; M2-A и Macro 2 не объявляются принятыми владельцем.
+
+Packaging remediation M2-A: после staging владельцем выявлено устаревшее
+ожидание четырёх регистраций в installed-wheel probe. Проверка теперь сверяет
+точные ID/версии пяти анализаторов, наличие DQ-модуля в wheel, его установленное
+происхождение и worker factory; исключение `framework_test.image` сохранено.
+Других устаревших ожиданий полного каталога в release tooling не найдено;
+Profile B/default enabled и реализация DQ не изменены. Точный regression test —
+1 passed; связанные release tests — 99 passed; `uv run poe check` — PASS:
+**2792 passed, 17 skipped in 143.07s (0:02:23)**, pre-commit/mypy/CLI smoke PASS.
+Прежний `OWNER_VERIFY_REQUIRED` по package provenance закрыт этим повтором.
+Это development verification; приёмка владельцем остаётся открытой.
+
 Исследовательский код M2-R2 не регистрирует IDs и не влияет на риск/полноту.
 Проверки M2-R2: focused suite — 89 passed; полный quality barrier —
 2611 passed, 17 skipped, 1 failed на sdist provenance нового untracked отчёта.

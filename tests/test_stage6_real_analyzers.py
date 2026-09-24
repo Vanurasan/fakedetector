@@ -30,6 +30,7 @@ from fakedetector.analyzers._errors import AnalyzerConfigurationError
 from fakedetector.analyzers._image_copy_move import (
     ImageCopyMoveCorrespondenceAnalyzer,
 )
+from fakedetector.analyzers._image_jpeg_dq import ImageJpegDoubleQuantizationAnalyzer
 from fakedetector.analyzers._image_metadata import (
     ImageMetadataConsistencyAnalyzer,
     ImageMetadataConsistencySettings,
@@ -725,7 +726,16 @@ def test_real_catalog_registration_and_settings_contracts() -> None:
             ImageCopyMoveCorrespondenceAnalyzer,
         ),
     )
+    expected += (
+        (
+            "image_jpeg_double_quantization",
+            MediaType.IMAGE,
+            "image",
+            ImageJpegDoubleQuantizationAnalyzer,
+        ),
+    )
     expected_finding_types = {
+        "image_jpeg_double_quantization": frozenset({"jpeg_recompression_pattern"}),
         "image_metadata_consistency": frozenset({"image_metadata_dimension_mismatch"}),
         "audio_pcm_quality": frozenset({"audio_full_scale_saturation"}),
         "video_sampled_frame_quality": frozenset(
@@ -774,7 +784,9 @@ def test_real_catalog_registration_and_settings_contracts() -> None:
             == expected_finding_types[registration.analyzer_id]
         )
         assert registration.max_candidate_findings == (
-            8 if registration.analyzer_id == "image_copy_move_correspondence" else 16
+            1
+            if registration.analyzer_id == "image_jpeg_double_quantization"
+            else 8 if registration.analyzer_id == "image_copy_move_correspondence" else 16
         )
         with pytest.raises(ValidationError):
             registration.settings_model.model_validate({"unknown": True})
@@ -796,7 +808,10 @@ def test_real_catalog_builds_active_plans_through_existing_settings_mechanism() 
         MediaType.VIDEO: tuple(raw["analyzers"]["video"]["enabled"]),
     }
     for media_type in MediaType:
-        expected_ids = _built_in_analyzer_ids(media_type)
+        expected_ids = tuple(
+            analyzer_id for analyzer_id in _built_in_analyzer_ids(media_type)
+            if analyzer_id != "image_jpeg_double_quantization"
+        )
         assert configured[media_type] == expected_ids
         assert registry.active_analyzer_ids(media_type) == expected_ids
     assert not registry.preprocessing_requirements(MediaType.AUDIO).audio_spectrogram

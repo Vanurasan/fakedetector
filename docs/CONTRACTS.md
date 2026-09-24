@@ -1333,7 +1333,9 @@ transport сохраняют прежнее владение. M1-A реализ�
 M1-C — общие bounded deterministic image residual kernels; M1-D — source-precision
 audio windows и numeric framing/STFT; M1-E — bounded stream/packet/frame timing.
 M1-F реализует dense RGB windows и региональное A/V timing mapping.
-Новые требования отсутствуют у четырёх текущих анализаторов версии `1.0.0`.
+У четырёх анализаторов, существовавших до Macro 2, новые требования отсутствуют.
+`image_jpeg_double_quantization@1.0.0` запрашивает `jpeg_coefficients`
+с указанными ниже зависимостями через существующий механизм.
 Публичные схемы, локализация, риск, полнота и YAML не изменяются.
 
 **Требования.** `PreprocessingRequirements.forensic` — immutable `frozenset`
@@ -1911,7 +1913,8 @@ Child проверяет существующие ordinary files и их точ�
 integer dtype и полный диапазон int32 перед преобразованием; запись идёт по
 одному block row без полной транспонированной копии. Parent повторно сверяет
 длины. Частично записанные файлы остаются под прежним lifecycle cleanup.
-Только явный `jpeg_coefficients` demand включает child; текущий каталог не изменён.
+Только явный `jpeg_coefficients` demand включает child; состав каталога
+определён в `PROJECT.md` §6.10.
 G2 сохраняет NumPy/OpenCV без SciPy; G3 — hybrid precision facts/windows;
 G4 размещает timing/ffprobe в preprocessing и расширяет существующую bounded
 process boundary, а не создаёт отдельную процессную архитектуру.

@@ -16,6 +16,10 @@ from fakedetector.analyzers._image_copy_move import (
     ImageCopyMoveCorrespondenceAnalyzer,
     ImageCopyMoveCorrespondenceSettings,
 )
+from fakedetector.analyzers._image_jpeg_dq import (
+    ImageJpegDoubleQuantizationAnalyzer,
+    ImageJpegDoubleQuantizationSettings,
+)
 from fakedetector.analyzers._image_metadata import (
     ImageMetadataConsistencyAnalyzer,
     ImageMetadataConsistencySettings,
@@ -30,7 +34,7 @@ from fakedetector.analyzers._video_frames import (
     VideoSampledFrameQualitySettings,
 )
 from fakedetector.domain import MediaType
-from fakedetector.preprocessing._requirements import PreprocessingRequirements
+from fakedetector.preprocessing._requirements import ForensicCapability, PreprocessingRequirements
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +123,16 @@ _BUILT_IN_ANALYZER_DEFINITIONS = (
         settings_model=ImageCopyMoveCorrespondenceSettings,
         candidate_finding_types=frozenset({"repeated_image_region_correspondence"}),
         max_candidate_findings=8,
+    ),
+    _definition(
+        "stage12.image_jpeg_double_quantization.v1",
+        ImageJpegDoubleQuantizationAnalyzer,
+        settings_model=ImageJpegDoubleQuantizationSettings,
+        preprocessing_requirements=PreprocessingRequirements(
+            forensic=frozenset({ForensicCapability.JPEG_COEFFICIENTS}),
+        ),
+        candidate_finding_types=frozenset({"jpeg_recompression_pattern"}),
+        max_candidate_findings=1,
     ),
 )
 

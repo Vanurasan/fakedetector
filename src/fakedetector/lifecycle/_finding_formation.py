@@ -29,6 +29,11 @@ from fakedetector.domain import (
 )
 
 _DESCRIPTION_BY_TYPE = {
+    "jpeg_recompression_pattern": (
+        "JPEG coefficient statistics contain a pattern consistent with the supported aligned "
+        "recompression-history scenario. This can arise from ordinary resaving and does not "
+        "establish forgery or malicious intent."
+    ),
     "image_metadata_dimension_mismatch": (
         "Embedded coded image dimensions differ from decoded source raster dimensions."
     ),
