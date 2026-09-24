@@ -130,9 +130,9 @@ AFTER_MVP
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Последний завершённый increment: M1-H — independent closure audit (DONE / PASS)
-Текущая исследовательская работа: M2-R3C — ожидает owner acceptance; DQ — READY_FOR_FINAL_HOLDOUT, Grid — DEFERRED_RESEARCH_ONLY
+Текущая исследовательская работа: M2-R3D — исполнен, ожидает owner acceptance; DQ — FINAL_HOLDOUT_PASS, Grid — DEFERRED_RESEARCH_ONLY
 Реализация M2-A: BLOCKED на обязательном method/provenance gate
-Следующее действие: owner review M2-R3C и отдельная однократная проверка frozen DQ rule на untouched holdout из 500 source groups
+Следующее действие: owner review M2-R3D и отдельное решение по DQ method gates; production promotion не разрешена
 Будущие работы: Stage 12 Macros 3–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры: M2-A не имеет принятых спецификаций DQ/grid в METHODS.md
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
@@ -197,27 +197,29 @@ acquisition QA, 107 проявлены разрешённым внешним raw
 237 controlled JPEG измерены. VISION: 50 selected families, 43 после QA,
 43 measurable groups / 55 social JPEG; native support — 0/43.
 Всего 140 measurable groups / 292 JPEG. [Отчёт пилота](research/2026-09-24-jpeg-real-corpus-pilot.md)
-отражает owner freeze целевых размеров: 200 exploration/calibration, 100 validation,
+отражает первоначальный owner freeze размеров: 200 exploration/calibration, 100 validation,
 500 untouched primary holdout, 100 VISION external stress и optional challenges 50
 вне primary FPR denominator. 97 RAW пилота остаются только exploration/calibration;
 43 VISION пилота — exploratory external stress, не новые validation/holdout evidence.
-Состав acquisition и source/device/content quotas требуют планирования до final holdout.
+В M2-R3D владелец до открытия исходов заменил target 500 на максимальное число
+пригодных независимых PIXLS CC0 групп после полной QA, без downsampling:
+зафиксированы 320 групп. Acquisition composition и endpoint записаны до открытия.
 DQ pilot signal достаточен для FINAL_CALIBRATION; production acceptance и порога нет.
 Grid — WEAK_SIGNAL, `RESEARCH_ONLY_NOT_READY / DEFERRED`: направление не отвергнуто
 навсегда, но исключено из текущего Stage 12 primary statistical holdout.
-Primary endpoint — **DQ ONLY**, 500 изображений из 500 source groups, target
-image-level FPR ≤1%, односторонняя 95% exact binomial оценка: 0 или 1 false positive
-могут удовлетворять FPR-критерию; 2 и более — нет. Это statistical acceptance rule,
-не DQ measurement threshold. Точное decision rule, sensitivity/coverage requirements
-и abstention semantics должны быть зафиксированы до открытия holdout.
-Grid не использует эти 500 изображений для второй независимой ≤1% claim без
+Primary endpoint — **DQ ONLY**, одно изображение на source group, target
+image-level FPR ≤1%; PASS только при односторонней 95% exact Clopper–Pearson
+upper `<=0.01` по фактическому applicable n. Это statistical acceptance rule,
+не DQ measurement threshold. Правило и abstention semantics заморожены в R3C;
+final coverage описывается без нового числового acceptance threshold.
+Grid не использует этот holdout для второй независимой ≤1% claim без
 отдельного multiplicity/statistical плана. Адаптивный добор после outcomes запрещён.
 Native VISION support остаётся 0/43; production resource limits не ослабляются,
 native samples не уменьшаются скрыто для изменения этого результата.
 VISION остаётся отдельным external stress; source grouping и все derivatives
 в одной partition сохраняются. Production acceptance DQ/Grid отсутствует; M2-A остаётся BLOCKED.
 
-M2-R3C — исследовательское исполнение завершено, **ожидает owner acceptance**.
+M2-R3C — **OWNER_ACCEPTED** согласно заданию M2-R3D.
 [Отчёт финальной калибровки](research/2026-09-24-jpeg-dq-final-calibration.md):
 200 calibration groups (97 pilot + 103 new), 100 новых validation groups;
 research rule `DQ-R3C-1` выбран только на calibration и заморожен до validation.
@@ -225,9 +227,20 @@ Validation primary: 0/98 FP, FPR 0%, one-sided 95% upper 3,0106%, abstention 2%.
 Aligned40to90: 65/99 applicable detected, 65/100 unconditional; обратная,
 same-DQT и close-quality истории — 0 detections. Исследовательский вывод —
 `READY_FOR_FINAL_HOLDOUT`, без утверждения доказанного ≤1% FPR или production
-acceptance. Holdout 500 не открыт, Grid остаётся `DEFERRED_RESEARCH_ONLY`.
-Полный barrier: 2656 passed, 17 skipped, 1 failure на intended untracked sdist
-provenance; `OWNER_VERIFY_REQUIRED` после Git-действий владельца.
+acceptance. На момент R3C holdout не открывался.
+
+M2-R3D — исследовательское исполнение завершено, **ожидает owner acceptance**.
+[Отчёт финального holdout](research/2026-09-24-jpeg-dq-final-holdout.md):
+все 320 пригодных независимых групп заморожены до первого DQ outcome;
+308 applicable, 12 abstentions, 0 admission failures, 0 FP;
+exact one-sided 95% upper **0,9679255009% ≤1%**, `FINAL_HOLDOUT_PASS`.
+Applicability 96,25% против 98% в R3C; coverage требует owner interpretation.
+Правило и hashes сохранены, adaptive supplementation отсутствует.
+Focused suite 163 PASS; полный barrier: 2685 passed, 17 skipped, один ожидаемый
+untracked sdist provenance failure; повтор после Git-действий владельца —
+`OWNER_VERIFY_REQUIRED`. Это не strict certification.
+DQ остаётся research-only, production promotion не рекомендована до закрытия
+method gates; Grid остаётся `DEFERRED_RESEARCH_ONLY`, M2-A — BLOCKED.
 
 ---
 
@@ -3066,8 +3079,9 @@ Macro 1 представления и provenance компонентов не з�
   109 focused tests PASS; полный barrier имеет один untracked-source provenance
   failure — OWNER_VERIFY_REQUIRED после Git-действий владельца; приёмка pilot evidence
   не подменяет эту проверку.
-- [x] Владелец зафиксировал целевые размеры 200/100/500/100 и optional challenges 50,
-  назначение пилотных групп и DQ-only statistical acceptance rule, указанные выше.
+- [x] Владелец первоначально зафиксировал размеры 200/100/500/100 и optional
+  challenges 50; в R3D до исходов заменил 500 на максимум после QA (320).
+  Назначение пилотных групп и DQ-only statistical acceptance rule сохранены.
 - [x] M2-R3C: выполнить calibration200/validation100 с outcome-blind split,
   source/scene/hash leakage checks, двумя предобъявленными семьями правил,
   freeze decision/support/abstention и однократной независимой validation.
@@ -3075,15 +3089,16 @@ Macro 1 представления и provenance компонентов не з�
   `READY_FOR_FINAL_HOLDOUT`; 0/98 primary FP, upper 3,0106%, abstention 2%,
   aligned40to90 sensitivity 65/99 applicable / 65/100 unconditional.
   Другие quality histories и ограничения состава описаны отдельно.
-- [ ] M2-R3C: получить owner acceptance; self-report не закрывает этап.
-  Focused tests 134 PASS; полный barrier имеет единственный untracked-source
-  provenance failure, повтор после Git-действий владельца — `OWNER_VERIFY_REQUIRED`.
-- [ ] Отдельным инкрементом выполнить untouched DQ-only holdout500 с заранее
-  определёнными acquisition composition, source/device/content quotas и endpoint.
-  Правило R3C уже frozen, threshold tuning не планируется; выбор источников и
-  результаты final holdout не открывались. Без адаптивного добора;
-  VISION/challenges вне primary FPR, Grid исключён. Не считать validation100
-  сертификацией ≤1% и не подменять фактический applicable n числом derivatives.
+- [x] M2-R3C: owner acceptance получен в задании M2-R3D.
+- [x] M2-R3D: выполнить один frozen-rule DQ-only holdout с заранее записанными
+  acquisition, source/scene/session QA, membership hash и endpoint.
+  По отдельному pre-outcome owner decision включены все 320 пригодных групп:
+  0/308 FP, upper 0,9679255009%, `FINAL_HOLDOUT_PASS`;
+  [отчёт R3D](research/2026-09-24-jpeg-dq-final-holdout.md).
+  Без tuning и адаптивного добора; VISION/challenges вне primary FPR, Grid исключён.
+- [ ] M2-R3D: получить owner acceptance результата и интерпретацию coverage;
+  self-report не закрывает этап. Повторить full barrier после Git-действий
+  владельца из-за ожидаемого untracked-source provenance failure.
 - [ ] Закрыть DQ profile/calibration/semantics gates из предложений `METHODS.md`
   и получить production acceptance полной записи DQ. Production threshold пока нет.
   Grid сохраняет `RESEARCH_ONLY_NOT_READY / DEFERRED`; возврат к его калибровке

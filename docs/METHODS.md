@@ -154,8 +154,24 @@ hashes и результаты находятся в
 [отчёте R3C](research/2026-09-24-jpeg-dq-final-calibration.md).
 Это proposed complete research rule, не production threshold или `ACCEPTED`.
 Измерительные формулы DQ-HIST-1 ниже не изменены; агрегация используется только
-в отдельном исследовательском правиле. DQ-G1–G4 не закрыты; untouched holdout
-и принятие владельцем остаются отдельными шагами. Grid не перекалибровывался.
+в отдельном исследовательском правиле. DQ-G1–G4 не закрыты; на момент R3C
+untouched holdout и принятие владельцем оставались отдельными шагами.
+Grid не перекалибровывался.
+
+**Исследовательское продолжение M2-R3D от 2026-09-24.** M2-R3C принят
+владельцем; `DQ-R3C-1` однократно применён без изменений к final holdout,
+замороженному до исходов. По pre-outcome owner decision вместо 500 включён
+максимум после QA — 320 независимых source groups. Результат:
+0 FP / 308 applicable, 12 abstentions, 0 admission failures;
+one-sided exact 95% upper 0,9679255008705269% ≤1%, `FINAL_HOLDOUT_PASS`.
+Hashes, состав, границы независимости и strata — в
+[отчёте R3D](research/2026-09-24-jpeg-dq-final-holdout.md).
+Это свидетельство для исследованной single-history смеси, не универсальная
+гарантия для JPEG. Coverage 96,25% против 98% в validation описывается без
+нового acceptance threshold; интерпретация остаётся владельцу. Ограниченная
+чувствительность reverse/same-DQT/close-quality из R3C не устранена.
+Method acceptance, DQ-G1–G4 и production promotion остаются открыты;
+правило сохраняет research-only статус, M2-A не разблокирован.
 
 `insufficient-evidence` ниже — смысл результата, не новый `AnalyzerStatus`.
 Предлагается: известное несоответствие входа области метода — `not_applicable`;
