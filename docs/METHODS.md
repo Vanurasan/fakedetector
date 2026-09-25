@@ -73,6 +73,68 @@
 | Provenance / reference IDs | Стабильные IDs/якоря REFERENCES, происхождение собственного вклада и ссылки на research-свидетельства |
 | Открытые owner gates | Нерешённые вопросы и условия принятия; при ACCEPTED не остаётся блокирующих вопросов |
 
+<a id="audio-m3r1"></a>
+
+## Кандидаты Stage 12 / Macro 3 — M3-R1
+
+Дата предложения и явного owner acceptance исследовательских gates G1–G6:
+**2026-09-26** (M3-R1A). ATD-LOCAL-1, ASC-TV-1 и ARC-NCC-1 имеют статус
+**OWNER_ACCEPTED_FOR_MEASUREMENT_PROTOTYPE**: разрешены только ограниченные
+исследовательские измерения и measurement-only validation. **Production-метод
+не принят**; gate production acceptance выше остаётся обязательным.
+Рабочие имена не являются analyzer IDs.
+Полная структура gate, точные exploratory процедуры, применимость, покрытия,
+численные/ресурсные границы и validation matrix сохранены в
+[исследовании M3-R1](research/2026-09-26-audio-method-selection.md).
+Эти процедуры не становятся нормативной production-методологией этой ссылкой.
+
+| Рабочий кандидат / профиль | Статус исследовательского профиля | Вопрос и inputs | Семейство и основной предел |
+|---|---|---|---|
+| `audio_temporal_discontinuity` / ATD-LOCAL-1 | OWNER_ACCEPTED_FOR_MEASUREMENT_PROTOTYPE | Локальные waveform/energy переходы; существующие precision samples и framing | Общее исследовательское семейство переходов; plosive/перкуссия/quality artifacts дают сходный response |
+| `audio_spectral_consistency` / ASC-TV-1 | OWNER_ACCEPTED_FOR_MEASUREMENT_PROTOTYPE | TV нормированных magnitude spectra и отдельный flux; готовый M1 STFT | То же семейство, без независимого голоса; фонемы/ноты/EQ/codec меняют спектр |
+| `audio_background_noise_consistency` / ABN-FLOOR-1 | RESEARCH_ONLY / WEAK_SIGNAL | Описательные low-energy spectral floors; M1 STFT достаточен для измерений, но не для выделения фона | То же семейство условно; content/background matching не установлен, sensor noise/microphone identity не выводятся |
+| `audio_repeated_segment_correspondence` / ARC-NCC-1 | OWNER_ACCEPTED_FOR_MEASUREMENT_PROTOTYPE | Bounded descriptor retrieval и waveform NCC/support; M1 samples/STFT | Отдельный исследовательский трек повторов; легитимный loop неотличим по одному соответствию |
+| `audio_metadata_container_consistency` / AMC-RESP-1 | REJECT_DUPLICATE_RESPONSIBILITY / OWNER ACCEPTED NEGATIVE RESULT | Проверка пересечения validation, precision и timing обязанностей | Новое forensic-семейство не обосновано; invalid/unknown input не Finding |
+
+Владелец разрешил два отдельных measurement tracks: ATD/ASC измеряются раздельно
+и сравниваются внутри одного общего трека переходов, **без fusion**; ARC — отдельный
+трек повторного соответствия. Статистическая независимость ARC от transition evidence
+не утверждается; production correlation остаётся вопросом последующей validation /
+Macro 6, где применимо. ABN не является третьим независимым голосом и остаётся weak.
+Отрицательный результат AMC принят: создавать `audio_metadata_container_consistency`
+из исследованной ответственности не разрешено, поскольку она не отделена от intake,
+preprocessing/container validation, typed source/decoded facts и infrastructure/errors.
+Parser/container/validation failure не становится suspicious Finding.
+
+Принятый узкий scope: audio route, 8–48 kHz, mono/stereo, существующие M1-D precision
+windows, shared STFT/framing APIs и typed timing/source facts при необходимости,
+без downmix/resample и без подразумеваемого full-duration покрытия.
+Достаточность preprocessing относится только к этому scope, не всем аудиофайлам.
+No-data, недостаток поддержки и технический отказ различаются в исследовании.
+
+Production decision rules/thresholds/severity, Finding types и analyzer IDs
+**не выбраны**. Допуск не разрешает production registration, Findings, scoring,
+risk contribution, completeness или public contract changes. Семейства относятся
+только к исследовательским трекам; production
+`correlation_group`, риск и `CONTRACTS.md` §11.4 не изменяются. ATD/ASC/ABN могут
+реагировать на один переход, ARC может быть причинно связан с его границами.
+Текущий `audio_pcm_quality@1.0.0` и его saturation/quality semantics сохранены;
+новое измерение не должно повторно выдавать quality observation как forensic-улику.
+
+Provenance: [M3-R1 в REFERENCES](REFERENCES.md#audio-m3r1), M3-AUD-01–12.
+Параметры и комбинации exploratory профилей — собственные предложения проекта;
+чужая реализация не скопирована, новые dependencies/datasets не допущены.
+G1–G6 закрыты решением владельца; их состояние и принятый следующий scope принадлежат
+[ROADMAP, Macro 3](ROADMAP.md#audio-m3r1).
+Новые preprocessing capabilities и изменения `CONTRACTS.md` не разрешены.
+Если необходимое измерение невозможно честно выполнить на существующих inputs —
+**STOP / OWNER GATE**, без скрытого расширения. Новые runtime dependencies запрещены,
+SciPy не добавляется. Dataset dependency автоматически не одобрена: реальные записи
+допускаются только после проверки provenance/license и предполагаемого использования;
+неустановленные права/scope необходимого корпуса или библиотеки требуют owner gate.
+Production по-прежнему требует полного gate принятия метода выше. Измерительные
+эксперименты этим решением не объявляются выполненными.
+
 ## Кандидаты Stage 12 / Macro 2
 
 DQ-HIST-1 / DQ-R3C-1 для `image_jpeg_double_quantization@1.0.0` принят

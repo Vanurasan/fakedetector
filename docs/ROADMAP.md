@@ -126,7 +126,7 @@ AFTER_MVP
 Статус Macros 0–8 Stage 11: DONE / owner accepted
 Последний завершённый Macro: Stage 12 Macro 2 — Image Analyzer Expansion — Wave 1 (DONE / CLOSED)
 Статус Stage 12: IN_PROGRESS
-Активный Macro: отсутствует; Macros 3–10 не начаты
+Активный Macro: Stage 12 Macro 3 — Audio Analyzer Expansion — Wave 1 (IN_PROGRESS)
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Состояние Macro 2: DONE / CLOSED; принятые результаты и основания закрытия приведены в §2.2
@@ -136,7 +136,9 @@ M2-BR1: DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE; noise и resampling — RESEARCH
 M2-CR1: DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE; thumbnail — RESEARCH_ONLY / WEAK_SIGNAL
 Проверка closure commit: полный quality barrier и strict certification на clean committed SHA dbc24e32c028808f599a7d9982f6776cfe014b3c — PASS; оставшихся проверок Macro 2 нет
 Слияние Macro 2: PR #67 merged в main как dee248b6ea2d7054c4e30d95c114d123a77918df; tree совпадает с сертифицированным closure tree; merge commit отдельно не сертифицировался
-Будущие работы: Stage 12 Macros 3–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
+M3-R1: DONE / OWNER ACCEPTED RESEARCH SELECTION (2026-09-26); production audio-метод не принят
+Следующий scope Macro 3: два measurement-only трека разрешены; ATD/ASC раздельно без fusion, ARC отдельно; G1–G6 CLOSED / ACCEPTED
+Будущие работы: Stage 12 Macros 4–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры принятого DQ scope M2-A: отсутствуют; остальные методы требуют собственных gates
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
 Документационная база: сформирована
@@ -2479,7 +2481,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE / merged | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
 | 2 | Image Analyzer Expansion — Wave 1 | DONE / CLOSED | Один новый production-анализатор DQ; остальные кандидаты research-only/deferred; M2-HR6 PASS / OWNER ACCEPTED; M2H-D01 → Macro 6 |
-| 3 | Audio Analyzer Expansion — Wave 1 | NOT_STARTED | После 1 и планового закрытия 2: согласованный audio-набор на общих представлениях |
+| 3 | Audio Analyzer Expansion — Wave 1 | IN_PROGRESS | M3-R1 DONE / OWNER ACCEPTED RESEARCH SELECTION; G1–G6 CLOSED / ACCEPTED, два measurement-only трека разрешены; production audio-метод не принят |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
 | 6 | Correlation, Completeness & Result Semantics Review | NOT_STARTED | После 2–5: проверка выросшего набора без двойного учёта и завышения полноты; изменения дизайна только отдельным решением |
@@ -3296,6 +3298,67 @@ challenge. Дальнейшее targeted research требует отдельн�
 noise/resampling — `RESEARCH_ONLY`. На момент закрытия M2-CR1 Macro 2 и Stage 12
 оставались `IN_PROGRESS`.
 Внешние материалы — только `FakeDetector-Work/research|reviews|tmp/M2-CR1-thumbnail/`.
+
+<a id="audio-m3r1"></a>
+
+## Macro 3 — Audio Analyzer Expansion — Wave 1 — IN_PROGRESS
+
+### M3-R1 — DONE / OWNER ACCEPTED RESEARCH SELECTION
+
+Дата: 2026-09-26. Baseline:
+`1acaf4f9129d5b36c6c69a6ab6250e49e2da4d09`, ветка
+`feat/stage12-macro3-audio-analyzer-expansion-wave1`, чистое committed дерево.
+Выполнен research/method-selection increment для пяти рабочих audio-кандидатов.
+Полные технические свидетельства и validation design находятся в
+[отчёте M3-R1](research/2026-09-26-audio-method-selection.md);
+candidate profiles — в [METHODS](METHODS.md#audio-m3r1), происхождение — в
+[REFERENCES](REFERENCES.md#audio-m3r1).
+
+**Явное OWNER ACCEPTANCE от 2026-09-26 (M3-R1A):** владелец принял исследовательский
+отбор M3-R1 и закрыл G1–G6. Запись выполнена поверх ожидаемого dirty M3-R1 diff
+на том же HEAD, с тремя изменёнными tracked документами и untracked отчётом.
+ATD-LOCAL-1, ASC-TV-1 и ARC-NCC-1 — **OWNER_ACCEPTED_FOR_MEASUREMENT_PROTOTYPE**.
+ABN-FLOOR-1 сохраняет `RESEARCH_ONLY / WEAK_SIGNAL`; AMC-RESP-1 —
+`REJECT_DUPLICATE_RESPONSIBILITY / OWNER ACCEPTED NEGATIVE RESULT`.
+
+**Новый production audio-метод не принят.** Нет analyzer implementation,
+registration, thresholds или Findings. Каталог остаётся из пяти анализаторов;
+`audio_pcm_quality@1.0.0`, risk/completeness/correlation и публичные контракты
+сохранены. Macro 1/2 остаются закрыты; M2H-D01 остаётся **DEFERRED TO MACRO 6**.
+Macro 3 и Stage 12 остаются **IN_PROGRESS**. Принятие M3-R1 не закрывает Macro 3
+и не является production method acceptance.
+
+Принятые владельцем gates исследовательского scope:
+
+| Gate | Состояние | Принятое решение от 2026-09-26 |
+|---|---|---|
+| G1 | CLOSED / ACCEPTED | ATD-LOCAL-1, ASC-TV-1, ARC-NCC-1 допущены только к bounded research measurements; без production registration, Findings, severity, thresholds, scoring/risk/completeness/public contract changes |
+| G2 | CLOSED / ACCEPTED | ATD/ASC измерять раздельно и сравнивать в одном transition track/family; без fusion, combined production score или двух независимых votes; ABN остаётся weak, не третий голос |
+| G3 | CLOSED / ACCEPTED | ARC допущен отдельным correspondence track; статистическая независимость от transition evidence не заявляется, production correlation остаётся для последующей validation / Macro 6, где применимо |
+| G4 | CLOSED / ACCEPTED | AMC отклонён как duplicate responsibility: intake, preprocessing/container validation, typed source/decoded facts, infrastructure/errors; production analyzer из этого scope не создавать, parser failure не Finding |
+| G5 | CLOSED / ACCEPTED | Audio route, 8–48 kHz, mono/stereo, M1-D precision windows и существующие shared STFT/framing/typed timing/source facts; без новых capabilities, CONTRACTS changes или подразумеваемого full-duration coverage |
+| G6 | CLOSED / ACCEPTED | Только существующий runtime stack, без SciPy и новых runtime dependencies; новые datasets автоматически не одобрены, реальные записи требуют проверки provenance/license и intended use |
+
+Разрешённый следующий исследовательский scope — **два отдельных measurement-only
+validation трека**: A — ATD/ASC (раздельные измерения без fusion, поведение и confounds
+переходов); B — ARC (retrieval/correspondence/resources). Выполнение этих экспериментов
+ещё не заявляется. Формулы и наблюдения M3-R1 не изменены; efficacy, false-positive
+rate, sensitivity, runtime и RSS остаются неизмеренными.
+
+Если необходимое измерение нельзя честно выполнить на existing representations —
+**STOP / OWNER GATE**, без расширения preprocessing. Если необходимы корпус или
+библиотека с неустановленными правами/scope — **OWNER GATE**. Условные gaps отчёта
+не разрешают менять `CONTRACTS.md`. Production admission позже требует полного gate
+`METHODS.md`; measurement-only допуск не означает calibrated detector, production
+корреляцию или увеличение полноты анализа.
+
+Проверки этого docs/research-only инкремента: baseline, `git diff --check`, полный
+intended diff и итоговый status; полный quality barrier и strict certification
+по заданию не требуются. Материалы owner review, включая новый untracked отчёт:
+`C:\Users\Vanur\Desktop\FakeDetector-Work\reviews\M3-R1-audio-method-selection\`.
+Принятие исследовательского scope дано владельцем явно; корректность этой записи
+и обновлённый полный diff остаются предметом owner review. Новых исследований,
+экспериментов и изменений production в M3-R1A нет.
 
 ## Macro 6 — корреляция и смысл результата
 

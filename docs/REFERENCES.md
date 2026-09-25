@@ -138,6 +138,176 @@ CORE, если их условия ограничивают предполага
 - лицензия framework не заменяет лицензии включённых методов;
 - разрешительная copyright-лицензия не доказывает отсутствие сторонних патентов.
 
+<a id="audio-m3r1"></a>
+
+## M3-R1 — классические аудиоизмерения, 2026-09-26
+
+Проверка для [исследования M3-R1](research/2026-09-26-audio-method-selection.md)
+на baseline `1acaf4f9129d5b36c6c69a6ab6250e49e2da4d09`.
+Все записи ниже — **RESEARCH_REFERENCE**, не допуск production-метода.
+URL проверены 2026-09-26, ограничения доступа указаны явно. Формулы и выбор
+параметров профилей независимо сформулированы для FakeDetector; реализации пока нет.
+Чужой код/данные/иллюстрации не копируются и не включаются в wheel/release.
+Для коммерческого Apache-2.0 контекста разрешение на собственную реализацию
+математической идеи не следует путать с лицензией на чужой текст, код или корпус.
+Эта запись не является юридическим заключением или patent clearance.
+
+<a id="m3-aud-01"></a>
+
+**M3-AUD-01 — A Tutorial on Onset Detection in Music Signals.** Juan Pablo Bello,
+Laurent Daudet, Samer Abdallah, Chris Duxbury, Mike Davies, Mark B. Sandler,
+IEEE Transactions on Speech and Audio Processing 13(5), 1035–1047, 2005.
+[DOI 10.1109/TSA.2005.851998](https://doi.org/10.1109/TSA.2005.851998),
+[текст статьи](https://hans.fugal.net/comps/papers/bello_2005.pdf).
+Роль: taxonomy energy/spectral/transient измерений, обычные музыкальные события
+как альтернативное объяснение ATD/ASC. Использованы библиография и abstract
+индексированного оригинала, не заявлена репликация экспериментов статьи.
+Код не изучался; лицензия кода/данных не установлена, использование/распространение
+не предлагается. Литературная ссылка допустима в исследовании; никаких прав на
+коммерческое включение сторонних материалов этим не утверждается.
+
+<a id="m3-aud-02"></a>
+
+**M3-AUD-02 — Onset Detection Revisited.** Simon Dixon, DAFx-06, 133–137, 2006.
+[Оригинал в архиве конференции](https://www.dafx.de/paper-archive/2006/papers/p_133.pdf).
+Прочитаны описание и §2.1: positive magnitude differences / L1 spectral flux.
+Роль: математическое основание flux и контрпример «onset не равен splice».
+ASC-TV-1 отличается нормализацией, Hann/hop, лагами и отчётностью; опубликованные
+параметры/результаты не переносятся. Код не изучался; разрешительная code/data
+license не установлена, datasets статьи не предлагаются. Только ссылка/идеи для
+независимой спецификации, без копирования материалов в коммерческий продукт.
+
+<a id="m3-aud-03"></a>
+
+**M3-AUD-03 — Analyzing the Impact of Splicing Artifacts in Partially Fake Speech
+Signals.** Viola Negroni, Davide Salvi, Paolo Bestagini, Stefano Tubaro, 2024,
+[arXiv:2408.13784v1](https://arxiv.org/html/2408.13784v1).
+Роль: induced splice artifacts и bias искусственно составленных корпусов;
+стык waveform и spectral leakage — связанные наблюдения. Статья явно показывает
+CC BY 4.0; её условия требуют attribution при повторном использовании текста,
+но здесь используются только ссылка и краткое изложение. Код не изучался и
+не заимствуется. PartialSpoof/HAD упомянуты как предмет статьи, **не предложены**
+как datasets M3-R2; их права и права исходных записей здесь не проверены.
+Коммерческое использование кода/корпусов не допущено этой записью; ML не внедряется.
+
+<a id="m3-aud-04"></a>
+
+**M3-AUD-04 — Detecting Splicing in Digital Audios Using Local Noise Level
+Estimation.** Xunyu Pan, Xing Zhang, Siwei Lyu, ICASSP 2012, 1841–1844.
+[Авторский PDF](https://cse.buffalo.edu/~siweilyu/papers/icassp12.pdf).
+Роль: направление noise-level estimation как splice cue; не источник точной
+формулы ABN-FLOOR-1. В поисковой выдаче доступен abstract оригинала; прямое
+открытие полного текста вернуло 403. Поэтому точная процедура/экспериментальные
+претензии статьи не считаются проверенными. Код и datasets не изучались,
+license неизвестна; коммерческое включение не разрешено. Это ограниченная
+литературная запись, не proposed implementation path и не основание READY.
+
+<a id="m3-aud-05"></a>
+
+**M3-AUD-05 — Noise Power Spectral Density Estimation Based on Optimal Smoothing
+and Minimum Statistics.** Rainer Martin, IEEE Transactions on Speech and Audio
+Processing 9(5), 504–512, 2001.
+[DOI 10.1109/89.928915](https://doi.org/10.1109/89.928915),
+[оригинальная статья, университетская копия](https://www.csd.uoc.gr/~hy578/2005/projects/ieee_sp_tsap_2001009_05jul_0504mart.pdf).
+Роль: noise estimation требует модели smoothing и bias compensation; нижний
+квантиль не становится автоматически noise PSD. Изучены abstract/введение,
+полная реализация estimator не выбрана. Код не изучался; сторонние MATLAB и
+другие реализации не используются. Code/data licenses не установлены, datasets
+не предлагаются; только литературное основание ограничения, без включения
+copyrighted материалов в Apache-2.0 поставку.
+
+<a id="m3-aud-06"></a>
+
+**M3-AUD-06 — Audio Splicing Detection and Localization Using Environmental
+Signature.** Hong Zhao, Yifan Chen, Rui Wang, Hafiz Malik,
+[arXiv:1411.7084](https://arxiv.org/html/1411.7084).
+Роль: ambient noise/channel response, reference/query comparison; проверено,
+что процедура использует обучаемую clean-speech GMM и TIMIT. Она не является
+подходящим готовым non-ML pipeline для M3. Нельзя называть ABN «этим методом без ML».
+Текст содержит IEEE copyright/personal-use notice; код не изучался, лицензия
+кода не установлена. TIMIT не предлагается и его лицензия не проверялась.
+Ни текст, ни код, ни данные не включаются в коммерческий продукт; только
+исследовательская ссылка и отрицательный результат отбора.
+
+<a id="m3-aud-07"></a>
+
+**M3-AUD-07 — Fast Normalized Cross-Correlation.** J. P. Lewis, Industrial Light
+& Magic, расширенная версия материала Vision Interface 1995.
+[Авторский текст](https://scribblethink.org/Work/nvisionInterface/nip.html).
+Роль: centered NCC и нормирование FFT correlation через локальные суммы/квадраты.
+ARC адаптирует общую математическую идею к одномерным bounded аудиопарам;
+descriptor/retrieval/support policy — собственный вклад проекта. Прочитан текст,
+код не изучался/не копировался; разрешительная code license не установлена,
+datasets не предлагаются. Литературный источник допускается, перенос стороннего
+кода в Apache-2.0 продукт не предлагается; будущая реализация независимая.
+
+<a id="m3-aud-08"></a>
+
+**M3-AUD-08 — An Industrial-Strength Audio Search Algorithm.** Avery Li-Chun Wang,
+ISMIR 2003. [Оригинальная статья](https://www.ee.columbia.edu/~dpwe/papers/Wang03-shazam.pdf).
+Роль: ограниченный fingerprint candidate retrieval и согласованные time offsets;
+это поиск соответствий, не доказательство злонамеренного копирования.
+ARC не повторяет Shazam constellation hashes и не заявляет его robustness.
+Код Shazam не изучался; разрешительная лицензия его реализации не установлена.
+Datasets/recordings не предлагаются. Известность коммерческого продукта не
+означает права на его implementation; patent clearance не выполнялся. Только
+литературная ссылка, без переноса кода/данных/патентованного pipeline в ядро.
+
+<a id="m3-aud-09"></a>
+
+**M3-AUD-09 — ffprobe Documentation.** FFmpeg project,
+[официальная документация](https://ffmpeg.org/ffprobe.html), разделы
+`show_entries`, `show_packets`, `show_frames`, `read_intervals`.
+Роль: области наблюдения и неточность seek; не forensic decision engine.
+Код при исследовании не заимствовался. Лицензирование уже используемого внешнего
+FFmpeg executable определяется отдельными записями текущего реестра и точной
+сборкой; эта ссылка не меняет способ поставки и не лицензирует бинарник заново.
+Dataset отсутствует. Коммерческое использование требует выполнения уже
+зафиксированных условий выбранной сборки, новые компоненты не предлагаются.
+
+<a id="m3-aud-10"></a>
+
+**M3-AUD-10 — WAVEFORMATEXTENSIBLE structure (mmreg.h).** Microsoft,
+[официальная документация](https://learn.microsoft.com/en-us/windows/win32/api/mmreg/ns-mmreg-waveformatextensible).
+Роль: различать valid bits и container width, а также channel mask;
+их несовпадение не является forensic-противоречием само по себе.
+Win32 API/код не внедряется, struct snippet не копируется; лицензия отдельного
+reference implementation не рассматривалась. Dataset отсутствует. Только
+техническая ссылка, не разрешение переносить чужой код или документацию
+в коммерческий Apache-2.0 продукт.
+
+<a id="m3-aud-11"></a>
+
+**M3-AUD-11 — Technical Note TN2258: AAC Audio — Encoder Delay and Synchronization.**
+Apple, 2009-11-19,
+[официальный архив](https://developer.apple.com/library/archive/technotes/tn2258/_index.html).
+Роль: priming/remainder и доброкачественное расхождение packet/decoded durations.
+Это историческая справка, не актуальная универсальная константа delay всех AAC
+encoders; число 2112 не становится правилом FakeDetector. Код не изучался;
+copyright Apple, отдельная лицензия implementation не установлена; данных нет.
+Только литературное использование, никакие материалы не включаются в поставку.
+
+<a id="m3-aud-12"></a>
+
+**Дополнительная просмотренная документация — M3-AUD-12.** Meinard Müller,
+[FMP: Onset Detection](https://www.audiolabs-erlangen.de/resources/MIR/FMP/C6/C6S1_OnsetDetection.html).
+Роль: образовательная иллюстрация natural transients и masking. На странице
+просмотрены также notebook snippets с SciPy/librosa/libfmp; они не используются.
+Versioned license кодовой копии не удалось подтвердить по запрошенным URL,
+поэтому code license здесь **не установлена**, copying/adaptation запрещены.
+Содержимые музыкальные примеры не скачивались и не предлагаются: dataset/media
+rights отдельно не проверены. Коммерческое применение кода/данных не допущено;
+эта страница не implementation path, её зависимости в проект не добавляются.
+
+Для выбранных ATD/ASC/ARC путей нет зависимости от источника с неустановленной
+лицензией кода: предлагается собственная реализация арифметики на уже проверенном
+runtime NumPy. Точные версии текущих NumPy/OpenCV и их лицензионные записи остаются
+в существующем реестре; SciPy/librosa/libfmp не добавляются. Модели/веса не применимы.
+Никакой внешний dataset не выбран. Синтетические fixtures будущего harness должны
+иметь собственный генератор/параметры, а реальные speech/music/environment records —
+отдельный provenance/rights manifest до допуска G6. Неизвестные права не трактуются
+как разрешение на коммерческое использование или распространение.
+
 ## Текущая проверка лицензий — 2026-09-20
 
 ### Область и доказательства
