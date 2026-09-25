@@ -134,7 +134,8 @@ AFTER_MVP
 Реализация M2-A: DONE / OWNER ACCEPTED / PRODUCTION IMPLEMENTED
 M2-BR1: DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE; noise и resampling — RESEARCH_ONLY / WEAK_SIGNAL
 M2-CR1: DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE; thumbnail — RESEARCH_ONLY / WEAK_SIGNAL
-Проверка closure commit: после owner review и commit обязательны полный quality barrier и strict certification на финальном clean SHA; ещё не выполнены
+Проверка closure commit: полный quality barrier и strict certification на clean committed SHA dbc24e32c028808f599a7d9982f6776cfe014b3c — PASS; оставшихся проверок Macro 2 нет
+Слияние Macro 2: PR #67 merged в main как dee248b6ea2d7054c4e30d95c114d123a77918df; tree совпадает с сертифицированным closure tree; merge commit отдельно не сертифицировался
 Будущие работы: Stage 12 Macros 3–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры принятого DQ scope M2-A: отсутствуют; остальные методы требуют собственных gates
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
@@ -200,9 +201,24 @@ installed-wheel probe и strict package/release certification — **PASS**.
 Последующие коммиты были docs-only. M2-HR6 на
 `2286404e7b284daa252101000ec4685927e8852e` проверил финальную готовность
 документации, без повторного полного barrier или strict certification.
-После owner review и commit M2-CLOSE обязательны полный quality barrier и
-strict certification на финальном clean SHA. Для closure SHA эти проверки
-ещё не выполнены; прежний PASS не является его сертификацией.
+После M2-CLOSE владелец выполнил полный quality barrier на clean committed
+closure SHA `dbc24e32c028808f599a7d9982f6776cfe014b3c` — **PASS**:
+**2792 passed / 17 skipped**, coverage **90%**, CLI smoke **PASS**.
+Strict release certification командой
+`uv run python scripts/verify_release.py --output-dir <external review path>`
+на том же SHA — **PASS**: `overall_status=passed`, `certification_mode=strict`,
+`certified=true`; `source_sha` и `source_sha_at_end` равны указанному closure SHA,
+`source_sha_stable=true`, `source_tree_clean=true`,
+`source_status_at_start=[]`, `source_status_at_end=[]`.
+Успешно проверены сборка sdist и wheel из sdist, runtime установленного wheel
+в свежем окружении, целостность release kit / ZIP, CLI, реальный HTTP runtime,
+сохранение и получение результатов после перезапуска, очистка собственных процессов.
+PR #67 (`feat: complete Stage 12 Macro 2 image analyzer expansion`) слит в main
+как `dee248b6ea2d7054c4e30d95c114d123a77918df`. Tree обоих коммитов —
+`bde328e72f7491106ad2ccafa88f495c323d04bf`: слияние не изменило содержимое
+сертифицированного closure tree. Сам merge commit отдельно не проходил
+сертификацию. Macro 2 остаётся **DONE / CLOSED**; оставшихся действий
+по его финальной проверке нет.
 
 #### Исторические свидетельства исследовательской цепочки
 

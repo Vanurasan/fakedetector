@@ -356,8 +356,14 @@ YYYY-MM-DD
   BLOCKER/MAJOR/MINOR findings нет. M2H-D01 перенесён в Macro 6 и не блокирует
   закрытие. Контракты методов и Profile B сохранены. Проверки и strict
   certification M2-H относятся к прежнему SHA; M2-HR6 их не повторял.
-  После owner review и closure commit обязательны полный quality barrier и
-  strict certification на финальном clean SHA; их выполнение здесь не заявляется.
+  После M2-CLOSE владелец выполнил полный quality barrier на closure commit
+  `dbc24e32c028808f599a7d9982f6776cfe014b3c` — `PASS`: **2792 passed / 17 skipped**,
+  coverage **90%**, CLI smoke `PASS`. Strict certification на этом чистом
+  committed SHA — `PASS`, `certified=true`; source SHA оставался стабильным,
+  рабочее дерево — чистым от начала до конца проверки. PR #67 слит в main
+  как `dee248b6ea2d7054c4e30d95c114d123a77918df`; merge tree идентичен
+  сертифицированному closure tree. Сам merge commit отдельно не проходил
+  сертификацию.
 
 ### 2026-09-24
 
