@@ -129,11 +129,12 @@ AFTER_MVP
 Текущий Macro: Macro 2 — Image Analyzer Expansion — Wave 1 (IN_PROGRESS)
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
-Последний принятый increment: M2-BR1 — DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE
+Последний принятый increment: M2-HR1 — DONE / OWNER ACCEPTED DOCS REMEDIATION
 Исследовательская цепочка M2-R1–M2-R3D: OWNER_ACCEPTED; DQ — FINAL_HOLDOUT_PASS, Grid — DEFERRED_RESEARCH_ONLY
 Реализация M2-A: DONE / OWNER ACCEPTED / PRODUCTION IMPLEMENTED
 M2-BR1: DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE; noise и resampling — RESEARCH_ONLY / WEAK_SIGNAL
-Следующее действие: отдельное решение о дальнейшем targeted research для noise/resampling; production calibration и implementation не разрешены
+M2-CR1: DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE; thumbnail — RESEARCH_ONLY / WEAK_SIGNAL
+Следующее действие: M2-HR2 — узкий независимый повторный аудит M2H-F01–F03 и согласованности текущей документации
 Будущие работы: Stage 12 Macros 3–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры принятого DQ scope M2-A: отсутствуют; остальные методы требуют собственных gates
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
@@ -172,8 +173,19 @@ M2-A была остановлена на method/provenance gate. Решение
 от 2026-09-24 принят DQ-HIST-1 / DQ-R3C-1. Задание M2-BR1 явно подтверждает
 M2-A — `DONE / OWNER ACCEPTED / PRODUCTION IMPLEMENTED`; каталог содержит
 пять анализаторов. DQ не переоткрывается, Grid остаётся `DEFERRED_RESEARCH_ONLY`.
-M2-BR1 — `DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE`: владелец принял только
-исследовательское закрытие; production-методы не приняты (раздел ниже).
+M2-BR1 и последнее принятое исследовательское закрытие M2-CR1 —
+`DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE`: владелец принял только
+исследовательские закрытия; noise, resampling и thumbnail сохраняют
+`RESEARCH_ONLY / WEAK_SIGNAL`, их production-методы не приняты (разделы ниже).
+Аудит M2-H завершён с `AUDIT FAIL / REMEDIATION_REQUIRED` по трём
+документационным findings M2H-F01–F03. Владелец завершил review и принял
+M2-HR1 — `DONE / OWNER ACCEPTED DOCS REMEDIATION`;
+M2H-F01, M2H-F02 и M2H-F03 — `RESOLVED`.
+Ближайшее действие — M2-HR2: узкий независимый повторный аудит F01–F03
+и согласованности текущей документации. Macro 2 остаётся `IN_PROGRESS`;
+решение о его закрытии не принято.
+Новое исследование, калибровка или реализация не разрешены;
+M2H-D01 остаётся отложенным вопросом Macro 6.
 Ниже сохранены свидетельства предыдущей исследовательской цепочки.
 
 M2-R1 от 2026-09-23 принят владельцем как исследовательское свидетельство

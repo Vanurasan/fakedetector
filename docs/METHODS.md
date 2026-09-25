@@ -224,10 +224,10 @@ patches и 8/20 benign crop/recompress, что не даёт достаточн�
 ### Идентичность, принятие и цель
 
 - Принятый Analyzer ID: `image_jpeg_double_quantization`, версия
-  анализатора `1.0.0`; реализация и регистрация M2-A подготовлены к приёмке владельцем.
+  анализатора `1.0.0`.
 - **ACCEPTED**: явное решение владельца M2-R4 от **2026-09-24** принимает
   полную спецификацию ниже без изменения frozen rule и ограничений.
-  Реализация M2-A добавлена в каталог; статус проверок и приёмки — в ROADMAP.
+  Текущий статус реализации M2-A, её проверок и приёмки — в [ROADMAP](ROADMAP.md).
   Принятие метода не означает приёмку реализации или release certification.
 - Evidence family / correlation group: `image_jpeg_compression_history`.
 - Наблюдение: заполненность, нулевые значения и спектральная структура
@@ -630,7 +630,8 @@ pilot stress — [DATASET-VISION](REFERENCES.md#dataset-vision), offline develop
 они служат проверяемым oracle, не production import/dependency.
 Новых внешних источников или недостающих provenance linkages не выявлено.
 
-Будущая задача реализации должна проверить следующую матрицу без tuning:
+В M2-R4 от 2026-09-24, до реализации M2-A, была зафиксирована следующая
+обязательная приёмочная матрица без tuning:
 
 | Область | Обязательная проверка |
 |---|---|
@@ -641,10 +642,11 @@ pilot stress — [DATASET-VISION](REFERENCES.md#dataset-vision), offline develop
 | Negatives / positives / benign | R3C/R3D evidence сохраняется; aligned40to90, reverse/same/close, repeated benign export; synthetic textures, flat, clipping, custom/trellis как challenges, не новое независимое n |
 | Failure / ресурсы | Missing/corrupt source-bound artifacts, identity/length/shape mismatch, preflight и общий artifact budget, histogram ceiling, worker response boundary, remaining budget, reap/cleanup и peak RSS при допустимой concurrency |
 
-Research tests и measurements уже свидетельствуют об арифметике и frozen rule;
-они не объявляют пройденными production integration/resource tests. Новая
-реализация потребует focused tests и полного quality barrier; strict installed
-certification возможна только по правилам clean committed SHA.
+На момент M2-R4 research tests и measurements свидетельствовали об арифметике
+и frozen rule, но не подтверждали production integration/resource tests.
+Для реализации M2-A требовались focused tests и полный quality barrier;
+strict installed certification возможна только по правилам clean committed SHA.
+Текущий статус выполнения проверок и приёмки реализации — в [ROADMAP](ROADMAP.md).
 
 | Gate | Owner gate M2-R4 от 2026-09-24 | Принятое решение |
 |---|---|---|
@@ -653,8 +655,9 @@ certification возможна только по правилам clean committe
 | DQ-G3 | `CLOSED` | Один weak Finding, null public scores, отдельные no_signal/insufficient semantics в существующих контрактах |
 | DQ-G4 | `CLOSED` | Только image JPEG L/RGB на Macro 1, bounded workspace, прежние budgets/failures, без новых dependencies |
 
-Обязательный owner gate полной записи закрыт решением от 2026-09-24:
-метод `ACCEPTED`, M2-A — `READY_FOR_IMPLEMENTATION` только в принятом DQ scope.
+Обязательный owner gate полной записи закрыт решением M2-R4 от 2026-09-24:
+метод `ACCEPTED`; на момент этого решения, до реализации, M2-A получил
+`READY_FOR_IMPLEMENTATION` только в принятом DQ scope.
 Решение M2-R4 само по себе не подтверждает тестирование, включение в активный
 план или release certification. Текущий статус реализации M2-A — в ROADMAP.
 Grid не включён в разрешение.
