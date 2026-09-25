@@ -57,6 +57,57 @@ repository не добавляются. Deterministic generated positive, negati
 false-positive/challenge и boundary/not-applicable fixtures не являются
 статистической validation dataset и не должны так описываться.
 
+<a id="audio-m3r2a"></a>
+
+## M3-R2A — происхождение подготовленных аудиоисточников
+
+Проверка и доступ: **2026-09-26**. Только внешний исследовательский workspace;
+production dataset/dependency не добавлена. Пять selected real sources прошли
+measurement validation; Vibe Ace сохранён как historical resource rejection:
+см. [отчёт M3-R2A](research/2026-09-26-audio-transition-measurement-prototype.md).
+Точные downloads, archive members, hashes и derivative recipes сохраняются в
+`FakeDetector-Work/research/M3-R2A-transition/provenance/corpus-v2.json` (активный
+состав), `corpus.json` (V1 history) и внешних
+скриптах. Файлы corpus/fixtures не входят в Git.
+
+| ID / категория | Источник и фактическое использование | Права и attribution |
+|---|---|---|
+| M3-TR-01 / DATASET | [LibriSpeech, OpenSLR SLR12](https://www.openslr.org/12/), test-clean; первые FLAC первых трёх разных speakers в порядке streaming archive. Bounded M1 окна и generated derivatives измерены frozen ATD/ASC протоколом | CC BY 4.0, явно указана поставщиком; LibriSpeech — Vassil Panayotov, Guoguo Chen, Daniel Povey, Sanjeev Khudanpur; исходные LibriVox narrations, speaker IDs ниже. Attribution, ссылка на источник/лицензию и обозначение изменений сохраняются |
+| M3-TR-02 / DATASET | [Glacier Bay / NPS, underwater sound recordings](https://www.nps.gov/glba/learn/nature/soundclips.htm), humpback contact call, 25Sep2001; M1 окна и derivatives измерены frozen ATD/ASC протоколом | NPS явно обозначает записи как собственные hydrophone recordings. [NPS ownership policy](https://www.nps.gov/aboutus/disclaimer.htm): US Government work, public domain в США, если не указаны исключения; для этой записи отдельного исключения не заявлено. Attribution: National Park Service / Glacier Bay; не утверждать endorsement, при коммерческой перепубликации сохранять требуемое указание original US Government work |
+| M3-TR-03 / DATASET | [Vibe Ace — Kevin MacLeod, Free Music Archive / Jazz Sampler](https://freemusicarchive.org/music/Kevin_MacLeod/Jazz_Sampler/Vibe_Ace), исходный MP3. Загружен, проверен, но M1 resource preflight отказал; numeric artifacts и ATD/ASC результаты из него не получены | CC BY 3.0, ссылка на точную лицензию прочитана на странице записи; независимая запись происхождения [librosa data](https://raw.githubusercontent.com/librosa/data/main/audio/Kevin_MacLeod_-_Vibe_Ace.txt) согласуется. Attribution: Vibe Ace by Kevin MacLeod, Free Music Archive, Jazz Sampler |
+| M3-TR-04 / DATASET | [solo trumpet -06in F - 90bpm.wav — Mihai Sorohan / sorohanro, Freesound 77711](https://freesound.org/people/sorohanro/sounds/77711/), [полный provider HQ MP3 preview](https://cdn.freesound.org/previews/77/77711_1179015-hq.mp3). Первый и единственный replacement candidate; outcome-blind выбор и PASS неизменённого M1 preflight до ATD/ASC, 11 172 400 bytes при 52 428 800 budget. Реальная запись трубы, downloaded MP3 без локального crop/resample/downmix/re-encode; underlying WAV с login не скачивался | Текущая canonical sound page явно указывает CC BY 4.0; snapshot `provenance/freesound-77711.html` сохранён. [Historical librosa provenance](https://raw.githubusercontent.com/librosa/data/main/audio/sorohanro_-_solo-trumpet-06.txt) указывает BY 3.0; действующий выбор опирается на прямое разрешение текущей авторской страницы BY 4.0. Attribution: title, Mihai Sorohan / sorohanro, Freesound 77711, source/license link, изменения derivatives; no endorsement |
+
+Применимые [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) и
+[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) разрешают использование,
+переработку и распространение, включая коммерческое, при соблюдении attribution,
+license link и change notices; ограничения прав третьих лиц лицензией не
+отменяются. Данные используются для проверки измерений, не для имитации личности
+или заявлений об одобрении проекта авторами. Производные разрешено сохранять
+во внешнем workspace с provenance; никаких media здесь не распространяется.
+Generated derivatives не становятся оригинальными untouched recordings.
+
+| Source group / файл | SHA-256 загруженного оригинала |
+|---|---|
+| libri-speaker-6930 / `6930-75918-0000.flac` | `9ce35224156f071ab58eb7feb8a5ceae600f6f9f353da2a6cbf797b6b1ac8a23` |
+| libri-speaker-1320 / `1320-122617-0003.flac` | `bbe9ef85bbe228c73a414f064c9bd992c94135d73f9900b33104ad93c07d0594` |
+| libri-speaker-5639 / `5639-40744-0032.flac` | `ecba1c65406f3d2fdfe383a22385dfe19cc117b71b126817f5e20df791f22a50` |
+| nps-humpback-20010925 / `nps-humpback.mp3` | `b2d1086dbba2fe72f6f9456d905f29a7e5db2b6087e86295fc9c897bf3cce79d` |
+| kevin-macleod-vibe-ace / `vibe-ace.mp3` | `14634cc7c6f825db857c1594ac8c609bf49321336f625bd6559a039644bfc9f6` |
+| sorohanro-freesound-77711 / `sorohanro-77711-hq.mp3` | `1aa175783edddd4db6aa0fdc26c1a0fa01dab19028c7b58eeb575eb66b1b06bf` |
+
+Vibe Ace остаётся только historical resource-boundary case и не является шестой
+measured source group. Для replacement использована предоставленная платформой
+lossy версия записи, не заявляется byte identity с uploaded lossless WAV.
+Все кандидаты фактической замены и preflight записаны в
+`provenance/replacement-selection-rule.md` и `replacement-selection.json`.
+
+Все derivatives каждого original остаются в одной группе. Synthetic generation
+имеет одну консервативную lineage, seed `20260926`, собственные аналитические
+waveforms/NumPy recipes; права сторонних media к ней не приписываются.
+Choice с NonCommercial лицензией не использован. Librosa implementation не
+копируется и library не устанавливается; ссылка использована только для provenance.
+Неизменённые runtime building blocks сохраняют ранее записанные лицензии.
+
 ## Политика сторонних материалов Stage 12
 
 Принятое направление — `PROJECT.md` §20; план допуска методов — `ROADMAP.md`.

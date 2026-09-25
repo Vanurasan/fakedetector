@@ -78,7 +78,7 @@
 ## Кандидаты Stage 12 / Macro 3 — M3-R1
 
 Дата предложения и явного owner acceptance исследовательских gates G1–G6:
-**2026-09-26** (M3-R1A). ATD-LOCAL-1, ASC-TV-1 и ARC-NCC-1 имеют статус
+**2026-09-26** (M3-R1A). ATD-LOCAL-1, ASC-TV-1 и ARC-NCC-1 получили статус
 **OWNER_ACCEPTED_FOR_MEASUREMENT_PROTOTYPE**: разрешены только ограниченные
 исследовательские измерения и measurement-only validation. **Production-метод
 не принят**; gate production acceptance выше остаётся обязательным.
@@ -90,8 +90,8 @@
 
 | Рабочий кандидат / профиль | Статус исследовательского профиля | Вопрос и inputs | Семейство и основной предел |
 |---|---|---|---|
-| `audio_temporal_discontinuity` / ATD-LOCAL-1 | OWNER_ACCEPTED_FOR_MEASUREMENT_PROTOTYPE | Локальные waveform/energy переходы; существующие precision samples и framing | Общее исследовательское семейство переходов; plosive/перкуссия/quality artifacts дают сходный response |
-| `audio_spectral_consistency` / ASC-TV-1 | OWNER_ACCEPTED_FOR_MEASUREMENT_PROTOTYPE | TV нормированных magnitude spectra и отдельный flux; готовый M1 STFT | То же семейство, без независимого голоса; фонемы/ноты/EQ/codec меняют спектр |
+| `audio_temporal_discontinuity` / ATD-LOCAL-1 | NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD | Локальные waveform/energy переходы; существующие precision samples и framing | Общее исследовательское семейство переходов; plosive/перкуссия/quality artifacts дают сходный response |
+| `audio_spectral_consistency` / ASC-TV-1 | NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD | TV нормированных magnitude spectra и отдельный flux; готовый M1 STFT | То же семейство, без независимого голоса; фонемы/ноты/EQ/codec меняют спектр |
 | `audio_background_noise_consistency` / ABN-FLOOR-1 | RESEARCH_ONLY / WEAK_SIGNAL | Описательные low-energy spectral floors; M1 STFT достаточен для измерений, но не для выделения фона | То же семейство условно; content/background matching не установлен, sensor noise/microphone identity не выводятся |
 | `audio_repeated_segment_correspondence` / ARC-NCC-1 | OWNER_ACCEPTED_FOR_MEASUREMENT_PROTOTYPE | Bounded descriptor retrieval и waveform NCC/support; M1 samples/STFT | Отдельный исследовательский трек повторов; легитимный loop неотличим по одному соответствию |
 | `audio_metadata_container_consistency` / AMC-RESP-1 | REJECT_DUPLICATE_RESPONSIBILITY / OWNER ACCEPTED NEGATIVE RESULT | Проверка пересечения validation, precision и timing обязанностей | Новое forensic-семейство не обосновано; invalid/unknown input не Finding |
@@ -133,7 +133,29 @@ SciPy не добавляется. Dataset dependency автоматически
 допускаются только после проверки provenance/license и предполагаемого использования;
 неустановленные права/scope необходимого корпуса или библиотеки требуют owner gate.
 Production по-прежнему требует полного gate принятия метода выше. Измерительные
-эксперименты этим решением не объявляются выполненными.
+эксперименты одним лишь решением M3-R1A не объявляются выполненными.
+
+**M3-R2A — DONE / OWNER ACCEPTED RESEARCH RESULT; owner acceptance: 2026-09-26.**
+Результаты и frozen V1/V2 protocol hashes — в
+[отчёте transition prototype](research/2026-09-26-audio-transition-measurement-prototype.md).
+Принятый владельцем исследовательский статус ATD-LOCAL-1 и ASC-TV-1:
+**NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD** для каждого.
+Проверенные арифметика/oracles и детерминизм прошли; при почти постоянном RMS
+ASC описывает spectral transitions, ATD сохраняет sample-position jump и
+level/DC-контекст. Высокие ответы на benign speech/music/transients и неоднозначность
+global maxima не дают forensic-селективности. Следующее исследование требует
+annotated content-matched events и проверки на независимых source groups.
+Целевое продолжение отложено в последовательности работ до последующего решения;
+следующий активный трек — measurement research ARC-NCC-1. Обязательства ATD/ASC
+не отменены и остаются OPEN / REQUIRED; правило их явного разрешения перед
+закрытием Macro 3 закреплено в [ROADMAP](ROADMAP.md#audio-m3-required-carry-forward).
+Переход к production calibration не разрешён. Общий transition family сохранён,
+fusion и независимые forensic votes не создаются. Формулы не изменены.
+Owner-accepted prototype scope остаётся в силе; **production method acceptance
+не произошло**, thresholds/Decision Rules не добавлены, реализация анализаторов
+и Findings не разрешены и не добавлены. Resource rejection
+Vibe Ace сохранён; владелец разрешил outcome-blind замену источника до измерений,
+без увеличения бюджета или изменения preprocessing.
 
 ## Кандидаты Stage 12 / Macro 2
 
