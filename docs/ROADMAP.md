@@ -124,17 +124,17 @@ AFTER_MVP
 Текущий этап: Stage 12 — Analyzer Expansion, Licensing & Product Validation
 Статус Stage 11: DONE / CLOSED
 Статус Macros 0–8 Stage 11: DONE / owner accepted
-Последний завершённый Macro: Stage 12 Macro 1 — Forensic Preprocessing Foundations (DONE / CLOSED / owner accepted / merged)
+Последний завершённый Macro: Stage 12 Macro 2 — Image Analyzer Expansion — Wave 1 (DONE / CLOSED)
 Статус Stage 12: IN_PROGRESS
-Текущий Macro: Macro 2 — Image Analyzer Expansion — Wave 1 (IN_PROGRESS)
+Активный Macro: отсутствует; Macros 3–10 не начаты
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
-Состояние Macro 2: IN_PROGRESS — процедура закрытия; принятые результаты и история аудитов приведены в §2.2
+Состояние Macro 2: DONE / CLOSED; принятые результаты и основания закрытия приведены в §2.2
 Исследовательская цепочка M2-R1–M2-R3D: OWNER_ACCEPTED; DQ — FINAL_HOLDOUT_PASS, Grid — DEFERRED_RESEARCH_ONLY
 Реализация M2-A: DONE / OWNER ACCEPTED / PRODUCTION IMPLEMENTED
 M2-BR1: DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE; noise и resampling — RESEARCH_ONLY / WEAK_SIGNAL
 M2-CR1: DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE; thumbnail — RESEARCH_ONLY / WEAK_SIGNAL
-Условия финального закрытия: устранение всех оставшихся замечаний аудита, приёмка владельца, финальное документационное закрытие и verification/certification на clean committed SHA
+Проверка closure commit: после owner review и commit обязательны полный quality barrier и strict certification на финальном clean SHA; ещё не выполнены
 Будущие работы: Stage 12 Macros 3–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры принятого DQ scope M2-A: отсутствуют; остальные методы требуют собственных gates
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
@@ -153,7 +153,7 @@ M2-CR1: DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE; thumbnail — RESEARCH_ONLY / WE
 - [x] разделены серьёзность признака, риск и полнота анализа;
 - [x] итоговая псевдовероятность запрещена без валидированного метода.
 
-### 2.2. Ближайшая задача
+### 2.2. Принятое состояние и основания закрытия
 
 Stage 12 явно разрешён владельцем 2026-09-20. Решение о лицензии закрыто:
 в Pass 2 выбран Apache-2.0 (`PROJECT.md` §21.7); сведения о происхождении
@@ -167,33 +167,47 @@ Macro 0 — `DONE / merged`. Macro 1 — Forensic Preprocessing Foundations —
 аудит — `PASS`, M1H-F01 и M1H-F02 — `CLOSED`, замечаний к исправлению — **0**.
 Свидетельства закрытия и принятые ограничения приведены в разделе M1-H ниже.
 
-Macro 1 — `DONE / CLOSED / merged`. Macro 2 — **IN_PROGRESS**; текущая ветка —
-`feat/stage12-macro2-image-analyzer-expansion-wave1`. Первоначальная попытка
-M2-A была остановлена на method/provenance gate. Решением владельца M2-R4
-от 2026-09-24 принят DQ-HIST-1 / DQ-R3C-1. Задание M2-BR1 явно подтверждает
-M2-A — `DONE / OWNER ACCEPTED / PRODUCTION IMPLEMENTED`; каталог содержит
-пять анализаторов. DQ не переоткрывается, Grid остаётся `DEFERRED_RESEARCH_ONLY`.
-M2-BR1 и последнее принятое исследовательское закрытие M2-CR1 —
-`DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE`: владелец принял только
-исследовательские закрытия; noise, resampling и thumbnail сохраняют
-`RESEARCH_ONLY / WEAK_SIGNAL`, их production-методы не приняты (разделы ниже).
-Аудит M2-H завершён с `AUDIT FAIL / REMEDIATION_REQUIRED` по трём
-документационным findings M2H-F01–F03. Владелец завершил review и принял
-M2-HR1 — `DONE / OWNER ACCEPTED DOCS REMEDIATION`.
-В рамках этой приёмки M2H-F01, M2H-F02 и M2H-F03 отмечены `RESOLVED`.
-Выявленный в M2-HR2 drift каталога исправлен в M2-HR3; исправление записано
-в commit `a693db13e0d989cc26df30dcc742a870efd48251`: текущий каталог содержит
-ровно пять анализаторов, включая DQ. Повторный аудит M2-HR4 от 2026-09-25
-на этом SHA вернул `AUDIT FAIL / REMEDIATION_REQUIRED`: M2HR4-F01 —
-устаревшие текущие формулировки ROADMAP, M2HR4-F02 — остаточное ожидание
-будущей реализации DQ в METHODS. Это история аудита, не отмена приёмки M2-HR1.
-Macro 2 остаётся `IN_PROGRESS` в процедуре закрытия. Для финального закрытия
-требуются устранение всех оставшихся замечаний аудита, приёмка владельца,
-финальное документационное закрытие и verification/certification на clean
-committed SHA. Решение о закрытии Macro 2 не принято.
-Новое исследование, калибровка или реализация не разрешены;
-M2H-D01 остаётся отложенным вопросом Macro 6.
-Ниже сохранены свидетельства предыдущей исследовательской цепочки.
+Macro 1 — `DONE / CLOSED / merged`. Stage 12 / Macro 2 — **DONE / CLOSED**:
+владелец принял итог по результатам независимого M2-HR6 и разрешил M2-CLOSE.
+В production принят ровно один новый image-анализатор —
+`image_jpeg_double_quantization@1.0.0`, метод DQ-HIST-1 / DQ-R3C-1;
+M2-A — `DONE / OWNER ACCEPTED / PRODUCTION IMPLEMENTED`.
+Остальные исследованные кандидаты остаются вне production:
+
+- `image_jpeg_grid_consistency` — `DEFERRED_RESEARCH_ONLY`;
+- `image_noise_residual_consistency`, N-MAD-MATCH-1 — `RESEARCH_ONLY / WEAK_SIGNAL`;
+- `image_resampling_consistency`, R-D2-MATCH-1 — `RESEARCH_ONLY / WEAK_SIGNAL`;
+- `image_embedded_thumbnail_consistency`, THUMB-NCC-GRAD-1 — `RESEARCH_ONLY / WEAK_SIGNAL`.
+
+Production-каталог содержит ровно пять анализаторов (полный список — в разделе
+Stage 12). Profile B и исторический enabled-пример из четырёх анализаторов
+сохранены: DQ доступен через каталог, но автоматически в пример не добавлен.
+Дополнительные реализация или исследование для закрытия Macro 2 не требуются;
+возврат к research-only кандидатам возможен только по отдельному явному разрешению.
+**M2H-D01 — DEFERRED TO MACRO 6**, не блокирует закрытие Macro 2;
+корреляция, risk aggregation, DQ scoring и copy-move behavior не изменены.
+
+Принятая последовательность: M2-R1–R4 — исследование, калибровка, holdout и
+принятие DQ-метода; M2-A — production-реализация; M2-BR1 и M2-CR1 —
+исследовательские закрытия. Независимый аудит M2-H, документационные исправления
+M2-HR1 / HR3 / HR5 и финальная проверка готовности M2-HR6 завершены;
+M2-HR6 — **PASS / OWNER ACCEPTED**, оставшихся BLOCKER/MAJOR/MINOR findings нет.
+
+Хронология проверок: исходный аудит M2-H на clean SHA
+`95296c992dbcd166ad263e785e9b14f100cefa2d` подтвердил полный quality barrier
+**2792 passed / 17 skipped**, package tests, сборку sdist/wheel,
+installed-wheel probe и strict package/release certification — **PASS**.
+Последующие коммиты были docs-only. M2-HR6 на
+`2286404e7b284daa252101000ec4685927e8852e` проверил финальную готовность
+документации, без повторного полного barrier или strict certification.
+После owner review и commit M2-CLOSE обязательны полный quality barrier и
+strict certification на финальном clean SHA. Для closure SHA эти проверки
+ещё не выполнены; прежний PASS не является его сертификацией.
+
+#### Исторические свидетельства исследовательской цепочки
+
+Состояния и предпосылки ниже относятся к соответствующим инкрементам,
+а не к текущему закрытому Macro 2.
 
 M2-R1 от 2026-09-23 принят владельцем как исследовательское свидетельство
 (подтверждено заданием M2-R2); это не принятие production-методов.
@@ -295,7 +309,7 @@ Grid остаётся `DEFERRED_RESEARCH_ONLY`.
 | 9 | Надёжность, безопасность и сквозные тесты | DONE | Macro 1–4 и remediation committed; independent post-remediation audit — PASS, findings закрыты |
 | 10 | Сборка и демонстрация MVP | DONE / CLOSED | Macro 1–3 DONE / owner accepted; independent post-remediation audit — PASS; S10-A01–S10-A04 CLOSED |
 | 11 | Post-MVP Normalization & Hardening | DONE / CLOSED | Macros 0–8 DONE / owner accepted; финальная проверка и strict certification — PASS; actionable findings 0 |
-| 12 | Analyzer Expansion, Licensing & Product Validation | IN_PROGRESS | Macro 0 DONE / merged; Macro 1 DONE / CLOSED / owner accepted; M1-H DONE / PASS; лицензия проекта Apache-2.0 |
+| 12 | Analyzer Expansion, Licensing & Product Validation | IN_PROGRESS | Macro 0 DONE / merged; Macros 1–2 DONE / CLOSED; M2-HR6 PASS / OWNER ACCEPTED; лицензия проекта Apache-2.0 |
 | 13+ | Дальнейшие расширения | AFTER_MVP / NOT_STARTED | ML, интеграции, история, масштабирование; отдельное решение владельца |
 
 ---
@@ -2448,7 +2462,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 |---:|---|---|---|
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE / merged | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
-| 2 | Image Analyzer Expansion — Wave 1 | IN_PROGRESS | M2-A OWNER_ACCEPTED / PRODUCTION IMPLEMENTED; M2-BR1 и M2-CR1 OWNER_ACCEPTED_RESEARCH_CLOSURE; Grid DEFERRED_RESEARCH_ONLY |
+| 2 | Image Analyzer Expansion — Wave 1 | DONE / CLOSED | Один новый production-анализатор DQ; остальные кандидаты research-only/deferred; M2-HR6 PASS / OWNER ACCEPTED; M2H-D01 → Macro 6 |
 | 3 | Audio Analyzer Expansion — Wave 1 | NOT_STARTED | После 1 и планового закрытия 2: согласованный audio-набор на общих представлениях |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
@@ -2619,7 +2633,7 @@ M1-H — `DONE / PASS`: независимый аудит закрытия за�
 | M1-G — integration/hardening — DONE | B–F | Совместные count/byte/CPU budgets, безопасная сериализация, timeout/overflow/crash/reap/cleanup matrix, существующие consumers без изменения поведения; sdist → wheel → внешняя runtime-среда без checkout и dev packages |
 | M1-H — independent closure audit — DONE / PASS | G | Первичный аудит REMEDIATE; targeted remediation принята и закоммичена; финальный независимый повторный аудит PASS, M1H-F01/F02 CLOSED, actionable findings 0 |
 
-Документационное закрытие Macro 1 завершено и merged; текущая работа Macro 2 указана в §2.2.
+Документационное закрытие Macro 1 завершено и merged; итоговый статус Macro 2 указан в §2.2.
 A задаёт общие contracts/limits для B–F;
 точные реализованные ограничения принадлежат `CONTRACTS.md` §7.5. Предложения
 Pass 1 ниже сохраняются как исходные критерии выполненной проверки A/G, не production
@@ -3082,7 +3096,10 @@ Macro 2 не установлены и не активированы. Текущ
 В Pass 1 не запускались project test suite, release certification и пересборка
 Graphify. Изменения реализации и Git mutations не выполнялись.
 
-## Macro 2 — Image Analyzer Expansion — Wave 1 — IN_PROGRESS
+## Macro 2 — Image Analyzer Expansion — Wave 1 — DONE / CLOSED
+
+Итог и хронология проверок — в §2.2. Ниже сохранена история принятых
+инкрементов; промежуточные состояния не переоткрывают закрытый Macro 2.
 
 ### M2-A — DONE / OWNER ACCEPTED / PRODUCTION IMPLEMENTED
 
@@ -3227,8 +3244,9 @@ thresholds/severity не выбраны. Дальнейшее targeted research 
 Следующий возможный scope — отдельное исследование нерешённых confounds из
 отчёта, не автоматическая калибровка/реализация. Новых runtime dependencies,
 analyzers, config/API/scoring/completeness changes нет; каталог — пять.
-M2-A не менялся; Grid — `DEFERRED_RESEARCH_ONLY`; Macro 2 / Stage 12 остаются
-`IN_PROGRESS`. Все внешние BR1 материалы находятся только в заданных
+M2-A не менялся; Grid — `DEFERRED_RESEARCH_ONLY`; на момент закрытия M2-BR1
+Macro 2 / Stage 12 оставались `IN_PROGRESS`. Все внешние BR1 материалы находятся
+только в заданных
 `FakeDetector-Work/research|reviews|tmp/M2-BR1-noise-resampling/`.
 
 ### M2-CR1 — DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE
@@ -3259,10 +3277,15 @@ challenge. Дальнейшее targeted research требует отдельн�
 принятие исследовательского закрытия не разрешает калибровку или реализацию.
 Структурные checks не реализуются здесь.
 Каталог остаётся пять, DQ не меняется, Grid — `DEFERRED_RESEARCH_ONLY`,
-noise/resampling — `RESEARCH_ONLY`. Macro 2 и Stage 12 остаются `IN_PROGRESS`.
+noise/resampling — `RESEARCH_ONLY`. На момент закрытия M2-CR1 Macro 2 и Stage 12
+оставались `IN_PROGRESS`.
 Внешние материалы — только `FakeDetector-Work/research|reviews|tmp/M2-CR1-thumbnail/`.
 
 ## Macro 6 — корреляция и смысл результата
+
+Из закрытого Macro 2 перенесён **M2H-D01 — DEFERRED TO MACRO 6**.
+Это отложенный вопрос, не блокер закрытия Macro 2; его решение требует
+отдельно разрешённой работы Macro 6.
 
 Размер портфеля не равен числу независимых свидетельств. ELA, double
 quantization, JPEG grid и JPEG ghost могут отражать общую историю JPEG-обработки;

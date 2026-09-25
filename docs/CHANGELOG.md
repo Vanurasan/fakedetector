@@ -341,6 +341,24 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-09-25
+
+#### Decision
+
+- **[Stage 12 / Macro 2] Image Analyzer Expansion — Wave 1 закрыт: DONE / CLOSED.**
+  По принятым исследовательским результатам в production продвинут ровно один
+  новый анализатор — `image_jpeg_double_quantization@1.0.0`
+  (DQ-HIST-1 / DQ-R3C-1); production-каталог содержит пять анализаторов.
+  Grid оставлен `DEFERRED_RESEARCH_ONLY`, noise, resampling и thumbnail —
+  `RESEARCH_ONLY / WEAK_SIGNAL`: свидетельства не обосновали их production-допуск.
+  После документационных исправлений M2-HR1 / HR3 / HR5 независимая финальная
+  проверка M2-HR6 получила `PASS` и принята владельцем; оставшихся
+  BLOCKER/MAJOR/MINOR findings нет. M2H-D01 перенесён в Macro 6 и не блокирует
+  закрытие. Контракты методов и Profile B сохранены. Проверки и strict
+  certification M2-H относятся к прежнему SHA; M2-HR6 их не повторял.
+  После owner review и closure commit обязательны полный quality barrier и
+  strict certification на финальном clean SHA; их выполнение здесь не заявляется.
+
 ### 2026-09-24
 
 #### Added
