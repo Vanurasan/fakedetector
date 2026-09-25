@@ -423,7 +423,7 @@ Measurement implementation fingerprint R3C:
 `f71d85640aa1624ad116a0da6e66401e329220231df642b0b25ca49ea43a21cf`.
 Holdout membership SHA-256:
 `99e52cc1f785bcaaaa8ca423e1c0c5487cb882d56b5e01bcf5f0027e8687a189`.
-Это привязки принятых свидетельств, не fingerprint будущей реализации.
+Это привязки принятых свидетельств, не fingerprint production-реализации.
 
 Population — отобранные PIXLS CC0 RAW, фиксированная AHD/LibRaw проявка в RGB8,
 Lanczos без upscale до 1280 по стороне / 1 000 000 pixels, Pillow JPEG.
@@ -561,8 +561,10 @@ int64 histogram до 512 KiB, normalized/padded float64 vectors — до дву�
 профиль выделяет им максимум 8 MiB с запасом, без нового config/policy поля.
 Одна читаемая immutable plane до 16 MiB; transient копии controlled reader,
 FFT/native allocator и Python overhead не выдаются за включённые в эти 8 MiB.
-Их фактический общий RSS проверяется в будущей реализации. Не использовать
-32 MiB residual workspace как дополнительный JPEG artifact budget.
+Эти числовые границы не определяют фактический общий RSS. Статус измерений
+worker RSS и ограничения оценки совокупного пика preprocessing и workers —
+в [ROADMAP](ROADMAP.md); измеренный worker RSS не подтверждает такой общий пик.
+Не использовать 32 MiB residual workspace как дополнительный JPEG artifact budget.
 
 Новых видов artifacts нет: существующие numeric component files и PNG
 учитываются вместе с прочими файлами в `_GeneratedArtifactBudget` и лимите
@@ -580,7 +582,7 @@ worst-case timeout. R3C parent peak snapshots 112 705 536 / 102 428 672 bytes
 для calibration/validation не измеряют совокупный parent+child peak. Offline
 RAW worker RSS не относится к production JPEG budget. Среда — Windows 11 x64,
 Python 3.12.10, NumPy 2.5.2, Pillow 12.3.0, pyjpegio 0.3.0. Это свидетельства
-приемлемого bounded research execution, не сертификация будущего worker.
+приемлемого bounded research execution, не сертификация production worker.
 
 Preprocessing остаётся владельцем decode/preflight/resource failures:
 unsupported coding/precision, native warning/error/timeout, превышение
@@ -598,7 +600,7 @@ Resource exhaustion во время измерения — контролиру�
 worker response <=65 536 bytes (AnalyzerResult <=65 509 bytes). Только
 ограниченные скалярные diagnostics и максимум один Finding; размер проверяется
 штатно после нормализации, overflow — error. R2 diagnostics <=22 079 bytes
-не доказывают размер будущего production-конверта: boundary tests обязательны.
+не доказывают размер production-конверта: boundary tests обязательны.
 Новые runtime dependencies не нужны: NumPy/stdlib считают histogram, FFT и
 median, уже принятый pyjpegio предоставляет coefficients через Macro 1.
 SciPy, rawpy/LibRaw research environment, модели и сетевой доступ в runtime

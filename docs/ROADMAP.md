@@ -129,12 +129,12 @@ AFTER_MVP
 Текущий Macro: Macro 2 — Image Analyzer Expansion — Wave 1 (IN_PROGRESS)
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
-Последний принятый increment: M2-HR1 — DONE / OWNER ACCEPTED DOCS REMEDIATION
+Состояние Macro 2: IN_PROGRESS — процедура закрытия; принятые результаты и история аудитов приведены в §2.2
 Исследовательская цепочка M2-R1–M2-R3D: OWNER_ACCEPTED; DQ — FINAL_HOLDOUT_PASS, Grid — DEFERRED_RESEARCH_ONLY
 Реализация M2-A: DONE / OWNER ACCEPTED / PRODUCTION IMPLEMENTED
 M2-BR1: DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE; noise и resampling — RESEARCH_ONLY / WEAK_SIGNAL
 M2-CR1: DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE; thumbnail — RESEARCH_ONLY / WEAK_SIGNAL
-Следующее действие: M2-HR2 — узкий независимый повторный аудит M2H-F01–F03 и согласованности текущей документации
+Условия финального закрытия: устранение всех оставшихся замечаний аудита, приёмка владельца, финальное документационное закрытие и verification/certification на clean committed SHA
 Будущие работы: Stage 12 Macros 3–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры принятого DQ scope M2-A: отсутствуют; остальные методы требуют собственных gates
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
@@ -179,11 +179,18 @@ M2-BR1 и последнее принятое исследовательское
 `RESEARCH_ONLY / WEAK_SIGNAL`, их production-методы не приняты (разделы ниже).
 Аудит M2-H завершён с `AUDIT FAIL / REMEDIATION_REQUIRED` по трём
 документационным findings M2H-F01–F03. Владелец завершил review и принял
-M2-HR1 — `DONE / OWNER ACCEPTED DOCS REMEDIATION`;
-M2H-F01, M2H-F02 и M2H-F03 — `RESOLVED`.
-Ближайшее действие — M2-HR2: узкий независимый повторный аудит F01–F03
-и согласованности текущей документации. Macro 2 остаётся `IN_PROGRESS`;
-решение о его закрытии не принято.
+M2-HR1 — `DONE / OWNER ACCEPTED DOCS REMEDIATION`.
+В рамках этой приёмки M2H-F01, M2H-F02 и M2H-F03 отмечены `RESOLVED`.
+Выявленный в M2-HR2 drift каталога исправлен в M2-HR3; исправление записано
+в commit `a693db13e0d989cc26df30dcc742a870efd48251`: текущий каталог содержит
+ровно пять анализаторов, включая DQ. Повторный аудит M2-HR4 от 2026-09-25
+на этом SHA вернул `AUDIT FAIL / REMEDIATION_REQUIRED`: M2HR4-F01 —
+устаревшие текущие формулировки ROADMAP, M2HR4-F02 — остаточное ожидание
+будущей реализации DQ в METHODS. Это история аудита, не отмена приёмки M2-HR1.
+Macro 2 остаётся `IN_PROGRESS` в процедуре закрытия. Для финального закрытия
+требуются устранение всех оставшихся замечаний аудита, приёмка владельца,
+финальное документационное закрытие и verification/certification на clean
+committed SHA. Решение о закрытии Macro 2 не принято.
 Новое исследование, калибровка или реализация не разрешены;
 M2H-D01 остаётся отложенным вопросом Macro 6.
 Ниже сохранены свидетельства предыдущей исследовательской цепочки.
