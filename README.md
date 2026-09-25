@@ -11,9 +11,9 @@ Macros 0–8 Stage 11 — `DONE / owner accepted`.
 Финальная независимая проверка GPT-6 Astra High и строгая сертификация
 установленного артефакта — `PASS`; замечаний, требующих исправления, нет,
 гарантии MVP A–R сохранены. Владелец открыл Stage 12 — Analyzer Expansion,
-Licensing & Product Validation: `IN_PROGRESS`, текущий Macro 0 — определение
-этапа и лицензионная политика; новые анализаторы ещё не реализованы.
-Подробные основания закрытия и принятая политика Graphify `REBUILD_POLICY` —
+Licensing & Product Validation: `IN_PROGRESS`.
+Текущий статус разработки, подробные основания закрытия предыдущих этапов
+и принятая политика Graphify `REBUILD_POLICY` —
 в [ROADMAP](docs/ROADMAP.md).
 
 ## Поддерживаемая среда
@@ -135,9 +135,14 @@ uv run pre-commit run --all-files
 uv run fakedetector --help
 ```
 
-Источники истины: [PROJECT](docs/PROJECT.md), [CONTRACTS](docs/CONTRACTS.md),
-[ROADMAP](docs/ROADMAP.md), [REFERENCES](docs/REFERENCES.md) и
-[CHANGELOG](docs/CHANGELOG.md).
+Источники истины по областям: [AGENTS](AGENTS.md) — процесс работы агента,
+[PROJECT](docs/PROJECT.md) — архитектура и продуктовые политики,
+[CONTRACTS](docs/CONTRACTS.md) — интерфейсы и данные,
+[METHODS](docs/METHODS.md) — принятая методология,
+[REFERENCES](docs/REFERENCES.md) — provenance/licensing,
+[ROADMAP](docs/ROADMAP.md) — план и статус.
+[CHANGELOG](docs/CHANGELOG.md) хранит историю;
+[research](docs/research/README.md) — исследовательские свидетельства.
 
 ## Лицензия
 

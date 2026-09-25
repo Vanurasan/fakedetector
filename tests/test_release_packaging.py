@@ -147,6 +147,7 @@ def test_sdist_wheel_metadata_entry_point_and_resources(
         assert {
             "fakedetector/analyzers/_image_metadata.py",
             "fakedetector/analyzers/_image_copy_move.py",
+            "fakedetector/analyzers/_image_jpeg_dq.py",
             "fakedetector/analyzers/_audio_pcm.py",
             "fakedetector/analyzers/_video_frames.py",
         } <= names
@@ -186,10 +187,24 @@ def test_sdist_wheel_metadata_entry_point_and_resources(
         from fakedetector.analyzers._catalog import (
             _built_in_analyzer_registrations, _resolve_worker_definition,
         )
+        from fakedetector.analyzers import _image_jpeg_dq
         from fakedetector.app import create_app
         from fakedetector.config.models import AppConfig
         assert Path(fakedetector.__file__).is_relative_to(Path(sys.argv[1]))
-        assert len(_built_in_analyzer_registrations()) == 4
+        assert sorted(
+            (item.analyzer_id, item.analyzer_version)
+            for item in _built_in_analyzer_registrations()
+        ) == [
+            ("audio_pcm_quality", "1.0.0"),
+            ("image_copy_move_correspondence", "1.0.0"),
+            ("image_jpeg_double_quantization", "1.0.0"),
+            ("image_metadata_consistency", "1.0.0"),
+            ("video_sampled_frame_quality", "1.0.0"),
+        ]
+        assert Path(_image_jpeg_dq.__file__).is_relative_to(Path(sys.argv[1]))
+        dq = _resolve_worker_definition("stage12.image_jpeg_double_quantization.v1")
+        assert dq is not None
+        assert dq.factory is _image_jpeg_dq.ImageJpegDoubleQuantizationAnalyzer
         assert _resolve_worker_definition("framework_test.image") is None
         config = AppConfig.model_validate_json(Path(sys.argv[2]).read_bytes())
         app = create_app(config)

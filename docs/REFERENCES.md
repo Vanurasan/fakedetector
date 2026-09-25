@@ -7,6 +7,20 @@
 
 Правило проекта: **NO PROVENANCE — NO ANALYZER**.
 
+Этот реестр владеет provenance/licensing и фактами о внешних источниках:
+публикациях, реализациях, библиотеках, моделях/весах, datasets, executables и
+других компонентах. Конкретные принятые forensic-методы принадлежат `METHODS.md`,
+общие интерфейсы — `CONTRACTS.md`, план и статус — `ROADMAP.md`.
+
+`RESEARCH_REFERENCE` не означает принятие production-метода. Научная ссылка
+может обосновывать метод, но сама по себе не утверждает пороги, применимость
+или finding semantics FakeDetector. Принятые записи `METHODS.md` ссылаются на
+стабильные IDs записей REFERENCES (или существующие постоянные якоря разделов),
+где это применимо. Исследовательские сравнения хранятся по политике
+`research/README.md`; ни отчёт, ни provenance-запись сами не разрешают реализацию.
+Описания существующих методов ниже служат контекстом происхождения, не заменяют
+методологическую спецификацию. Лицензионные выводы этим разграничением не меняются.
+
 Реальный анализатор не считается завершённым, пока для всех применимых внешних
 методов и реализаций не зафиксированы их происхождение, точная версия и лицензия.
 Происхождение метода и происхождение реализации указываются раздельно:
@@ -518,6 +532,406 @@ Windows Job Object RAM quota не реализована. Риск native alloca
 общего RSS с parent и нескольких одновременных задач перенесён в M1-G.
 Installed-wheel проверка M1-B встроена в `scripts/verify_release_package.py`;
 strict clean-tree certification остаётся отдельной проверкой M1-G.
+
+## M2-R1 — исследование JPEG DQ/grid, 2026-09-23
+
+Все записи ниже имеют категорию **RESEARCH_REFERENCE**, итог допуска —
+**только исследование**. Проверены агентом 2026-09-23 по указанным первичным
+источникам; owner acceptance метода отсутствует. Применение в предложениях —
+[METHODS.md](METHODS.md#кандидаты-stage-12--macro-2), сравнение —
+[исследовательский отчёт](research/2026-09-23-jpeg-dq-grid-method-selection.md).
+
+Статьи/стандарты цитируются, а не включаются в wheel, ZIP или репозиторий.
+Текст, иллюстрации, код, datasets и демонстрационные изображения не копируются
+в продукт. Для всех записей: моделей/весов нет; внешние datasets в M2-R1 не
+использовались, лицензии данных из экспериментов авторов не считаются допуском
+проектного корпуса. Patent clearance не проводился; ссылка и собственная
+реализация не доказывают отсутствие IP-ограничений. Неустановленные права
+повторного распространения не трактуются как разрешённые.
+
+<a id="jpeg-t81"></a>
+
+### JPEG-T81 — стандарт JPEG
+
+- Авторы: CCITT/ITU-T и ISO/IEC JTC 1; *Digital compression and coding of
+  continuous-tone still images — Requirements and guidelines*, 1992;
+  Recommendation T.81 / ISO/IEC 10918-1:1994.
+- Источник: [T.81, PDF на W3C](https://www.w3.org/Graphics/JPEG/itu-t81.pdf).
+- Использовано: Annex A/F/G/B — 8×8 DCT, квантование, components/sampling,
+  последовательный и progressive режимы, DQT selectors. Header хранит текущие
+  таблицы, не журнал предыдущих сохранений. Quality label не заменяет DQT.
+- Implementation source: не применяется, стандарт не код. Лицензия текущего
+  `pyjpegio==0.3.0` отдельно проверена в записи Macro 1 выше; допуск стандарта
+  для чтения не разрешает перепубликовать PDF или чужой decoder.
+
+<a id="jpeg-pf04"></a>
+
+### JPEG-PF04 — гистограммная периодичность DQ
+
+- Alin C. Popescu, Hany Farid. *Statistical Tools for Digital Forensics*.
+  Information Hiding 2004, LNCS 3200, pp. 128–147, 2004.
+- [Авторский PDF](https://farid.berkeley.edu/downloads/publications/ih04.pdf),
+  [DOI 10.1007/978-3-540-30114-1_10](https://doi.org/10.1007/978-3-540-30114-1_10).
+- Прочитан §3, особенно §§3.2–3.3: периодическое перераспределение histogram
+  bins, спектральные пики и вырожденные отношения квантов. Демонстрации статьи
+  не задают переносимый рабочий порог FakeDetector. В статье для вывода
+  используется floor; rounding-модель предложения обозначена отдельно.
+- Implementation source: код не использован. Право коммерческого копирования
+  текста/кода не установлено; научное цитирование не означает такую лицензию.
+
+<a id="jpeg-lf03"></a>
+
+### JPEG-LF03 — первичная таблица и неоднозначность
+
+- Jan Lukáš, Jessica Fridrich. *Estimation of Primary Quantization Matrix in
+  Double Compressed JPEG Images*. Digital Forensic Research Workshop, 2003.
+- [Авторский PDF, SUNY Binghamton](https://ws2.binghamton.edu/fridrich/Research/Doublecompression.pdf).
+- Прочитаны §§2–4: missing values, peak/valley и double peaks, зависимость
+  от q1/q2, округления и реализации DCT; первичная таблица восстанавливается
+  не во всех случаях. В работе сопоставляются оценочные подходы, включая
+  neural-network classifier; этот classifier не предлагается для Stage 12.
+- Implementation source: отсутствует; ни код, ни обученные параметры не взяты.
+  Права на их коммерческую поставку не проверены; запись — только ссылка.
+
+<a id="jpeg-pf08"></a>
+
+### JPEG-PF08 — обучение на гистограммных признаках
+
+- Tomáš Pevný, Jessica Fridrich. *Estimation of Primary Quantization Matrix
+  for Steganalysis of Double-Compressed JPEG Images*. SPIE 6819, 681911, 2008.
+- [Авторский PDF](https://ws2.binghamton.edu/fridrich/Research/paper_3_color.pdf),
+  [DOI 10.1117/12.759155](https://doi.org/10.1117/12.759155).
+- Использованы abstract и описание feature/classifier pipeline: low-frequency
+  DCT histograms для SVM detection/primary-step estimation. Это альтернатива
+  простому измерению, требующая обученного decision boundary; она не становится
+  детерминированным безобучающим порогом только из-за фиксированного inference.
+- Implementation source: отсутствует. Код, модели, training corpus и их права
+  не проверены и не допускаются этой записью.
+
+<a id="jpeg-bp12"></a>
+
+### JPEG-BP12 — aligned/non-aligned likelihood maps
+
+- Tiziano Bianchi, Alessandro Piva. *Image Forgery Localization via
+  Block-Grained Analysis of JPEG Artifacts*. IEEE Transactions on Information
+  Forensics and Security 7(3), pp. 1003–1017, 2012.
+- [DOI 10.1109/TIFS.2012.2187516](https://doi.org/10.1109/TIFS.2012.2187516),
+  [авторская версия в Politecnico di Torino](https://iris.polito.it/retrieve/e384c42e-2465-d4b2-e053-9f05fe0a1d67/bian_TIFS2012_OA.pdf).
+- Прочитаны §§III–V, Algorithms 2/3, equations 18–22: отдельные A-DJPG и
+  NA-DJPG модели, likelihood maps, оценка q1/mixture и ROC-выбор operating point.
+  Отношение likelihood >1 не обеспечивает заданную production FPR.
+- Implementation source: отсутствует. Внешний MATLAB/code не копировался;
+  license такого кода не проверена. Собственная будущая реализация требует
+  отдельного точного профиля и provenance, не вывода лицензии из IEEE PDF.
+
+<a id="jpeg-niu19"></a>
+
+### JPEG-NIU19 — повторное сжатие с той же таблицей
+
+- Yakun Niu, Xiaolong Li, Yao Zhao, Rongrong Ni. *An enhanced approach for
+  detecting double JPEG compression with the same quantization matrix*.
+  Signal Processing: Image Communication 76, pp. 89–96, 2019.
+- [Страница издателя, abstract и открытый preview](https://www.sciencedirect.com/science/article/abs/pii/S0923596518309196),
+  [DOI 10.1016/j.image.2019.04.016](https://doi.org/10.1016/j.image.2019.04.016).
+- Использованы доступные abstract/introduction: repeated recompression и
+  random perturbation как отдельная семья для same-table случая; ограничение
+  при низком качестве. Полный алгоритм по paywalled частям не проверен;
+  production формулы и thresholds из него не заимствуются.
+- Implementation source: отсутствует; код, параметры, datasets и права
+  коммерческой поставки не проверены. Отказ от этой семьи в текущем scope
+  обусловлен требованием нового экспериментального codec pipeline, а не
+  утверждением, что задача same-table принципиально всегда неразрешима.
+
+<a id="jpeg-grid20"></a>
+
+### JPEG-GRID20 — локальная решётка по blocking artifacts
+
+- Tina Nikoukhah, Miguel Colom, Jean-Michel Morel, Rafael Grompone von Gioi.
+  *Local JPEG Grid Detector via Blocking Artifacts, a Forgery Detection Tool*.
+  Image Processing On Line 10, pp. 24–42, 2020.
+- [Издание, DOI 10.5201/ipol.2020.283](https://www.ipol.im/pub/art/2020/283/),
+  [полный текст](https://www.ipol.im/pub/art/2020/283/article_lr.pdf).
+- Прочитаны Algorithm 1, §§2–5: cross-difference (с указанием происхождения
+  от Chen/Hsu 2008), phase votes, binomial-tail NFA, epsilon=1, window support,
+  сложность и false grids от upsampling. Формулы native-coordinate/bounded
+  окон FakeDetector не приписываются авторам.
+- Статья помечена CC-BY-NC-SA; не копировать её текст/рисунки в коммерческий
+  продукт. Издание указывает **AGPL-3.0-or-later**, software v2.0, SWH directory
+  `ec361fe603bb131ceb72d7fb39cd6856c1f6c06c` для reference code.
+  [Авторский repository GOD](https://github.com/tinankh/GOD) использован только
+  как указатель реализации, не как источник кода. AGPL не запрещает коммерцию,
+  но интеграция/распространение требуют отдельного разбора обязательств;
+  этой задачей они не разрешены. Предлагается собственная реализация по
+  математическому описанию, без copying/translation reference source.
+
+<a id="jpeg-zero21"></a>
+
+### JPEG-ZERO21 — альтернативный grid detector
+
+- Tina Nikoukhah, Jérémy Anger, Miguel Colom, Jean-Michel Morel,
+  Rafael Grompone von Gioi. *ZERO: a Local JPEG Grid Origin Detector Based on
+  the Number of DCT Zeros and its Applications in Image Forensics*.
+  Image Processing On Line 11, pp. 396–433, 2021.
+- [Издание, DOI 10.5201/ipol.2021.390](https://www.ipol.im/pub/art/2021/390/),
+  [полный текст](https://www.ipol.im/pub/art/2021/390/article_lr.pdf).
+- Использованы описание метода и §3: оценка DCT zeros на возможных grid origins,
+  локальная/global проверка с NFA. Native coefficients только одной текущей
+  сетки не заменяют проверку всех фаз по decoded pixels.
+- Статья CC-BY-NC-SA; code v4.0 обозначен изданием AGPL-3.0-or-later, SWH
+  directory `71b30c873962f1725c6291aa5f08a5691bcb1af4`. Код не загружался и
+  не копировался; commercial redistribution/сетевой сценарий не допущены
+  этой записью. Предлагаемый продукт не включает ZERO, его изображения или
+  datasets. Не переносить лицензию существующего NumPy на чужой алгоритм/code.
+
+<a id="jpeg-m2r1-proposal"></a>
+
+### JPEG-M2R1-PROPOSAL — собственные измерительные профили
+
+- Методические источники: JPEG-PF04/LF03/BP12 и JPEG-GRID20; различия и
+  ограничения указаны в `METHODS.md`.
+- Method source для конкретных bounded diagnostics/sampling/aggregation:
+  **project-specific heuristic**.
+- Implementation source: **original FakeDetector implementation** — только
+  план будущей реализации; в M2-R1 реализация отсутствует, версии analyzer нет.
+  Будущий собственный код подчиняется корневому Apache-2.0; это не
+  перелицензирование статей или reference implementations.
+- Новые библиотеки, executable, models/weights, datasets отсутствуют.
+  Предполагаемые building blocks — уже существующие NumPy/Pillow/pyjpegio;
+  их отдельные version/license записи в этом реестре сохраняются.
+- Целевая поставка — существующий CPU-only Windows/Python профиль, без
+  добавленного внешнего кода. Before-release review должен проверить реальный
+  implementation diff, attribution и обязательства фактически используемых
+  артефактов; сейчас production/provenance acceptance не заявляется.
+
+<a id="m2-r3a-datasets"></a>
+## M2-R3A — кандидаты реального корпуса, 2026-09-24
+
+Инженерная проверка опубликованных условий для внутренней калибровки
+коммерчески применимого FakeDetector. Это не юридическое заключение и не
+принятие dataset в production. Методический план и сравнение находятся в
+[отчёте R3A](research/2026-09-24-jpeg-real-corpus-operating-point-design.md).
+Медиа не скачивались; прочитаны страницы и metadata. Никакие dataset files,
+производные изображения или внешние реализации не включаются в Git/поставку.
+Для R3B нужны per-record manifest, hashes и сохранённые условия выбранных файлов;
+проверка страницы набора не заменяет admission каждой записи. Права на
+изображённых людей/чужие произведения проверяются отдельно от copyright dataset.
+
+<a id="dataset-raise"></a>
+### DATASET-RAISE — не допущен для предполагаемой калибровки
+
+- Категория: `DATASET`, технически рассмотренный кандидат; MMLab, DISI,
+  University of Trento. Авторы: Dang-Nguyen, Pasquini, Conotter, Boato;
+  *RAISE – A Raw Images Dataset for Digital Image Forensics*, MMSys 2015.
+- Provenance: [официальный сайт](https://loki.disi.unitn.it/RAISE/),
+  [guide и форматы](https://loki.disi.unitn.it/RAISE/guide.html),
+  [правообладатель/контакт](https://loki.disi.unitn.it/RAISE/contact.html).
+  8156 camera-native фотографий; NEF и TIFF — связанные версии, не независимые
+  samples; три Nikon-модели, природные и бытовые сцены.
+- Условия: [download](https://loki.disi.unitn.it/RAISE/download.html) разрешает
+  non-commercial research/education с цитированием. Публичная загрузка и
+  исследовательское назначение не разрешают автоматически коммерческую калибровку.
+- Внутренняя калибровка FakeDetector: **требуется выяснение**, до письменного
+  разрешения/уточнения owner/legal использовать нельзя. Включение в CORE не разрешено.
+- Распространение исходников/производных: разрешение не установлено.
+  Публикация research results предусмотрена с цитированием в разрешённом режиме;
+  право коммерческого использования результатов требует отдельного выяснения.
+  Размер полной поставки заявлен ~350 GB; есть меньшие поднаборы.
+
+<a id="dataset-pixls-cc0"></a>
+### DATASET-PIXLS-CC0 — рекомендуемое отобранное подмножество
+
+- Категория: `DATASET`; PIXLS.US и индивидуальные авторы вкладов.
+  Provenance: [сайт/правила приёма](https://raw.pixls.us/),
+  [живой metadata-каталог](https://raw.pixls.us/json/getrepository.php?set=all).
+  Поставщик просит camera-native RAW, но есть разные режимы/лицензии; история
+  каждого master проверяется отдельно. Это camera-compatibility коллекция,
+  не случайная выборка пользователей FakeDetector.
+- Срез 2026-09-24: 2016 записей, из них 1870 с CC0 URL и 146 с другими
+  условиями; 925 точных make/model пар среди CC0, 922 без учёта регистра.
+  Показанные kB/MB дают ~55,740 GB при десятичном прочтении и ~58,448 GB при
+  двоичном; планировать ~60 GB без производных. Числа получены из metadata, не
+  подтверждают столько независимых сцен или устройств. Снимок/hash вне Git.
+- Лицензия выбранных записей: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
+  Внутренняя калибровка, коммерческое использование, копирование/адаптация и
+  распространение разрешены в пределах переданных copyright прав. Attribution
+  не является условием CC0, но URL/автор/hash сохраняются для provenance.
+- Изображения/производные и собственные агрегаты допускают публикацию в этих
+  пределах; CC0 не снимает privacy/trademark/чужие права. Не-CC0 записи не
+  входят в рекомендацию. Итог: **пригоден для указанного внутреннего сценария
+  после per-record проверки**, не blanket-разрешение на весь архив.
+
+<a id="dataset-vision"></a>
+### DATASET-VISION — рекомендуемая внешняя workflow-проверка
+
+- Категория: `DATASET`; CSP Lab, Department of Information Engineering,
+  University of Florence. Shullani, Fontani, Iuliani, Al Shaya, Piva,
+  *VISION: a video and image dataset for source identification*, 2017,
+  [DOI/статья](https://doi.org/10.1186/s13635-017-0067-2).
+- Provenance: [официальная поставка](https://lesc.dinfo.unifi.it/VISION/),
+  [dataset README](https://lesc.dinfo.unifi.it/VISION/README.txt).
+  11 732 native изображения, 34 427 с социальными версиями; 35 portable devices,
+  11 брендов. В scope только JPEG-изображения и их группы native/social,
+  не 1914 видео. Native не доказывает число внутренних JPEG-проходов камеры.
+- **Dataset — CC BY-SA 4.0**, как прямо указано в README, не CC BY 4.0 статьи.
+  [Условия лицензии](https://creativecommons.org/licenses/by-sa/4.0/)
+  допускают коммерческое использование и внутреннюю калибровку.
+- При передаче изображений/адаптаций сохранить attribution, ссылку на условия,
+  обозначение изменений, применимый ShareAlike; не вводить дополнительные
+  ограничения. Apache-2.0 собственного кода не перелицензирует фотографии.
+- Собственные агрегированные измерения без воспроизведения фото можно
+  публиковать с цитированием; существенное переиздание базы/адаптаций требует
+  отдельного рассмотрения ShareAlike/database rights. Итог: **пригоден для
+  внутренней workflow-проверки при выполнении условий**, не разрешение bundling.
+  Размер выбранных 600 групп ещё не измерен; план 2–10 GB с социальными версиями.
+
+<a id="dataset-openimages-v7"></a>
+### DATASET-OPENIMAGES-V7 — резервный challenge, не single-history corpus
+
+- Категория: `DATASET`; Google LLC — dataset/аннотации, авторы исходных
+  фотографий — права на изображения, CVDF — канал доставки.
+  [V7 description/licensing](https://storage.googleapis.com/openimages/web/factsfigures_v7.html),
+  [download/metadata](https://storage.googleapis.com/openimages/web/download_v7.html).
+  Около 9 млн разнообразных изображений; JPEG-поставка не гарантирует ни
+  native resolution, ни известную JPEG-историю, ни physical device ID.
+- Фото заявлены CC BY 2.0; аннотации — CC BY 4.0. Издатель прямо не гарантирует
+  лицензию каждого фото и требует самостоятельной проверки. `OriginalURL`,
+  `OriginalLandingURL`, `License`, `Author`, `Title`, `OriginalMD5/Size`
+  позволяют документировать конкретную запись, но сами не заменяют проверку.
+- По [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) коммерческая
+  калибровка и распространение фото/адаптаций возможны с attribution и
+  применимым указанием изменений; сохранить предоставленные title/notices,
+  не вводить ограничений сверх лицензии. Неясные записи **непригодны до
+  уточнения прав**, даже для internal use.
+- Собственные агрегаты без фото отделять от перепубликации dataset. Итог:
+  **не выбран в основной acquisition** из-за unknown history и стоимости
+  per-image rights review; возможен отдельный challenge после проверки.
+  Подвыборка 1000 оригиналов: оценка 1–10 GB, уточнить по metadata.
+
+<a id="research-rawpy-m2r3b"></a>
+## M2-R3B — исследовательская RAW-проявка
+
+- Инструмент: `rawpy==0.27.1`, wrapper LibRaw; владелец явно разрешил его только
+  в отдельном внешнем research environment. В runtime FakeDetector, lock,
+  requirements, metadata и release artifacts инструмент не включён.
+- Источник: [официальный PyPI release](https://pypi.org/project/rawpy/0.27.1/),
+  binary wheel `rawpy-0.27.1-cp312-cp312-win_amd64.whl`, 921 403 bytes;
+  SHA-256 `e9d9c83cd0422e84b2052a02eb9d612839ac68dfae4d6d3751740e08024599b1`,
+  проверен по JSON PyPI и bytes скачанного wheel. Сборка из исходников не выполнялась.
+- rawpy — [MIT](https://github.com/letmaik/rawpy/blob/v0.27.1/LICENSE).
+  В поставке wheel присутствует [LICENSE.LibRaw, LGPL 2.1](https://github.com/letmaik/rawpy/blob/v0.27.1/LICENSE.LibRaw).
+  Загруженная библиотека сообщает LibRaw `0.22.1`; GPL2/GPL3 demosaic packs
+  отключены согласно `rawpy.flags`. Компоненты wheel не перелицензируются
+  лицензией собственного кода проекта. Wheel и license snapshots хранятся вне Git.
+- Среда измерения: Windows 11 x64, CPython 3.12.10, NumPy 2.5.2, Pillow 12.3.0;
+  binary-only установка во внешнее venv. Полные platform/build flags и hashes
+  находятся во внешнем provenance bundle.
+- [Параметры rawpy](https://letmaik.github.io/rawpy/api/rawpy.Params.html)
+  определяют значения postprocess. Фактически использованный единый профиль,
+  ограничения CFA, преобразование master и результаты воспроизведения
+  документированы в [отчёте пилота](research/2026-09-24-jpeg-real-corpus-pilot.md).
+  Embedded previews не являются masters; это offline research preprocessing,
+  не расширение production intake и не принятие DQ/Grid.
+
+## M2-BR1 — классические residual/resampling методы, 2026-09-24
+
+Все записи этого раздела — **RESEARCH_REFERENCE**, без допуска production-кода.
+Сравнение, фактически выполненные проверки и ограничения находятся в
+[исследовательском отчёте](research/2026-09-24-image-noise-resampling-method-selection.md).
+Из публикаций заимствованы концепции, не код, изображения, текст алгоритмов
+или их числовые пороги. Внешние реализации не запускались и не копировались.
+Публичность PDF/GitHub не означает разрешение включения в Apache-2.0 CORE.
+
+| ID | Первичный источник | Принцип и граница рассмотрения |
+|---|---|---|
+| `NR-MS09` | Babak Mahdian, Stanislav Saic. *Using noise inconsistencies for blind image forensics*, 2009. [DOI](https://doi.org/10.1016/j.imavis.2009.02.001), [авторский PDF в ÚTIA](https://library.utia.cas.cz/separaty/2009/ZOI/saic-using%20noise%20inconsistencies%20for%20blind%20image%20forensics.pdf) | Сегментация по локальным уровням аддитивного белого гауссова шума. Проверен индексируемый abstract/первая страница; полный PDF при повторном доступе недоступен. Детали воспроизведения не подтверждены |
+| `NR-CB13` | Miguel Colom, Antoni Buades. *Analysis and Extension of the Ponomarenko et al. Method, Estimating a Noise Curve from a Single Image*, 2013. [DOI/страница](https://doi.org/10.5201/ipol.2013.45), [полный текст](https://www.ipol.im/pub/art/2013/45/article.pdf) | Оценка по высокочастотным DCT-компонентам блоков с малой низкочастотной энергией; зависимость от яркости. Статья прочитана как источник концепции matching; опубликованные параметры не перенесены |
+| `RS-PF05` | Alin C. Popescu, Hany Farid. *Exposing Digital Forgeries by Detecting Traces of Resampling*, 2005. [DOI](https://doi.org/10.1109/TSP.2004.839932), [авторский PDF](https://farid.berkeley.edu/downloads/publications/sp05.pdf) | EM-оценка локального предсказателя, периодичность p-map, сравнение спектров. Полный текст; EM-профиль не реализован |
+| `RS-MS08` | Babak Mahdian, Stanislav Saic. *Blind Authentication Using Periodic Properties of Interpolation*, 2008. [DOI](https://doi.org/10.1109/TIFS.2004.924603), [авторский PDF в ÚTIA](https://library.utia.cas.cz/separaty/2008/ZOI/saic-blind%20authentication%20using%20periodic%20properties%20ofinterpolation.pdf) | Периодичность ковариации интерполированного сигнала и производных. Проверен индексируемый abstract/первая страница; полный PDF недоступен. Полная Radon-процедура не воспроизведена |
+| `RS-K08` | Matthias Kirchner. *Fast and Reliable Resampling Detection by Spectral Analysis of Fixed Linear Predictor Residue*, 2008. [DOI](https://doi.org/10.1145/1411328.1411333), [авторский PDF](https://ws.binghamton.edu/kirchner/papers/2008_MMSec.pdf) | Фиксированный линейный предсказатель вместо EM, спектр остатка и cumulative periodogram. Полный текст; собственный BR1 descriptor не объявляется реализацией статьи |
+| `RS-KG09` | Matthias Kirchner, Thomas Gloe. *On Resampling Detection in Re-compressed Images*, 2009. [авторский PDF](https://ws.binghamton.edu/kirchner/papers/2009_WIFS.pdf) | Преобразованные JPEG-следы могут усиливать resampling peaks; последующее сжатие подавляет сигнал и добавляет пики. Полный текст; вариант на JPEG-решётке не выбран |
+
+Лицензии и использование: `NR-MS09` — Elsevier, на первой странице all rights
+reserved; `NR-CB13` — на статье CC BY-NC-SA; `RS-K08` — ACM copyright с
+ограниченным разрешением personal/classroom copies; `RS-PF05`, `RS-MS08`,
+`RS-KG09` — научные IEEE-публикации, разрешительная лицензия реализации не
+установлена. Эти сведения о статьях не являются лицензиями программ.
+Ни архив IPOL C++, ни внешние forensic repositories не изучались как исходный
+код; упоминание доступной реализации не означает её лицензионный допуск.
+Никакие PDF, сторонние исходники, модели или веса в поставку не добавлены.
+
+### NR-RS-BR1-FIRSTPARTY — собственные исследовательские профили
+
+- Method source: project-specific heuristic, концептуальные основания — записи
+  выше. `N-MAD-MATCH-1` и `R-D2-MATCH-1` — собственные exploratory profiles,
+  не Noiseprint, PRNU или source-camera identification.
+- Implementation source: **FIRSTPARTY_CODE**, оригинальные внешние scripts
+  M2-BR1; повторно использованы private NumPy kernels Macro 1. Building blocks:
+  установленный NumPy 2.5.2, OpenCV 4.14.0 (`opencv-python-headless` из lock),
+  Pillow 12.3.0 из существующего окружения, Python 3.12.10 и standard library.
+  Новых dependencies, SciPy, ML, весов и runtime network нет.
+- Данные: 20 VISION native JPEG из уже reviewed exploration manifest M2-R3B,
+  не DQ calibration/validation/holdout; лицензия и attribution —
+  [DATASET-VISION](#dataset-vision--рекомендуемая-внешняя-workflow-проверка).
+  Native не означает отсутствие внутрикамерной обработки. Хэши исходников и
+  снимка условий сверены; crop/контролируемые преобразования явно записаны.
+- Фотографии, вырезки и contact sheet остаются внешними материалами с
+  CC BY-SA 4.0 и attribution CSP Lab/авторов VISION; не перелицензируются в
+  Apache-2.0. Четыре процедурных контроля созданы собственным кодом.
+  Manifest, scripts, результаты и hashes находятся только в заданном root
+  `FakeDetector-Work/research/M2-BR1-noise-resampling/`; в Git — отчёт и ссылки.
+- Итог допуска: только исследование. Production promotion, точная спецификация
+  Findings и thresholds требуют отдельного gate METHODS и приёмки владельца.
+
+<a id="thumbnail-m2cr1"></a>
+## M2-CR1 — EXIF thumbnail, 2026-09-24
+
+Исследовательский допуск, не production-метод. Проверка выполнена агентом
+2026-09-24 для внутреннего пилота; owner acceptance остаётся отдельно.
+Факты, применение и результаты — в
+[отчёте](research/2026-09-24-image-embedded-thumbnail-method-selection.md).
+Моделей/весов нет, чужой код не копировался; публикации и стандарты цитируются,
+не включаются в wheel/ZIP. Доступность текста не означает разрешения его
+переиздания или патентной лицензии.
+
+| Стабильный ID / категория | Источник, версия, URL | Точный использованный факт / граница |
+|---|---|---|
+| `TH-EXIF31` / `RESEARCH_REFERENCE` | CIPA / JEITA, *Exchangeable image file format for digital still cameras: Exif Version 3.1*, CIPA DC-008-Translation-2026 / JEITA CP-3451H, январь 2026; [официальная загрузка](https://www.cipa.jp/std/documents/download_e.html?CIPA_DC-008-2026-E), [каталог](https://www.cipa.jp/e/std/std-sec.html) | §4.5.8, 4.6.2, 4.6.5.1.6, 4.6.5.2.4–5, Table 21, §4.7.2 и 4.8.2: IFD1 JPEG/несжатый thumbnail, offset/length относительно TIFF, optional IFD1 Orientation, отсутствие thumbnail допустимо. Это семантика хранения, не forensic threshold |
+| `TH-TIFF6` / `RESEARCH_REFERENCE` | Aldus Corporation, *TIFF Revision 6.0*, 3 июня 1992; [спецификация, зеркало](https://image-js.github.io/tiff/media/TIFF6.pdf), [официальная навигация LibTIFF](https://libtiff.gitlab.io/libtiff/specification/index.html) | §2 и baseline RGB: II/MM, header 42, IFD count/entries/next, inline value против offset, порядок tags и strip storage. Старый JPEG-in-TIFF не расширяет наш Exif scope |
+| `TH-KF10` / `RESEARCH_REFERENCE` | Eric Kee, Hany Farid, Dartmouth College, *Digital Image Authentication from Thumbnails*, SPIE Electronic Imaging, 2010; [авторский PDF](https://erickee.com/papers/spie10.pdf), [авторский каталог](https://erickee.com/publications.html) | §2.1–2.2: crop/padding, pre/post filtering, contrast/brightness и JPEG входят в модель thumbnail generation. Исследуется подпись процесса генерации, не универсальный threshold content mismatch; модель/optimizer не переносились |
+| `TH-PIL123` / `IMPLEMENTATION_REFERENCE` | Pillow contributors, Pillow 12.3.0, 2026; [Image/Exif API](https://pillow.readthedocs.io/en/stable/reference/Image.html), [ImageFile API](https://pillow.readthedocs.io/en/stable/reference/ImageFile.html), [versioned ImageFile.py](https://github.com/python-pillow/Pillow/blob/12.3.0/src/PIL/ImageFile.py) | Изучены установленные `Image.py` (`Exif.get_ifd`) и `ImageFile.py` (`get_child_images`): IFD1 доступен, helper читает offset/length и декодирует children, но не реализует project provenance/budgets. MIT-CMU, copyright/notice требования — запись Pillow ниже; исходный код не копировался |
+| `TH-CV-NCC` / `IMPLEMENTATION_REFERENCE` | OpenCV contributors, документация OpenCV 4.13.0, просмотр 2026-09-24; [TemplateMatchModes](https://docs.opencv.org/4.13.0/df/dfb/group__imgproc__object.html) | Формула TM_CCOEFF_NORMED мотивирует mean-centered normalized correlation. Собственная реализация NumPy, не копия исходного кода. Пилот использует установленный OpenCV 4.14.0 для resize/blur; лицензии ниже |
+| `TH-JFIF` / `RESEARCH_REFERENCE` | ITU-T / ISO/IEC, *JPEG File Interchange Format (JFIF)*, T.871 (05/2011); [официальная запись](https://www.itu.int/rec/T-REC-T.871-201105-I/en) | JFIF — отдельная спецификация контейнерного thumbnail, не EXIF IFD1; в выбранный профиль не включён. Только классификация scope, не реализация |
+
+`TH-EXIF31`: официальный PDF получен через форму CIPA после чтения disclaimer;
+сохранён только снаружи, SHA-256
+`9cc36399a46ab7aa4a65473bb8a4945d3b044da739b8f16a01b0be11886dcff9`.
+Текст и стандарт не перелицензируются Apache-2.0; CIPA не предоставляет
+гарантии отсутствия чужих IP rights. Для текущего сценария допускается
+использование как исследовательского источника, не bundling документа.
+Исследовательское чтение PDF использовало изолированный `uv --no-project`
+environment с `pypdf[crypto]` только во внешнем `tmp/M2-CR1-thumbnail/`;
+это не runtime dependency проекта и не компонент поставки.
+
+### TH-M2CR1-FIRSTPARTY — профиль и данные пилота
+
+- Категории: собственная исследовательская реализация + `DATASET-VISION`.
+  THUMB-NCC-GRAD-1, bounded two-IFD prototype, fixture generator и tests написаны
+  для задачи; чужой parser/forensic implementation не копировался. Исходники,
+  предрегистрация, SHA-256 и результаты находятся во внешнем research root;
+  воспроизведение описано в отчёте. Допуск — только исследование.
+- 30 исходных VISION JPEG: 20 native сцен десяти devices и 10 natFBH экспортов.
+  Per-file URL, attribution, SHA-256, license URL и выбор до outcomes —
+  `provenance/sources.json`; права и обязанности — [DATASET-VISION](#dataset-vision).
+  Файлы извлечены по hash из ранее сохранённого `originals.zip`, не из BR1 crops.
+  Нет новой лицензии или blanket-допуска всего архива. Применяется CC BY-SA 4.0,
+  фотографии/производные не включены в Git/поставку.
+- Четыре synthetic источника созданы локально алгоритмически без внешних медиа;
+  генератор — собственный код. Производные VISION сохраняют исходные attribution,
+  условия и описание изменений; собственный код/агрегаты не перелицензируют фото.
+  Корпус не измеряет population FPR, native history и независимость сцен не
+  выводятся из имени файла. Коммерческий сценарий/переиздание фото ограничены
+  уже записанными условиями DATASET-VISION; отдельной проверки patent clearance
+  алгоритмов не проводилось. Production-допуск остаётся через METHODS gate.
 
 ## Общие библиотеки и инструменты
 

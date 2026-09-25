@@ -44,6 +44,12 @@ class _ImageMetadataDimensionMismatchCandidate(_CandidateBase):
     correlation_group: Literal["image_metadata_consistency"]
 
 
+class _JpegRecompressionPatternCandidate(_CandidateBase):
+    type: Literal["jpeg_recompression_pattern"]
+    localization: FileLocalization
+    correlation_group: Literal["image_jpeg_compression_history"]
+
+
 class _AudioFullScaleSaturationCandidate(_CandidateBase):
     type: Literal["audio_full_scale_saturation"]
     localization: TimeIntervalLocalization
@@ -86,6 +92,7 @@ class _RepeatedImageRegionCorrespondenceCandidate(_CandidateBase):
 
 type _TypedCandidate = Annotated[
     _ImageMetadataDimensionMismatchCandidate
+    | _JpegRecompressionPatternCandidate
     | _AudioFullScaleSaturationCandidate
     | _VideoSampleResolutionChangeCandidate
     | _RepeatedSampledVideoFramesCandidate

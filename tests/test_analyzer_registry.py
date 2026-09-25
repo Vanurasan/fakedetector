@@ -263,7 +263,7 @@ def test_registry_derives_requirements_only_from_enabled_analyzers() -> None:
     assert not image.forensic and not audio.forensic and not video.forensic
 
 
-def test_forensic_demand_is_closed_deduplicated_and_current_catalog_remains_inactive():
+def test_forensic_demand_is_closed_deduplicated_and_dq_only_is_active():
     cap = ForensicCapability
     request = PreprocessingRequirements(forensic=frozenset({cap.JPEG_COEFFICIENTS}))
     assert request.forensic == frozenset(
@@ -286,6 +286,7 @@ def test_forensic_demand_is_closed_deduplicated_and_current_catalog_remains_inac
     assert {r.analyzer_id for r in production} == {
         "image_metadata_consistency",
         "image_copy_move_correspondence",
+        "image_jpeg_double_quantization",
         "audio_pcm_quality",
         "video_sampled_frame_quality",
     }
@@ -297,9 +298,15 @@ def test_forensic_demand_is_closed_deduplicated_and_current_catalog_remains_inac
     registry = AnalyzerRegistry(config, production)
     for registration in production:
         assert registration.analyzer_version == "1.0.0"
-        assert registration.preprocessing_requirements == PreprocessingRequirements()
+        expected = (
+            request
+            if registration.analyzer_id == "image_jpeg_double_quantization"
+            else PreprocessingRequirements()
+        )
+        assert registration.preprocessing_requirements == expected
     for media_type in MediaType:
-        assert registry.preprocessing_requirements(media_type) == PreprocessingRequirements()
+        expected = request if media_type is MediaType.IMAGE else PreprocessingRequirements()
+        assert registry.preprocessing_requirements(media_type) == expected
 
 
 def test_registry_aggregates_future_demands_only_for_enabled_definitions():
