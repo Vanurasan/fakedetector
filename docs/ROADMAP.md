@@ -2484,7 +2484,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE / merged | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
 | 2 | Image Analyzer Expansion — Wave 1 | DONE / CLOSED | Один новый production-анализатор DQ; остальные кандидаты research-only/deferred; M2-HR6 PASS / OWNER ACCEPTED; M2H-D01 → Macro 6 |
-| 3 | Audio Analyzer Expansion — Wave 1 | IN_PROGRESS | M3-R1 DONE / OWNER ACCEPTED RESEARCH SELECTION; G1–G6 CLOSED / ACCEPTED, два measurement-only трека разрешены; production audio-метод не принят |
+| 3 | Audio Analyzer Expansion — Wave 1 | IN_PROGRESS | M3-R1/R2A/R2B приняты владельцем; M3-R3A DONE / OWNER ACCEPTED RESEARCH RESULT, ARC NEEDS_TARGETED_RESEARCH; далее запланирована более широкая natural voice-message / background-confound validation; ATD/ASC carry-forward сохранён, production audio-метод не принят |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
 | 6 | Correlation, Completeness & Result Semantics Review | NOT_STARTED | После 2–5: проверка выросшего набора без двойного учёта и завышения полноты; изменения дизайна только отдельным решением |
@@ -3511,6 +3511,63 @@ ATD/ASC carry-forward остаётся **OPEN / REQUIRED**, не разрешё�
 новых источников нет. Full quality barrier и strict certification не запускались.
 Review bundle с полным diff, включая untracked отчёт:
 `C:\Users\Vanur\Desktop\FakeDetector-Work\reviews\M3-R2B-arc\`.
+
+### M3-R3A — DONE / OWNER ACCEPTED RESEARCH RESULT
+
+2026-09-26 UTC / 2026-09-27 Asia/Krasnoyarsk, baseline
+`4f122da5eef74ade8d886942f843ce44bc8f11fe`, ожидаемая ветка и чистое начало.
+Выполнено ограниченное речевое исследование с разделением по источникам
+на **неизменённом frozen ARC v2**:
+LaMIT v2, четыре speakers ×25 phrases ×2 независимых takes, 200 originals;
+exploratory/holdout по два speakers, без пересечения groups/derivatives.
+Target20 speakers не достигнут; это controlled read speech, не реальные
+voice messages. Полные результаты, corpus feasibility, freeze и ограничения —
+в [отчёте M3-R3A](research/2026-09-26-audio-arc-speech-source-validation.md).
+
+727 cases завершены: 700 речевых сравнений и27 отдельных challenges.
+Natural cross max rho0.552478; minimum copy maximum0.905596. В каждом
+copy-классе98/100 cases имеют допустимую geometry; все98 сохранили true offset.
+Два short takes не исключены из знаменателя. 43 focused tests, семь frozen
+oracle groups и восемь cases×3 exact repeats (семь предобъявленных плюс
+highest global natural) — PASS; numeric failure нет.
+История доэкспериментального уточнения codec tail mapping сохранена отдельно;
+она не меняет ARC v2, corpus membership или split и не опирается на ARC outcomes.
+
+Явное owner acceptance исследовательского результата: **2026-09-27**.
+ARC-NCC-1 сохраняет **NEEDS_TARGETED_RESEARCH**. Владелец принял ограниченную
+поддержку гипотезы о меньшем сходстве независимого same-speaker/same-phrase
+re-speech по сравнению с copied physical waveform при frozen ARC v2.
+Четыре speakers, controlled read speech и два natural takes на фразу
+не представляют популяцию реальных voice messages.
+Generated periodic background на независимых takes даёт cross rho до0.965409;
+**PERIODIC / REPEATED BACKGROUND** — основной нерешённый confound:
+tone/music-like фон может давать correspondence, перекрывающую copied waveform.
+Observed gap не является production threshold, FPR/sensitivity claim или
+calibration result; **production calibration NOT AUTHORIZED**.
+Frozen ARC v2 и все его численные/поисковые правила сохранены; tuning не разрешён.
+
+Следующее запланированное исследование — **M3-R3B: более широкая natural
+voice-message / speech ARC validation с реалистичными background confounds**.
+Приоритеты: больше независимых speakers и natural takes, менее лабораторная
+речь и естественные voice-message условия; настоящий TV/music фон,
+room/ambient noise, periodic tones/hum и повторяющийся фоновый контент.
+Сохраняются source-level speaker grouping и holdout без speaker leakage;
+выбор корпуса с установленными правами и отдельный frozen plan ещё предстоят.
+Основной вопрос: сохраняет ли большой clean-speech gap между natural re-speech
+и copied waveform полезность в реалистичных voice-message условиях?
+Дополнительный вопрос: можно ли выявить доминирование periodic/repeated
+background как low-applicability / confounded, не изменяя ARC v2?
+Это план следующего исследования, не выполненная validation и не production rule.
+
+Production method acceptance, analyzer implementation/registration, Findings,
+risk/correlation и public contracts не изменены.
+ATD/ASC **NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD** остаются
+OPEN / REQUIRED; правило закрытия Macro3 сохранено, Macro3 — **IN_PROGRESS**.
+Review bundle: `FakeDetector-Work/reviews/M3-R3A-arc-speech/`;
+complete.diff включает untracked report. Full barrier/strict certification
+не запускались, Git mutations не выполнялись; staging/commit остаются владельцу.
+Исследовательский результат принят; запись решения и полный intended diff
+проверены владельцем; staging/commit остаются владельцу.
 
 ## Macro 6 — корреляция и смысл результата
 

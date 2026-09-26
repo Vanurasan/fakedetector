@@ -188,6 +188,35 @@ Production method acceptance, thresholds, Finding,
 analyzer implementation/registration и статистическая независимость не заявляются.
 Обязательства ATD/ASC не разрешены; их статусы и правило закрытия Macro 3 сохранены.
 
+**M3-R3A — DONE / OWNER ACCEPTED RESEARCH RESULT; owner acceptance: 2026-09-27.**
+ARC-NCC-1 сохраняет **NEEDS_TARGETED_RESEARCH**; принят исследовательский
+результат, а не production-метод.
+[Речевой pilot](research/2026-09-26-audio-arc-speech-source-validation.md)
+использовал неизменённый frozen v2, четыре speakers LaMIT, 25 фраз и два
+независимых takes (200 originals), speaker-disjoint exploratory/holdout 2/2.
+На определённых размеченных cross-сравнениях natural max rho=0.552478 против
+minimum copy maximum=0.905596; 98 из100 cases каждого copy-класса имели
+допустимую geometry и сохранили истинный offset; два коротких source takes
+остались abstentions.
+Это 727 лабораторных fixtures, а не 727 независимых speakers или реальные
+voice messages. Четырёх speaker groups и неполных natural challenges
+недостаточно для широкой validation; global outputs и support описаны отдельно.
+Generated tone на независимых takes повышает cross rho до0.965409:
+периодический / повторяющийся фон — основной нерешённый confound, без
+forensic-вердикта; generated tone/music-like фон может давать correspondence,
+перекрывающую наблюдения copied waveform.
+Владелец принял ограниченную поддержку рабочей гипотезы: независимое повторное
+произнесение той же фразы тем же человеком существенно менее похоже, чем копия
+физического waveform, при frozen ARC v2. Четыре speakers, controlled read speech
+и только два natural takes на фразу не представляют популяцию реальных
+voice messages. Observed separation не является production threshold,
+FPR/sensitivity claim или результатом calibration.
+Frozen ARC v2 сохранён без изменений: формула, compensated accumulation,
+normalization, descriptor, NCC, guard, search bounds, caps, support, ties
+и channel behavior. Tuning и production calibration не разрешены;
+production Decision Rules / thresholds не созданы, production acceptance нет.
+ATD/ASC carry-forward сохранён без разрешения обязательств.
+
 ## Кандидаты Stage 12 / Macro 2
 
 DQ-HIST-1 / DQ-R3C-1 для `image_jpeg_double_quantization@1.0.0` принят

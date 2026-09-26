@@ -108,6 +108,44 @@ Choice с NonCommercial лицензией не использован. Librosa 
 копируется и library не устанавливается; ссылка использована только для provenance.
 Неизменённые runtime building blocks сохраняют ранее записанные лицензии.
 
+<a id="audio-m3r3a-lamit"></a>
+
+## M3-R3A — LaMIT: независимые повторные произнесения
+
+**M3-SP-01 / DATASET.** Проверка источника: **2026-09-26 UTC**.
+[LaMIT v2, Mendeley Data, DOI 10.17632/sjwb9hymhn.2](https://data.mendeley.com/datasets/sjwb9hymhn/2).
+Attribution: Maria-Gabriella Di Benedetto, Luca De Nardis,
+Stefanie Shattuck-Hufnagel, Jeung-Yoon Elizabeth Choi; LaMIT database v2.
+Поставщик явно указывает [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/):
+разрешены использование, производные и распространение, включая коммерческое,
+с attribution, ссылкой на лицензию и обозначением изменений, без endorsement.
+Права личности и сторонних правообладателей этим не расширяются.
+
+Provider description и README подтверждают: четыре speakers, 100 предложений,
+по два произнесения в разных recording sessions. Из 800 уникальных WAV выбран
+outcome-blind subset: все четыре speakers, 25 phrase IDs (1,5,…,97), оба takes;
+200 файлов, mono PCM16 / 44.1 kHz. Одинаковые WAV в каталогах Audio и
+Audio_and_labels не считаются независимыми takes. Исходные SHA-256 сверены
+с provider metadata; speaker IDs в результатах непрозрачные S01–S04.
+Независимость исполнений основана на протоколе поставщика, не только hashes.
+
+Фактическое использование: внешний measurement-only workspace M3-R3A,
+штатная M1-подготовка, лабораторные paired fixtures и controlled derivatives.
+Это итальянская studio/read speech, не корпус реальных voice messages.
+Голоса, source metadata и производные не входят в Git и не распространяются;
+production dataset/runtime dependency не создаётся, код корпуса не заимствован.
+Изменения данных и пределы использования — в
+[отчёте M3-R3A](research/2026-09-26-audio-arc-speech-source-validation.md).
+
+External root: `FakeDetector-Work/research/M3-R3A-arc-speech/`.
+`corpus/manifest.json` содержит все 200 source hashes, provider IDs/URLs и
+speaker/phrase/take mapping; SHA-256 manifest:
+`501095c3e26a0797adfc86e8919a9ed7248c28aa0bf79826d93b60a674077f4d`.
+Snapshots `provenance/lamit-provider.json`, `lamit-README.txt`, `CC-BY-4.0.html`
+и `verified-scope.json` сохраняют лицензию, attribution и intended use.
+Хэши provider/README/license snapshots и измерительных scripts входят в
+external predeclaration SHA manifest.
+
 ## Политика сторонних материалов Stage 12
 
 Принятое направление — `PROJECT.md` §20; план допуска методов — `ROADMAP.md`.
