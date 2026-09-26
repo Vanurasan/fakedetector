@@ -137,8 +137,9 @@ M2-CR1: DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE; thumbnail — RESEARCH_ONLY / WE
 Проверка closure commit: полный quality barrier и strict certification на clean committed SHA dbc24e32c028808f599a7d9982f6776cfe014b3c — PASS; оставшихся проверок Macro 2 нет
 Слияние Macro 2: PR #67 merged в main как dee248b6ea2d7054c4e30d95c114d123a77918df; tree совпадает с сертифицированным closure tree; merge commit отдельно не сертифицировался
 M3-R1: DONE / OWNER ACCEPTED RESEARCH SELECTION (2026-09-26); production audio-метод не принят
-Следующий активный трек Macro 3: ARC-NCC-1 measurement research; без заявления статистической независимости; G1–G6 CLOSED / ACCEPTED
+Следующий разрешённый scope Macro 3: speech/voice-message source-level validation ARC-NCC-1 на frozen v2; natural re-speech vs copied waveform; production calibration NOT AUTHORIZED; G1–G6 CLOSED / ACCEPTED
 M3-R2A: DONE / OWNER ACCEPTED RESEARCH RESULT (2026-09-26); production acceptance отсутствует
+M3-R2B: DONE / OWNER ACCEPTED RESEARCH RESULT (2026-09-26); ARC-NCC-1 — READY_FOR_LARGER_VALIDATION, только research readiness; статистическая независимость не установлена
 Обязательный carry-forward Macro 3: ATD-LOCAL-1 targeted research — OPEN / REQUIRED; ASC-TV-1 targeted research — OPEN / REQUIRED; каждый требует явного решения владельца перед закрытием Macro 3 (см. [правило закрытия](#audio-m3-required-carry-forward))
 Будущие работы: Stage 12 Macros 4–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры принятого DQ scope M2-A: отсутствуют; остальные методы требуют собственных gates
@@ -3432,6 +3433,84 @@ ARC здесь не исследовался, ABN/AMC не менялись. Mac
 Полный quality barrier и strict certification не запускались по docs/research
 scope. Bundle включает весь diff и untracked отчёт:
 `C:\Users\Vanur\Desktop\FakeDetector-Work\reviews\M3-R2A-transition\`.
+
+### M3-R2B — DONE / OWNER ACCEPTED RESEARCH RESULT
+
+Явное owner acceptance от **2026-09-26**: исследовательский результат принят;
+production method acceptance отсутствует.
+
+2026-09-26, baseline `fe092c43b86115c8ba69e14c940a737215ce5665`, ожидаемая
+ветка, чистое committed начало. Выполнен measurement-only прототип ARC-NCC-1
+по M3-R1 §§3,7; формулы, нормализация, search/support bounds и numeric guard
+не изменены. 80 cases завершены: 45 controlled одной lineage, 35 real/derived
+пяти ранее проверенных source groups. Слой controlled не объединён с real.
+28/28 допустимых controlled truth cases и 30/30 real-derived truth cases прошли
+retrieval и дали истинный offset; один overlapping controlled truth вне profile.
+Это не population recall, forensic detection или production calibration.
+Benign loops/повторные фразы/tones дают rho=1. Полные ограничения, exact/near,
+localization, caps и ресурсы — в
+[отчёте M3-R2B](research/2026-09-26-audio-repeated-segment-measurement-prototype.md).
+
+Первая реализация остановилась на numeric failure ordinary prefix sums;
+компенсированное суммирование исправило арифметическую реализацию без изменения
+профиля. История не перезаписана, все 80 cases выполнены исправленной реализацией.
+43 existing focused tests, семь групп arithmetic oracles, 12 × 3 exact repeats —
+PASS. Максимальный ARC wall 2.365 s; process-lifetime peak 82 096 128 bytes,
+без утверждения hard/concurrent bound или учёта child FFmpeg peak.
+
+Принятый исследовательский outcome: **READY_FOR_LARGER_VALIDATION**.
+
+<a id="audio-m3r2b-speech-validation"></a>
+
+**Следующее разрешённое исследование:** speech-dominant / voice-message
+source-level validation ARC-NCC-1 на frozen v2. Главный вопрос — различимость
+распределений измерений **NATURAL RE-SPEECH VS COPIED WAVEFORM**: тот же человек
+естественно повторяет слово/фразу в независимых takes, либо один физически
+записанный речевой сегмент скопирован/повторно использован. Разрешённые ранее
+контролируемые gain/codec/noise transformations остаются в исследовательском scope.
+Текущий M3-R2B это различение не доказал; следующая validation ещё не выполнена.
+
+Обязательные концептуальные классы:
+
+1. Тот же speaker / та же phrase / независимые natural takes.
+2. Тот же speaker / копия физического waveform segment.
+3. Контроли с другой phrase.
+4. Контроли с другим speaker, где полезно.
+5. Копия с разрешёнными controlled transformations.
+6. Естественные pauses/breaths/repeated short words.
+7. Background music/TV/tone/ambience challenge cases.
+
+Natural re-speech — действительно отдельные записи/takes, не копии и не
+time-shifted derivatives. Производные одной записи не независимые source trials.
+Обязательна speaker/source grouping; если позднее вводятся calibration/validation/
+holdout splits, группы не должны пересекать их границы. Новый corpus допускается
+только после проверки прав.
+
+Music, tones, alarms, loops, ambience и прочие non-speech repeats остаются
+документированными challenge/out-of-domain cases, **не основной calibration
+population** следующей validation. Высокая rho не означает suspicious manipulation.
+Это сужение следующего исследовательского вопроса, не всего product scope.
+
+Владелец принял численно исправленную реализацию финального M3-R2B как **frozen
+ARC v2** для следующей validation. Сохраняются формула, compensated float64
+accumulation, normalization, numerical guard, descriptor, retrieval/search bounds,
+candidate caps, overlap exclusions, support, ties и channel behavior. Настройка
+после будущих outcomes запрещена; история численной коррекции сохраняется.
+
+**Production calibration: NOT AUTHORIZED.** Допустимы сравнение распределений и
+оценка разделимости; production rho/descriptor threshold, severity, Finding type,
+suspicious/not-suspicious decision и risk contribution требуют отдельного
+последующего явного owner gate. Наблюдаемый gap автоматически не становится порогом.
+Production method acceptance, analyzer implementation/registration и новая
+production correlation semantics не разрешены. Запись решения и полный intended diff проверены владельцем;
+staging/commit остаются владельцу.
+
+ATD/ASC carry-forward остаётся **OPEN / REQUIRED**, не разрешён этим исследованием;
+ранее записанное [условие закрытия](#audio-m3-required-carry-forward) действует
+без изменения. Macro 3 и Stage 12 — **IN_PROGRESS**. REFERENCES сохранён:
+новых источников нет. Full quality barrier и strict certification не запускались.
+Review bundle с полным diff, включая untracked отчёт:
+`C:\Users\Vanur\Desktop\FakeDetector-Work\reviews\M3-R2B-arc\`.
 
 ## Macro 6 — корреляция и смысл результата
 

@@ -93,7 +93,7 @@
 | `audio_temporal_discontinuity` / ATD-LOCAL-1 | NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD | Локальные waveform/energy переходы; существующие precision samples и framing | Общее исследовательское семейство переходов; plosive/перкуссия/quality artifacts дают сходный response |
 | `audio_spectral_consistency` / ASC-TV-1 | NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD | TV нормированных magnitude spectra и отдельный flux; готовый M1 STFT | То же семейство, без независимого голоса; фонемы/ноты/EQ/codec меняют спектр |
 | `audio_background_noise_consistency` / ABN-FLOOR-1 | RESEARCH_ONLY / WEAK_SIGNAL | Описательные low-energy spectral floors; M1 STFT достаточен для измерений, но не для выделения фона | То же семейство условно; content/background matching не установлен, sensor noise/microphone identity не выводятся |
-| `audio_repeated_segment_correspondence` / ARC-NCC-1 | OWNER_ACCEPTED_FOR_MEASUREMENT_PROTOTYPE | Bounded descriptor retrieval и waveform NCC/support; M1 samples/STFT | Отдельный исследовательский трек повторов; легитимный loop неотличим по одному соответствию |
+| `audio_repeated_segment_correspondence` / ARC-NCC-1 | READY_FOR_LARGER_VALIDATION / OWNER ACCEPTED RESEARCH RESULT | Bounded descriptor retrieval и waveform NCC/support; M1 samples/STFT | Отдельный исследовательский трек повторов; легитимный loop неотличим по одному соответствию |
 | `audio_metadata_container_consistency` / AMC-RESP-1 | REJECT_DUPLICATE_RESPONSIBILITY / OWNER ACCEPTED NEGATIVE RESULT | Проверка пересечения validation, precision и timing обязанностей | Новое forensic-семейство не обосновано; invalid/unknown input не Finding |
 
 Владелец разрешил два отдельных measurement tracks: ATD/ASC измеряются раздельно
@@ -156,6 +156,37 @@ Owner-accepted prototype scope остаётся в силе; **production method
 и Findings не разрешены и не добавлены. Resource rejection
 Vibe Ace сохранён; владелец разрешил outcome-blind замену источника до измерений,
 без увеличения бюджета или изменения preprocessing.
+
+**M3-R2B — DONE / OWNER ACCEPTED RESEARCH RESULT; owner acceptance: 2026-09-26.**
+ARC-NCC-1: **READY_FOR_LARGER_VALIDATION**, только исследовательская готовность.
+В [отчёте ARC](research/2026-09-26-audio-repeated-segment-measurement-prototype.md)
+разделены 45 controlled cases одной lineage и 35 real/derived cases пяти source
+groups. Из 29 controlled truth cases один имеет запрещённое перекрытие; остальные
+28/28 прошли bounded retrieval и дали истинный offset. Это проверка correspondence
+на заданной матрице, не population recall и не обнаружение монтажа. Легитимные
+повторы и tones достигают rho=1; silence/constant не дают определённого NCC.
+Формулы, нормализация, support, caps и numeric guard M3-R1 сохранены. Ошибка
+накопления обычных prefix sums в первой реализации исправлена компенсированным
+суммированием; обе версии, остановленный запуск и независимая диагностика сохранены.
+Семь групп arithmetic oracles и 12 cases × 3 exact repeats прошли проверку.
+Владелец разрешил следующее source-level исследование в **speech-dominant /
+voice-message** domain. Главный контраст на уровне распределений измерений:
+**NATURAL RE-SPEECH VS COPIED WAVEFORM** — независимые естественные произнесения
+одним человеком того же слова/фразы против повторного использования одного
+физически записанного речевого сегмента. M3-R2B это различение ещё не доказал.
+Music/tones/alarms/loops/ambience сохраняются как challenge/out-of-domain cases,
+не основная calibration population следующего исследования; высокая rho сама
+по себе не означает suspicious manipulation. Область всего продукта не сужается.
+Для следующей validation принят frozen ARC v2 с compensated float64 accumulation;
+точная формула, нормализация, numeric guard, descriptor, search bounds/caps,
+overlap exclusions, support, ties и channel behavior сохраняются без настройки
+после будущих outcomes. Идентичность v2 и история исправления — в отчёте ARC;
+speaker/source grouping и план — в [ROADMAP](ROADMAP.md#audio-m3r2b-speech-validation).
+**Production calibration NOT AUTHORIZED.** Разрыв распределений не становится
+production threshold без отдельного последующего owner gate.
+Production method acceptance, thresholds, Finding,
+analyzer implementation/registration и статистическая независимость не заявляются.
+Обязательства ATD/ASC не разрешены; их статусы и правило закрытия Macro 3 сохранены.
 
 ## Кандидаты Stage 12 / Macro 2
 
