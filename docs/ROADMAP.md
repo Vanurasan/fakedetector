@@ -2484,7 +2484,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE / merged | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
 | 2 | Image Analyzer Expansion — Wave 1 | DONE / CLOSED | Один новый production-анализатор DQ; остальные кандидаты research-only/deferred; M2-HR6 PASS / OWNER ACCEPTED; M2H-D01 → Macro 6 |
-| 3 | Audio Analyzer Expansion — Wave 1 | IN_PROGRESS | M3-R1/R2A/R2B приняты владельцем; M3-R3A DONE / OWNER ACCEPTED RESEARCH RESULT, ARC NEEDS_TARGETED_RESEARCH; далее запланирована более широкая natural voice-message / background-confound validation; ATD/ASC carry-forward сохранён, production audio-метод не принят |
+| 3 | Audio Analyzer Expansion — Wave 1 | IN_PROGRESS | M3-R1/R2A/R2B/R3A приняты владельцем; M3-R3B DONE / OWNER ACCEPTED BLOCKED FEASIBILITY RESULT, owner gate CLOSED, broad validation отложена; следующий активный scope M3-R3C stress/challenge validation; ARC NEEDS_TARGETED_RESEARCH, ATD/ASC carry-forward сохранён, production audio-метод не принят |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
 | 6 | Correlation, Completeness & Result Semantics Review | NOT_STARTED | После 2–5: проверка выросшего набора без двойного учёта и завышения полноты; изменения дизайна только отдельным решением |
@@ -3568,6 +3568,76 @@ complete.diff включает untracked report. Full barrier/strict certificati
 не запускались, Git mutations не выполнялись; staging/commit остаются владельцу.
 Исследовательский результат принят; запись решения и полный intended diff
 проверены владельцем; staging/commit остаются владельцу.
+
+### M3-R3B — DONE / OWNER ACCEPTED BLOCKED FEASIBILITY RESULT
+
+Явное owner disposition: **2026-09-27**. Feasibility result принят;
+текущий owner gate **CLOSED** решением об отсрочке, corpus gate не пройден.
+
+2026-09-27, baseline `c1a86d17fba5372b10990a53ac546488e22f68ea`,
+ветка `feat/stage12-macro3-audio-analyzer-expansion-wave1`, чистое начало.
+Проверка существующих корпусов и возможности их совместного использования
+не установила пригодный primary natural voice-message корпус с проверенными
+правами, ≥12 speakers и ≥3 независимыми natural takes на repeated prompt.
+Измерительная часть **NOT_EVALUATED**; predeclaration не создана, corpus
+membership и split не заморожены. Это остановка по acquisition/scope gate,
+а не отрицательный экспериментальный outcome ARC.
+
+BanglaSER имеет достаточные заявленные counts, но enacted/denoised материал
+не принят молча за натуральную voice-message population. Другие ограничения
+кандидатов, источники и пределы поиска — в
+[отчёте M3-R3B](research/2026-09-27-audio-arc-voice-background-validation.md).
+Широкая source-level validation (≥12 speakers / ≥3 natural takes):
+**DEFERRED UNTIL CALIBRATION / PRODUCTION-READINESS RESEARCH**.
+Она **не требуется для текущей дипломной proof-of-concept фазы**.
+First-party acquisition сейчас **NOT AUTHORIZED / NOT REQUIRED**;
+first-party корпус не является требованием текущей дипломной фазы.
+Внешний recording plan (цель 20×5×3, натуральный фон отдельно) сохранён
+как будущий calibration/acquisition design; он не разрешает сбор сейчас.
+
+Первоначальный M3-R3B scope с independent / continuous / shared background
+слоями сохранён как отложенная работа. При её будущем возобновлении нужны
+проверка состава/прав/независимости, speaker/background grouping и хэшированная
+predeclaration до ARC outcomes; малый pilot/derivatives не закрывают broad gate.
+Frozen ARC v2 не изменён; ARC остаётся **NEEDS_TARGETED_RESEARCH**.
+Production calibration, thresholds, analyzer implementation/registration,
+Finding и automatic background gate не разрешены и не выполнены.
+ATD/ASC **NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD** остаются
+OPEN / REQUIRED; Macro 3 — **IN_PROGRESS**, правило закрытия сохранено.
+
+Review bundle: `FakeDetector-Work/reviews/M3-R3B-arc-voice/`, включая
+полный diff с untracked отчётом, corpus-feasibility, provenance-summary
+и first-party-recording-plan. Измерения, focused tests/oracles, full quality
+barrier и strict certification не запускались. Feasibility result принят;
+запись disposition и полный intended diff проверены владельцем;
+Git mutations не выполнялись, staging/commit остаются владельцу.
+
+<a id="audio-m3r3c"></a>
+
+### M3-R3C — следующий активный scope: ARC Diploma Stress & Challenge Validation
+
+Исследование запланировано, **ещё не выполнено**. Цель — описать, где frozen
+ARC v2 сохраняет correspondence известных копий и где высокое соответствие
+возникает на benign материале в дипломном proof-of-concept scope.
+
+- Разнообразные существующие speech recordings нескольких speakers и обычная
+  речь без известных copied segments; отсутствие известной копии не является
+  доказанной forensic ground truth подлинности.
+- Controlled copy-paste derivatives с известными parent/recipe: exact, gain,
+  supported codec round-trip и noise copies.
+- Music, repeated music, TV/speech background, ambience, hum, tones и
+  repeated/periodic background как stress/challenge слой.
+
+M3-R3C **не population calibration** и не требует same-speaker/same-phrase/
+three-take membership: этот вопрос ограниченно исследован в M3-R3A, а broad
+population validation явно отложена. Результат M3-R3A остаётся действительным
+только в его заявленном scope; stress cases не расширяют его автоматически.
+Source identity/provenance обязательны; предпочтителен явно rights-established /
+open материал. Controlled derivatives сохраняют точные parent/recipe hashes;
+raw media остаются вне Git. Frozen ARC v2 не меняется.
+Production calibration **NOT AUTHORIZED**, production threshold **NONE**;
+FPR claims и production analyzer не разрешены. ATD/ASC carry-forward не закрыт,
+Macro 3 остаётся **IN_PROGRESS**.
 
 ## Macro 6 — корреляция и смысл результата
 

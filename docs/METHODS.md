@@ -93,7 +93,7 @@
 | `audio_temporal_discontinuity` / ATD-LOCAL-1 | NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD | Локальные waveform/energy переходы; существующие precision samples и framing | Общее исследовательское семейство переходов; plosive/перкуссия/quality artifacts дают сходный response |
 | `audio_spectral_consistency` / ASC-TV-1 | NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD | TV нормированных magnitude spectra и отдельный flux; готовый M1 STFT | То же семейство, без независимого голоса; фонемы/ноты/EQ/codec меняют спектр |
 | `audio_background_noise_consistency` / ABN-FLOOR-1 | RESEARCH_ONLY / WEAK_SIGNAL | Описательные low-energy spectral floors; M1 STFT достаточен для измерений, но не для выделения фона | То же семейство условно; content/background matching не установлен, sensor noise/microphone identity не выводятся |
-| `audio_repeated_segment_correspondence` / ARC-NCC-1 | READY_FOR_LARGER_VALIDATION / OWNER ACCEPTED RESEARCH RESULT | Bounded descriptor retrieval и waveform NCC/support; M1 samples/STFT | Отдельный исследовательский трек повторов; легитимный loop неотличим по одному соответствию |
+| `audio_repeated_segment_correspondence` / ARC-NCC-1 | NEEDS_TARGETED_RESEARCH / OWNER ACCEPTED RESEARCH RESULT | Bounded descriptor retrieval и waveform NCC/support; M1 samples/STFT | Отдельный исследовательский трек повторов; легитимный loop неотличим по одному соответствию |
 | `audio_metadata_container_consistency` / AMC-RESP-1 | REJECT_DUPLICATE_RESPONSIBILITY / OWNER ACCEPTED NEGATIVE RESULT | Проверка пересечения validation, precision и timing обязанностей | Новое forensic-семейство не обосновано; invalid/unknown input не Finding |
 
 Владелец разрешил два отдельных measurement tracks: ATD/ASC измеряются раздельно
@@ -216,6 +216,27 @@ normalization, descriptor, NCC, guard, search bounds, caps, support, ties
 и channel behavior. Tuning и production calibration не разрешены;
 production Decision Rules / thresholds не созданы, production acceptance нет.
 ATD/ASC carry-forward сохранён без разрешения обязательств.
+
+**M3-R3B — DONE / OWNER ACCEPTED BLOCKED FEASIBILITY RESULT;
+owner disposition: 2026-09-27.** Текущий owner gate **CLOSED** решением
+об отсрочке; corpus gate не объявлен пройденным, новых измерений нет.
+[Проверка доступности корпуса](research/2026-09-27-audio-arc-voice-background-validation.md)
+не установила primary natural voice-message корпус с подтверждёнными правами,
+не менее 12 speakers и тремя независимыми natural takes на repeated prompt.
+Статус ARC-NCC-1 остаётся **NEEDS_TARGETED_RESEARCH**, результат измерительной
+части M3-R3B — **NOT_EVALUATED**. Это не новое свидетельство за или против ARC.
+Принятая ограниченная clean-speech гипотеза M3-R3A и основной нерешённый
+confound **PERIODIC / REPEATED BACKGROUND** сохранены. Frozen ARC v2,
+production-calibration prohibition и обязательства ATD/ASC не изменены;
+автоматический background/applicability gate не создан.
+Широкая source-level validation с ≥12 speakers / ≥3 natural takes имеет статус
+**DEFERRED UNTIL CALIBRATION / PRODUCTION-READINESS RESEARCH** и не требуется
+для текущей дипломной proof-of-concept фазы. First-party acquisition сейчас
+не разрешён и не обязателен; внешний recording plan сохранён на будущее.
+Следующий активный исследовательский scope — M3-R3C stress/challenge validation,
+его план и границы зафиксированы в [ROADMAP](ROADMAP.md#audio-m3r3c).
+Это не population calibration и не выполнение отложенной broad validation;
+production threshold/FPR claim не допускаются.
 
 ## Кандидаты Stage 12 / Macro 2
 
