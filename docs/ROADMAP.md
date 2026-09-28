@@ -2484,7 +2484,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE / merged | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
 | 2 | Image Analyzer Expansion — Wave 1 | DONE / CLOSED | Один новый production-анализатор DQ; остальные кандидаты research-only/deferred; M2-HR6 PASS / OWNER ACCEPTED; M2H-D01 → Macro 6 |
-| 3 | Audio Analyzer Expansion — Wave 1 | IN_PROGRESS | M3-R1/R2A/R2B/R3A приняты владельцем; M3-R3B disposition принят, broad validation отложена; M3-R3C DONE / OWNER ACCEPTED RESEARCH RESULT; ARC NEEDS_TARGETED_RESEARCH, следующий активный scope M3-R3D (планирование applicability/retrieval research); ATD/ASC carry-forward сохранён, production audio-метод не принят |
+| 3 | Audio Analyzer Expansion — Wave 1 | IN_PROGRESS | M3-R1/R2A/R2B/R3A приняты владельцем; M3-R3B disposition принят, broad validation отложена; M3-R3C DONE / OWNER ACCEPTED RESEARCH RESULT; ARC NEEDS_TARGETED_RESEARCH; M3-R3D-P DONE / OWNER ACCEPTED DESIGN RESULT; следующий M3-R3D-E AUTHORIZED / NOT YET EXECUTED; ATD/ASC carry-forward сохранён, production audio-метод не принят |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
 | 6 | Correlation, Completeness & Result Semantics Review | NOT_STARTED | После 2–5: проверка выросшего набора без двойного учёта и завышения полноты; изменения дизайна только отдельным решением |
@@ -3663,22 +3663,73 @@ Macro 3 остаётся **IN_PROGRESS**.
 
 <a id="audio-m3r3d"></a>
 
-### M3-R3D — следующий активный scope: ARC Applicability & Retrieval Competition Research
+### M3-R3D — ARC Applicability & Retrieval Competition Research
 
 Решение владельца от **2026-09-28** разрешает **планирование** M3-R3D.
-Исследование ещё не выполнено; оно должно начинаться с анализа текущих frozen
-ARC v2 outputs и существующих M1 representations, без tuning и выбора порогов.
+**M3-R3D-P — DONE / OWNER ACCEPTED DESIGN RESULT; owner acceptance: 2026-09-29.**
+На baseline `c60c76dab32eeac1bf8ce0e9cd2be9cc829e1c12`,
+в ожидаемой ветке и с чистым началом выполнен анализ сохранённых M3-R3C outputs.
+Новый ARC experiment, acquisition или изменение frozen v2 не выполнялись.
+[Design report](research/2026-09-29-audio-arc-applicability-retrieval-design.md)
+и внешний bundle `FakeDetector-Work/reviews/M3-R3D-arc-applicability/`
+содержат retrieval chain, concentration, сравнение вариантов и решение владельца.
 
-1. Можно ли описать, чем определяется сильная correspondence: foreground
-   speech, повторяющимся background, periodic structure или неоднозначной
-   смешанной поддержкой?
-2. Можно ли достаточно понять bounded retrieval competition, чтобы избежать
-   заполнения candidate cap периодическими парами без немедленной смены
-   ARC formula/search?
-3. Нужен ли отдельный метод applicability/background attribution?
-4. Если frozen v2 не решает retrieval failure без изменения candidate/search
-   поведения, определить минимальное обоснованное будущее изменение ARC v3
-   и **STOP / OWNER GATE до реализации**. ARC v3 сейчас не разрешён.
+1. Descriptive attribution известных fixtures доступна частично из outputs,
+   а semantic truth foreground/background требует masks/recipe. Надёжная
+   automatic attribution неизвестной записи не установлена.
+2. В cap stress21 eligible →20 nominated →0 retained true pairs: ranks518–585
+   вне cap64. Все64 возвращённые пары — background-only; 59/64 имеют один
+   coarse offset, после refinement все относятся к известной tone family.
+   Полная потеря truth происходит до NCC; post-attribution её не исправляет.
+3. Принята рекомендация: **COMBINED_ATTRIBUTION_AND_DIVERSIFICATION_STUDY_REQUIRED**.
+   Отдельный applicability method пока лишь возможный вариант; его necessity
+   не доказана. Concentration сама по себе не правило исключения true copies.
+4. **Gate принятия M3-R3D-P — CLOSED / OWNER ACCEPTED (2026-09-29).**
+   Принят design/evidence analysis, не production method или FPR/sensitivity
+   validation. ARC-NCC-1 остаётся **NEEDS_TARGETED_RESEARCH**.
+
+**Следующая активная задача: M3-R3D-E — ARC Attribution & Retention
+Diversification Experiment; AUTHORIZED / NOT YET EXECUTED (2026-09-29).**
+Владелец разрешил две связанные исследовательские части:
+
+- **A — frozen-v2 attribution study:** существующие M3-R3C cases/outputs и
+  существующие M1 representations в явно ограниченном scope. Fixture truth
+  используется только для оценки; production classifier и tuning cutoffs запрещены.
+- **B — retention diversification experiment:** разрешена внешняя research-only
+  реализация экспериментальных retention alternatives под `FakeDetector-Work`.
+  Меняется только выбор фиксированного retained budget из уже номинированного
+  candidate union. Frozen v2 остаётся неизменённым каноническим research baseline;
+  каждый experimental selector сравнивается с исходным frozen-v2 top64 behavior.
+  Называть experimental selector ARC v3 запрещено.
+
+Сохраняются descriptor, candidate generation, per-seed top4 nomination,
+seed cap256, candidate/NCC cap64, NCC formula, numerical arithmetic/guard,
+refinement delta ±4096, overlap/support/tie/channel behavior, текущие M1
+precision windows и preprocessing capabilities. Запрещены рост caps, расширение
+search bounds, full-duration scan вне текущих M1 representations, новый
+preprocessing/dependency и изменения executable-кода репозитория.
+Fixture/oracle speech/background masks разрешены **только для оценки**, не для
+управления selection. Новое media acquisition не разрешено и не требуется:
+используются только существующие M3-R3C evidence/corpus.
+
+**До любых новых retention/NCC outcomes** M3-R3D-E обязан зафиксировать точные
+experimental selectors, детерминированные grouping/selection procedure,
+ordering/tie behavior, attribution feature set, evaluation metrics, baseline
+comparison, включённые cases, resource protocol и falsification conditions.
+SHA-256 преддекларации вычисляется и записывается **до outcomes**. Настройка
+selector parameters после наблюдения outcomes запрещена. Преддекларация и
+эксперимент в этой acceptance-задаче не создавались и не выполнялись.
+
+**ARC v3 implementation — NOT AUTHORIZED.** Эксперимент может дать основания
+за или против будущего ARC-v3 gate; предлагаемые изменения ARC baseline или
+production/executable-кода репозитория требуют **STOP / OWNER GATE**.
+Production tuning/calibration, threshold selection, analyzer и Finding не разрешены.
+
+Все исходные M3-R3C evidence/review artifacts сохранены; новых источников нет.
+Docs-only проверки: `git diff --check`, полный intended diff с untracked report
+и итоговый status; tests/experiments/quality barrier/certification не запускались.
+Принятие design result записано по явному решению владельца;
+staging/commit остаются владельцу.
 
 Descriptor, formula, compensated accumulation, normalization, NCC, guard,
 search bounds, caps, overlap, support, ties и channels frozen v2 сохраняются.

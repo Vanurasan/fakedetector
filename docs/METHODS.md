@@ -270,6 +270,27 @@ Formula/search/caps/guard/support/channels не менялись. Production cal
 thresholds, method acceptance, analyzer/registration, Finding и risk/correlation
 изменения отсутствуют. ATD/ASC **REQUIRED CARRY-FORWARD** не разрешён.
 
+**M3-R3D-P — DONE / OWNER ACCEPTED DESIGN RESULT; owner acceptance: 2026-09-29.**
+[Анализ существующих M3-R3C outputs](research/2026-09-29-audio-arc-applicability-retrieval-design.md)
+разделяет waveform correspondence и attribution foreground/background.
+Attribution из существующих outputs — **PARTIAL**: информация позволяет
+описывать известные fixtures, но для неизвестной записи support, channels и lag
+concentration сами по себе не доказывают манипулированную речь.
+В cap stress20 true nominations имеют ranks518–585 и теряются на global
+distance ranking → cap64 до NCC;
+все64 retained pairs относятся к одной известной periodic tone family.
+Post-attribution не возвращает отброшенные пары, а concentration встречается
+и у настоящих копий. Владелец принял рекомендацию исследования:
+**COMBINED_ATTRIBUTION_AND_DIVERSIFICATION_STUDY_REQUIRED**; efficacy нового
+retention не проверена, но retention diversification research обосновано.
+Необходимость отдельного automatic applicability method — **UNCERTAIN**.
+Принят design result, не production method, labels/Decision Rule или
+FPR/sensitivity validation; analyzer/Finding не разрешены.
+ARC-NCC-1 сохраняет **NEEDS_TARGETED_RESEARCH**, frozen v2 неизменён;
+ARC v3 implementation и tuning/calibration не разрешены. Разрешённый владельцем
+исследовательский M3-R3D-E, ещё не выполненный, и его точные границы находятся
+в [ROADMAP](ROADMAP.md#audio-m3r3d).
+
 ## Кандидаты Stage 12 / Macro 2
 
 DQ-HIST-1 / DQ-R3C-1 для `image_jpeg_double_quantization@1.0.0` принят
