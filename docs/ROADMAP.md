@@ -2484,7 +2484,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE / merged | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
 | 2 | Image Analyzer Expansion — Wave 1 | DONE / CLOSED | Один новый production-анализатор DQ; остальные кандидаты research-only/deferred; M2-HR6 PASS / OWNER ACCEPTED; M2H-D01 → Macro 6 |
-| 3 | Audio Analyzer Expansion — Wave 1 | IN_PROGRESS | M3-R1/R2A/R2B/R3A приняты владельцем; M3-R3B DONE / OWNER ACCEPTED BLOCKED FEASIBILITY RESULT, owner gate CLOSED, broad validation отложена; следующий активный scope M3-R3C stress/challenge validation; ARC NEEDS_TARGETED_RESEARCH, ATD/ASC carry-forward сохранён, production audio-метод не принят |
+| 3 | Audio Analyzer Expansion — Wave 1 | IN_PROGRESS | M3-R1/R2A/R2B/R3A приняты владельцем; M3-R3B disposition принят, broad validation отложена; M3-R3C DONE / OWNER ACCEPTED RESEARCH RESULT; ARC NEEDS_TARGETED_RESEARCH, следующий активный scope M3-R3D (планирование applicability/retrieval research); ATD/ASC carry-forward сохранён, production audio-метод не принят |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
 | 6 | Correlation, Completeness & Result Semantics Review | NOT_STARTED | После 2–5: проверка выросшего набора без двойного учёта и завышения полноты; изменения дизайна только отдельным решением |
@@ -3614,19 +3614,41 @@ Git mutations не выполнялись, staging/commit остаются вл�
 
 <a id="audio-m3r3c"></a>
 
-### M3-R3C — следующий активный scope: ARC Diploma Stress & Challenge Validation
+### M3-R3C — DONE / OWNER ACCEPTED RESEARCH RESULT
 
-Исследование запланировано, **ещё не выполнено**. Цель — описать, где frozen
-ARC v2 сохраняет correspondence известных копий и где высокое соответствие
-возникает на benign материале в дипломном proof-of-concept scope.
+**2026-09-28**, baseline `7c8d334960c3975f836caaf01939281dd52f204f`, ожидаемая
+ветка `feat/stage12-macro3-audio-analyzer-expansion-wave1`, чистое начало.
+Выполнена **ARC Diploma Stress & Challenge Validation** на неизменённом frozen v2:
+184 cases, 8 speech recordings /7 speakers, 3 music и11 background groups.
+Явное owner acceptance: **2026-09-28** — приняты исследовательские свидетельства
+и failure map. ARC-NCC-1 сохраняет **NEEDS_TARGETED_RESEARCH**;
+production method acceptance, calibration и FPR/sensitivity validation отсутствуют.
 
-- Разнообразные существующие speech recordings нескольких speakers и обычная
-  речь без известных copied segments; отсутствие известной копии не является
-  доказанной forensic ground truth подлинности.
-- Controlled copy-paste derivatives с известными parent/recipe: exact, gain,
-  supported codec round-trip и noise copies.
-- Music, repeated music, TV/speech background, ambience, hum, tones и
-  repeated/periodic background как stress/challenge слой.
+- 96 ordinary controlled copies (exact/gain/MP3/noise, три lengths) сохранили
+  истинный offset/error0; отсутствие известной копии в originals не означает
+  forensic authenticity ground truth. Только4/8 speech originals дали rho:
+  остальные слишком коротки для двух nonoverlap2L.
+- Music excerpt достиг0.996936, shared background за независимой речью —0.945472,
+  periodic signals —1. В cap stress21 eligible/20 nominated/0 retained true pairs;
+  global rho1 относится только к тону. Все difficult cases сохранены.
+- Три full-source resource rejections учтены отдельно; заранее выбранные внешние
+  excerpt fixtures не означают нового preprocessing/full-duration acceptance.
+
+[Отчёт и failure map](research/2026-09-27-audio-arc-diploma-stress-validation.md)
+и `FakeDetector-Work/reviews/M3-R3C-arc-stress/` содержат полный intended diff,
+predeclaration, source/provenance, copy/benign/music/background/resource summaries.
+37 focused M1 tests,7 frozen oracle groups и8 групп ×3 exact repeats — **PASS**;
+numeric guard violations и ARC timeouts отсутствуют. Full quality barrier и
+strict certification не запускались, executable repo files не менялись.
+
+**Gate принятия M3-R3C — CLOSED / OWNER ACCEPTED (2026-09-28).**
+Владелец принял эффективность известных копий в проверенной geometry,
+неспецифичность высокого rho и отдельную проблему потери номинированной
+speech-copy при bounded candidate cap. Один порог не разрешает forensic
+interpretation; ARC пока не готов к tuning/calibration study.
+Разрешено планирование следующего M3-R3D, а не tuning или threshold selection.
+Frozen v2 не меняется; ARC v3 и новый automatic background gate не разрешены.
+Git mutations не выполнялись, staging/commit остаются владельцу.
 
 M3-R3C **не population calibration** и не требует same-speaker/same-phrase/
 three-take membership: этот вопрос ограниченно исследован в M3-R3A, а broad
@@ -3637,6 +3659,34 @@ open материал. Controlled derivatives сохраняют точные pa
 raw media остаются вне Git. Frozen ARC v2 не меняется.
 Production calibration **NOT AUTHORIZED**, production threshold **NONE**;
 FPR claims и production analyzer не разрешены. ATD/ASC carry-forward не закрыт,
+Macro 3 остаётся **IN_PROGRESS**.
+
+<a id="audio-m3r3d"></a>
+
+### M3-R3D — следующий активный scope: ARC Applicability & Retrieval Competition Research
+
+Решение владельца от **2026-09-28** разрешает **планирование** M3-R3D.
+Исследование ещё не выполнено; оно должно начинаться с анализа текущих frozen
+ARC v2 outputs и существующих M1 representations, без tuning и выбора порогов.
+
+1. Можно ли описать, чем определяется сильная correspondence: foreground
+   speech, повторяющимся background, periodic structure или неоднозначной
+   смешанной поддержкой?
+2. Можно ли достаточно понять bounded retrieval competition, чтобы избежать
+   заполнения candidate cap периодическими парами без немедленной смены
+   ARC formula/search?
+3. Нужен ли отдельный метод applicability/background attribution?
+4. Если frozen v2 не решает retrieval failure без изменения candidate/search
+   поведения, определить минимальное обоснованное будущее изменение ARC v3
+   и **STOP / OWNER GATE до реализации**. ARC v3 сейчас не разрешён.
+
+Descriptor, formula, compensated accumulation, normalization, NCC, guard,
+search bounds, caps, overlap, support, ties и channels frozen v2 сохраняются.
+Production calibration **NOT AUTHORIZED**, thresholds отсутствуют.
+M3-R3B broad source-level validation остаётся **DEFERRED UNTIL CALIBRATION /
+PRODUCTION-READINESS RESEARCH**, не обязательна для текущей дипломной фазы.
+ATD-LOCAL-1 и ASC-TV-1 сохраняют **NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD**;
+оба обязательства нерешённые, правило закрытия Macro 3 сохранено.
 Macro 3 остаётся **IN_PROGRESS**.
 
 ## Macro 6 — корреляция и смысл результата

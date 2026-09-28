@@ -95,7 +95,7 @@ Generated derivatives не становятся оригинальными untou
 | kevin-macleod-vibe-ace / `vibe-ace.mp3` | `14634cc7c6f825db857c1594ac8c609bf49321336f625bd6559a039644bfc9f6` |
 | sorohanro-freesound-77711 / `sorohanro-77711-hq.mp3` | `1aa175783edddd4db6aa0fdc26c1a0fa01dab19028c7b58eeb575eb66b1b06bf` |
 
-Vibe Ace остаётся только historical resource-boundary case и не является шестой
+В M3-R2A Vibe Ace остаётся только historical resource-boundary case и не является шестой
 measured source group. Для replacement использована предоставленная платформой
 lossy версия записи, не заявляется byte identity с uploaded lossless WAV.
 Все кандидаты фактической замены и preflight записаны в
@@ -145,6 +145,76 @@ Snapshots `provenance/lamit-provider.json`, `lamit-README.txt`, `CC-BY-4.0.html`
 и `verified-scope.json` сохраняют лицензию, attribution и intended use.
 Хэши provider/README/license snapshots и измерительных scripts входят в
 external predeclaration SHA manifest.
+
+<a id="audio-m3r3c-sources"></a>
+
+## M3-R3C — фактически измеренные stress/challenge источники
+
+Дата доступа/повторной проверки: **2026-09-28**. Только локальное дипломное
+некоммерческое исследование; raw media и derivatives вне Git, без distribution
+или production dataset/runtime dependency. Новая библиотека не устанавливалась.
+Полные URLs, attribution, доступные license сведения, source SHA и actual roles:
+`FakeDetector-Work/research/M3-R3C-arc-stress/sources/manifest.json`;
+их копия в review `source-summary.md` / `provenance-summary.md`.
+
+Повторно использованы M3-TR-01/02/04 и пять LaMIT recordings M3-SP-01:
+S01/P001/T1, S01/P005/T1, S02/P001/T1, S03/P001/T1, S04/P001/T1.
+Это8 speech recordings /7 speakers, исходные SHA сверены.
+M3-TR-03 Vibe Ace в новом scope использован для заранее выбранных native-rate /
+channel8s excerpt fixtures и пары разных source sections. Полный MP3 снова
+получил M1 resource rejection; исторический M3-R2A результат не изменён.
+External FFmpeg atrim/float64 WAV recipes и parent/derivative SHA сохранены;
+исследовательские fragments не заявляются production fallback или untouched originals.
+
+**M3-ST-01 / DATASET — ESC-50**, Karol J. Piczak,
+[репозиторий поставщика](https://github.com/karolpiczak/ESC-50),
+[LICENSE с individual attribution](https://github.com/karolpiczak/ESC-50/blob/master/LICENSE).
+Dataset — CC BY-NC3.0; individual source notices сохранены дословно в manifest,
+включая Sampling+ для washing-machine source. Они не заменены blanket BY/CC0.
+Выбран первый CSV entry каждой указанной категории до ARC outcomes.
+Downloaded WAV5s — поставляемые dataset clips, уже производные Freesound;
+не утверждается, что это untouched целые полевые записи. Использование: standalone
+background и фиксированные overlays для rain/vacuum/engine/alarm; остальные
+категории — standalone. Dataset `esc-meta.csv` и `esc-LICENSE` сохранены externally.
+
+| Файл / Freesound source ID | Категория / автор исходной записи | Individual notice | SHA-256 downloaded WAV |
+|---|---|---|---|
+| `1-100210-A-36.wav` / 100210 | vacuum_cleaner / joshfeed | CC-BY-NC | `f97e97b0fe0afce323d858503b6fa3ffd6c8cb1162c43cf3b24461300fb9abf6` |
+| `1-21896-A-35.wav` / 21896 | washing_machine / ulcered | CC-Sampling+ | `1b4210c50a01cabab07065a112463fad4f82de60385ef9aaf6316afe7d4b976c` |
+| `1-18527-A-44.wav` / 18527 | engine / Corsica_S | CC-BY | `83eb3e6065246fd87d1acbbe414aa5bfb7c2081a57c188713cdc017819ffc38f` |
+| `1-13613-A-37.wav` / 13613 | clock_alarm / hookhead | CC0 | `2e28b25e14611723cdcc0becfa36468a8d0329a0c141e4f1d894bd6bb5773f34` |
+| `1-21934-A-38.wav` / 21934 | clock_tick / dobroide | CC-BY | `8d26e40e0e382b0d2d7f6dafcb132cfe703ee3f7f32780e878fdb5a1aaffcc28` |
+| `1-17367-A-10.wav` / 17367 | rain / cognito perceptu | CC0 | `d732acd2e0c7c40405968010f49f250740c86998fc416eff2ed5330fc8c89dea` |
+| `1-137296-A-16.wav` / 137296 | wind / Benboncan | CC-BY | `73e2dd5e66dda29f76a54b53c3c8e33441d105fc35c1d231bfbd8f7a18442969` |
+| `1-119125-A-45.wav` / 119125 | train / Benboncan | CC-BY | `d78fe04767546d49b741d9d7df6173152e06dcb4224d70f350c3cb73768f265d` |
+| `1-18631-A-23.wav` / 18631 | breathing / Walter_Odington | CC0 | `cdbd39617f2955d86ec18a4032ecd9090369c23f3d8c6d650f62e9e1ee19ea6a` |
+
+**M3-ST-02 / DATASET — RoomTone01**, richwise,
+[Freesound474823](https://freesound.org/people/richwise/sounds/474823/), CC0 1.0.
+Сохранён полный provider HQ MP3 preview; описание автора: engineering lab,
+air-conditioned room, server/fan/hum noise. Full-source M1 preflight отказал;
+измерены три заранее выбранных native48kHz/stereo8s excerpt fixtures.
+Snapshot `provenance/room.html`; не заявляется byte identity с uploaded WAV.
+
+**M3-ST-03 / DATASET — Sweet Waltz**, Setuniman,
+[Freesound147793](https://freesound.org/people/setuniman/sounds/147793/),
+CC BY-NC4.0 на текущей авторской странице. Full provider HQ MP3 preview сохранён;
+полный source получил M1 resource rejection, измерены три native44.1kHz/stereo
+excerpt fixtures и пара разных sections. Snapshot `provenance/sweetwaltz.html`.
+Attribution, license links и change recipes сохранены; коммерческие права из
+данного исследовательского использования не выводятся.
+
+| Источник | SHA-256 provider MP3 |
+|---|---|
+| room | `a5e5a1c729188d7fcab209e611f008cede3dd27d3b8bdf805e284f3099e193bb` |
+| sweetwaltz | `18f0a6193fec084a19ce4220178c73764ee0caaff39b81414eb787ba6edb9652` |
+
+Для всех derivatives retained exact parent/recipe/final hashes и source intervals.
+Generated tone/hum/beep/rhythm/silence — собственные NumPy analytical fixtures,
+одна synthetic lineage; не дополнительные licensed natural source groups.
+TV-like speech mixture использует уже принятую LaMIT recording, не настоящий
+TV recording. Choice/новые librosa audio files не использованы.
+Итоги и ограничения — в [отчёте M3-R3C](research/2026-09-27-audio-arc-diploma-stress-validation.md).
 
 ## Политика сторонних материалов Stage 12
 

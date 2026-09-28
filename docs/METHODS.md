@@ -233,10 +233,42 @@ production-calibration prohibition и обязательства ATD/ASC не и
 **DEFERRED UNTIL CALIBRATION / PRODUCTION-READINESS RESEARCH** и не требуется
 для текущей дипломной proof-of-concept фазы. First-party acquisition сейчас
 не разрешён и не обязателен; внешний recording plan сохранён на будущее.
-Следующий активный исследовательский scope — M3-R3C stress/challenge validation,
-его план и границы зафиксированы в [ROADMAP](ROADMAP.md#audio-m3r3c).
+Разрешённый после disposition scope — M3-R3C stress/challenge validation;
+его текущее состояние зафиксировано в [ROADMAP](ROADMAP.md#audio-m3r3c).
 Это не population calibration и не выполнение отложенной broad validation;
 production threshold/FPR claim не допускаются.
+
+**M3-R3C — DONE / OWNER ACCEPTED RESEARCH RESULT; owner acceptance: 2026-09-28.**
+ARC-NCC-1 остаётся **NEEDS_TARGETED_RESEARCH**.
+[Дипломная stress/challenge validation](research/2026-09-27-audio-arc-diploma-stress-validation.md)
+с неизменённым frozen v2 включает184 cases, 8 speech recordings /7 speakers,
+3 music и11 background source groups. Все96 обычных exact/gain/codec/noise
+copy-cases сохранили истинный offset с ошибкой0 samples и полным structural
+support; это не exhaustive recall или production sensitivity.
+Легитимный Vibe Ace excerpt достиг rho0.996936 с последующим support,
+перекрывая noise-copy maxima. Shared physical background за независимой речью
+дал до0.945472; periodic signals —1. В отдельном cap stress20 true nominations
+вытеснены из cap64; все возвращённые пары относятся к background-only тону.
+Таким образом, высокий global rho не устанавливает копирование foreground речи.
+Владелец принял эти свидетельства и failure map: frozen v2 эффективно находит
+известные физические копии в проверенных controlled cases, но высокий rho
+не специфичен для manipulated speech. Легитимная музыка, механическая
+периодичность, общий физический фон и generated tone/hum/beep/rhythm могут
+давать copy-like correspondence. Один rho threshold сам по себе не решает
+наблюдаемую проблему forensic interpretation. Applicability/background attribution
+и bounded retrieval competition остаются нерешёнными методологическими вопросами;
+ARC **не готов к tuning/calibration study**. Новый автоматический gate не создан.
+Принят исследовательский результат, не production-метод или FPR/sensitivity
+validation. Frozen v2 сохраняется и для следующего исследования; ARC v3
+не разрешён. Планирование M3-R3D и будущий gate перед любым изменением
+candidate/search поведения зафиксированы в [ROADMAP](ROADMAP.md#audio-m3r3d).
+Original speech определена только в4/8 cases из-за geometry; controlled read
+speech и generated overlays не являются natural voice-message validation.
+Три full-source resource rejections сохранены отдельно от заранее созданных
+native-rate/channel excerpt fixtures; runtime preprocessing не расширен.
+Formula/search/caps/guard/support/channels не менялись. Production calibration,
+thresholds, method acceptance, analyzer/registration, Finding и risk/correlation
+изменения отсутствуют. ATD/ASC **REQUIRED CARRY-FORWARD** не разрешён.
 
 ## Кандидаты Stage 12 / Macro 2
 
