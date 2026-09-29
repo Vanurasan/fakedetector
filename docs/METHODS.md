@@ -93,7 +93,7 @@
 | `audio_temporal_discontinuity` / ATD-LOCAL-1 | NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD | Локальные waveform/energy переходы; существующие precision samples и framing | Общее исследовательское семейство переходов; plosive/перкуссия/quality artifacts дают сходный response |
 | `audio_spectral_consistency` / ASC-TV-1 | NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD | TV нормированных magnitude spectra и отдельный flux; готовый M1 STFT | То же семейство, без независимого голоса; фонемы/ноты/EQ/codec меняют спектр |
 | `audio_background_noise_consistency` / ABN-FLOOR-1 | RESEARCH_ONLY / WEAK_SIGNAL | Описательные low-energy spectral floors; M1 STFT достаточен для измерений, но не для выделения фона | То же семейство условно; content/background matching не установлен, sensor noise/microphone identity не выводятся |
-| `audio_repeated_segment_correspondence` / ARC-NCC-1 | NEEDS_TARGETED_RESEARCH / OWNER ACCEPTED RESEARCH RESULT | Bounded descriptor retrieval и waveform NCC/support; M1 samples/STFT | Отдельный исследовательский трек повторов; легитимный loop неотличим по одному соответствию |
+| `audio_repeated_segment_correspondence` / ARC-NCC-1 | NEEDS_TARGETED_RESEARCH; RESEARCH MEASUREMENT DEMONSTRATED / PRODUCTION PROMOTION DEFERRED | Bounded descriptor retrieval и waveform NCC/support; M1 samples/STFT | Отдельный исследовательский трек повторов; легитимный loop неотличим по одному соответствию |
 | `audio_metadata_container_consistency` / AMC-RESP-1 | REJECT_DUPLICATE_RESPONSIBILITY / OWNER ACCEPTED NEGATIVE RESULT | Проверка пересечения validation, precision и timing обязанностей | Новое forensic-семейство не обосновано; invalid/unknown input не Finding |
 
 Владелец разрешил два отдельных measurement tracks: ATD/ASC измеряются раздельно
@@ -311,6 +311,39 @@ harness; исходный freeze, остановка и traceback сохране
 selectors и параметры не менялись. Frozen v2 неизменён, ARC v3 и production
 tuning/calibration не разрешены; ARC-NCC-1 **NEEDS_TARGETED_RESEARCH**.
 ATD/ASC carry-forward остаются нерешёнными.
+
+**M3-R3D-F — DONE / OWNER ACCEPTED RESEARCH RESULT; owner acceptance: 2026-09-29.**
+[Предобъявленное сравнение](research/2026-09-29-audio-arc-r1-flooding-confirmation.md)
+неизменённых R0/R1 на8 новых fixtures дало **R1_FLOODING_CONFIRMATION_MIXED**:
+все8 имеют nominated truth, потерянную R0 на cap64; R1 восстановил localized
+correspondence в5/8, exact physical offset в2/8. Rescue встречается во всех4
+background families, но три source/geometry2 synthetic cases не восстановлены.
+Две записи принадлежат одному speaker; source и placement меняются совместно,
+поэтому их причинные эффекты не разделены. Offset diversity сама по себе
+не гарантирует rescue. Старый control и96/96 retained/localized/exact ordinary
+copies точно воспроизведены; truth pairs R0/R1=1485/673, case regression нет.
+Вывод ограничен bounded challenge, не population sensitivity или automatic
+semantic attribution. Frozen ARC v2 и R1 неизменны; production tuning/calibration,
+thresholds и ARC v3 не разрешены. ARC-NCC-1 **NEEDS_TARGETED_RESEARCH**;
+ATD/ASC carry-forward нерешён. Текущая очередность — в
+[ROADMAP](ROADMAP.md#audio-m3r3df).
+
+**ARC disposition владельца от 2026-09-29: RESEARCH MEASUREMENT DEMONSTRATED /
+PRODUCTION PROMOTION DEFERRED.** Сохраняется **NEEDS_TARGETED_RESEARCH**:
+frozen v2 остаётся действующим исследовательским measurement prototype;
+controlled copy correspondence и bounded retrieval flooding продемонстрированы,
+R1 даёт частичное mitigation evidence. R1 **не является универсальным решением**
+flooding, но полезный результат не ограничен прежним250Hz fixture. Сохраняются
+3/8 нерешённых failures, лишь2/8 exact localizations и сокращение retained
+truth-pair multiplicity1485→673. Надёжное production-safe retention поведение
+не установлено; automatic semantic applicability/foreground-background attribution
+не решена. R1 — **PROMISING FUTURE RESEARCH DIRECTION**, не принятая ARC implementation.
+ARC v2 — **FROZEN RESEARCH BASELINE**; ARC v3 — **NOT AUTHORIZED**.
+Production promotion отложено до последующих calibration / production-readiness
+research; дальнейшее ARC retention development выведено из оставшегося пути
+закрытия текущего Macro 3. Это не разрешает tuning R1, новые quotas/tolerances,
+thresholds, expansion search/caps или production analyzer. Новых ARC экспериментов
+в текущем Macro 3 не назначено; следующий активный topic определён ROADMAP.
 
 <a id="audio-m3h-a01"></a>
 
