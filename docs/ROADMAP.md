@@ -2484,7 +2484,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE / merged | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
 | 2 | Image Analyzer Expansion — Wave 1 | DONE / CLOSED | Один новый production-анализатор DQ; остальные кандидаты research-only/deferred; M2-HR6 PASS / OWNER ACCEPTED; M2H-D01 → Macro 6 |
-| 3 | Audio Analyzer Expansion — Wave 1 | IN_PROGRESS | M3-R1/R2A/R2B/R3A приняты владельцем; M3-R3B disposition принят, broad validation отложена; M3-R3C DONE / OWNER ACCEPTED RESEARCH RESULT; ARC NEEDS_TARGETED_RESEARCH; M3-R3D-P DONE / OWNER ACCEPTED DESIGN RESULT; следующий M3-R3D-E AUTHORIZED / NOT YET EXECUTED; ATD/ASC carry-forward сохранён, production audio-метод не принят |
+| 3 | Audio Analyzer Expansion — Wave 1 | IN_PROGRESS | M3-R1/R2A/R2B/R3A приняты владельцем; M3-R3B disposition принят, broad validation отложена; M3-R3C, M3-R3D-P и M3-R3D-E приняты владельцем; следующий M3-R3D-F PLANNED / OWNER SCOPE NOT YET FROZEN; M3H-A01 deferred hypothesis; ARC NEEDS_TARGETED_RESEARCH; ATD/ASC carry-forward сохранён, production audio-метод не принят |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
 | 6 | Correlation, Completeness & Result Semantics Review | NOT_STARTED | После 2–5: проверка выросшего набора без двойного учёта и завышения полноты; изменения дизайна только отдельным решением |
@@ -3688,8 +3688,9 @@ Macro 3 остаётся **IN_PROGRESS**.
    Принят design/evidence analysis, не production method или FPR/sensitivity
    validation. ARC-NCC-1 остаётся **NEEDS_TARGETED_RESEARCH**.
 
-**Следующая активная задача: M3-R3D-E — ARC Attribution & Retention
-Diversification Experiment; AUTHORIZED / NOT YET EXECUTED (2026-09-29).**
+**M3-R3D-E — ARC Attribution & Retention Diversification Experiment:**
+разрешён владельцем **2026-09-29**, выполнен в scope ниже; результат и следующий
+owner gate записаны в [текущем состоянии](#audio-m3r3de).
 Владелец разрешил две связанные исследовательские части:
 
 - **A — frozen-v2 attribution study:** существующие M3-R3C cases/outputs и
@@ -3739,6 +3740,76 @@ PRODUCTION-READINESS RESEARCH**, не обязательна для текуще
 ATD-LOCAL-1 и ASC-TV-1 сохраняют **NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD**;
 оба обязательства нерешённые, правило закрытия Macro 3 сохранено.
 Macro 3 остаётся **IN_PROGRESS**.
+
+<a id="audio-m3r3de"></a>
+
+### M3-R3D-E — DONE / OWNER ACCEPTED RESEARCH RESULT
+
+**Owner acceptance: 2026-09-29. Gate M3-R3D-E — CLOSED / OWNER ACCEPTED.**
+
+**2026-09-29**, baseline `f70c9520842a48bb35ac836b2abc849a044609c0`, ожидаемая
+ветка и clean start подтверждены. [Отчёт experiment](research/2026-09-29-audio-arc-attribution-retention-experiment.md)
+содержит результаты всех184 cases для R0/R1/R2/R3. Frozen-v2 reproduction
+**184/184 PASS**,7 numerical/oracle groups и8cases ×4policies ×3 exact executions
+**PASS**. Union/order, seed cap256/NCC cap64, refinement bounds и baseline v2
+сохранены; новых media/preprocessing или repo executable changes нет.
+
+R1/R3 вернули по2 true nominations в cap stress, одна уникальная refined пара,
+error311samples: within±4096 с structural support, **exact offset не восстановлен**.
+R0/R2 retained truth=0. Все policies сохранили retained/localized/exact96/96
+ordinary copy cases, но R1/R3 вернули673 truth pairs вместо1485. Benign high
+correspondence и проблема semantic attribution сохраняются.
+
+Принятый исследовательский outcome:
+**DIVERSIFICATION_PROMISING_OWNER_GATE_FOR_FUTURE_ARC_CHANGE**;
+best research policy **R1 / EXACT_OFFSET_ROUND_ROBIN**, не production behavior.
+Attribution: **ATTRIBUTION_EXISTING_OUTPUTS_PARTIAL**. Simple automatic semantic
+signature не установлена. Seed/union/caps/guard invariants и30s deadline соблюдены;
+RSS не объявлен certified bound.
+
+Остановка первого R1 до записи результата вызвана сравнением tuples/lists в
+validation assertion. Исправлено только JSON-сравнение; исходный freeze,
+traceback и исправленный seal сохранены. Selector-код, grouping/quotas и
+параметры не менялись. Владелец явно принял experiment вместе с этой protocol
+correction; история post-freeze исправления не удалена и не переописана как
+неизменённый harness. Outcome-driven tuning не выполнялся.
+
+Принят результат с его ограничениями: одна constructed flooding geometry,
+неточная stress-localization, одна refined пара из двух nominations,
+сокращение retained truth pairs и нерешённая semantic attribution. Это не
+улучшение recall/sensitivity. Acceptance не разрешает ARC v3 implementation,
+production tuning/calibration, thresholds,
+analyzer или Finding. ARC-NCC-1 **NEEDS_TARGETED_RESEARCH**. ATD/ASC
+**NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD** остаются нерешёнными;
+M3-R3B broad validation остаётся deferred, Macro 3 **IN_PROGRESS**.
+
+Review bundle: `FakeDetector-Work/reviews/M3-R3D-E-arc-attribution-retention/`.
+Полный intended diff включает untracked report; `git diff --check` и итоговый
+status проверены. Full quality barrier/strict certification не запускались;
+Git mutations не выполнялись, staging/commit остаются владельцу.
+
+**Следующий ARC шаг — M3-R3D-F: R1 Flooding Confirmation Study.**
+Статус: **PLANNED / OWNER SCOPE NOT YET FROZEN**.
+Цель — подтвердить устойчивость уже проверенного R1 exact-offset round-robin
+на нескольких заранее объявленных periodic/background flooding geometries до
+решения владельца о возможной будущей ARC retention implementation.
+Следующий owner gate — зафиксировать scope M3-R3D-F. Исследование сейчас
+не выполняется; подробные fixtures/selectors не определяются. ARC v3 остаётся
+**NOT AUTHORIZED**.
+
+**M3H-A01 — ARC Companion Applicability / Context Qualification:
+DEFERRED RESEARCH HYPOTHESIS**, не активная задача. Смысл, допустимая
+AMBIGUOUS / UNRESOLVED interpretation и отдельный source-separation/capability
+gate сохранены в [METHODS](METHODS.md#audio-m3h-a01). Никакой experiment или
+implementation гипотезы текущим решением не разрешён.
+
+Перед окончательным закрытием Macro 3 запланирован **MACRO 3 DOCUMENTATION /
+INSTRUCTION HYGIENE AUDIT**: проверить AGENTS.md и связанные governance/docs
+на устаревшие временные правила, дубли инструкций, stale owner gates, историю,
+которой место в research reports/changelog, и ненужные ветви процесса.
+Это не произвольное сокращение AGENTS.md; **NO ACTION REQUIRED** допустим,
+если всё активное содержимое необходимо. Аудит и cleanup сейчас не выполняются.
+Macro 3 остаётся **IN_PROGRESS**, правило разрешения ATD/ASC carry-forward сохранено.
 
 ## Macro 6 — корреляция и смысл результата
 

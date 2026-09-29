@@ -288,8 +288,63 @@ retention не проверена, но retention diversification research об�
 FPR/sensitivity validation; analyzer/Finding не разрешены.
 ARC-NCC-1 сохраняет **NEEDS_TARGETED_RESEARCH**, frozen v2 неизменён;
 ARC v3 implementation и tuning/calibration не разрешены. Разрешённый владельцем
-исследовательский M3-R3D-E, ещё не выполненный, и его точные границы находятся
+исследовательский M3-R3D-E и его точные границы находятся
 в [ROADMAP](ROADMAP.md#audio-m3r3d).
+
+**M3-R3D-E — DONE / OWNER ACCEPTED RESEARCH RESULT; owner acceptance: 2026-09-29.**
+[Attribution/retention experiment](research/2026-09-29-audio-arc-attribution-retention-experiment.md)
+на всех184 M3-R3C cases воспроизвёл frozen-v2 baseline точно и сравнил R0–R3
+без изменения union, caps, descriptor или NCC. R1/R3 сохранили в cap stress
+по2 true nominations, сходящиеся к одной refined паре с ошибкой311samples:
+within±4096 и structural support, но **не exact physical offset**. R0/R2 truth
+не сохранили. Все policies имеют retained/localized/exact96/96 ordinary copies;
+R1/R3 уменьшили число retained truth pairs с1485 до673. Высокая benign
+correspondence сохранилась; automatic attribution не решена.
+Принятый outcome: **DIVERSIFICATION_PROMISING_OWNER_GATE_FOR_FUTURE_ARC_CHANGE**,
+лучшая research policy **R1 / EXACT_OFFSET_ROUND_ROBIN**;
+attribution **ATTRIBUTION_EXISTING_OUTPUTS_PARTIAL**.
+R1 принят только как исследовательское направление, не как ARC implementation
+или production behavior. Свидетельство rescue ограничено одной constructed
+cap-stress geometry; сокращение truth pairs не означает улучшения recall/sensitivity.
+Владелец принял результат вместе с исправлением serialization validation guard
+harness; исходный freeze, остановка и traceback сохранены в истории отчёта;
+selectors и параметры не менялись. Frozen v2 неизменён, ARC v3 и production
+tuning/calibration не разрешены; ARC-NCC-1 **NEEDS_TARGETED_RESEARCH**.
+ATD/ASC carry-forward остаются нерешёнными.
+
+<a id="audio-m3h-a01"></a>
+
+**M3H-A01 — ARC Companion Applicability / Context Qualification:
+DEFERRED RESEARCH HYPOTHESIS (owner decision: 2026-09-29).**
+Это сохранённая исследовательская гипотеза, не принятый метод или активная задача.
+ARC может отвечать только за repeated waveform correspondence; отдельный будущий
+companion method **может** квалифицировать контекст именно ARC-matched windows:
+speech-dominant, stationary/background-like, tonal/periodic, mixed либо ambiguous.
+Такие описания квалифицируют свидетельство, но сами по себе не дают verdict
+о манипуляции и не создают независимый forensic голос.
+
+Гипотеза не предполагает, что произвольная смешанная запись надёжно разделяется
+на speech/music/noise. Если исследование будет отдельно разрешено, первоначально
+рассматривается существующий mixed signal и bounded representations: локальная
+waveform structure matched windows, существующий STFT, stationarity,
+tonal/periodic structure, temporal variation, speech-like activity лишь при
+доступности без новой capability. Это **иллюстративные направления**, не
+утверждённые features, detector, classifier, score или thresholds.
+
+**AMBIGUOUS / UNRESOLVED — допустимый исход** будущей context qualification.
+Например, речь поверх повторяющейся музыки или устойчивого фона может давать
+сильную correspondence, не позволяя установить источник совпадения по mixed
+signal. Нельзя принуждать fake/authentic или foreground/background conclusion
+без достаточного свидетельства. Это исследовательский/архитектурный принцип,
+не новый public result schema или изменение correlation policy.
+
+Если qualification требует source separation, speech/background separated
+streams, новой ML model, preprocessing capability, dependency или representation
+вне принятой предобработки: **STOP / SEPARATE OWNER GATE**. Source separation
+не входит в текущий implementation scope Macro 3. M3H-A01 не разрешает сейчас
+эксперимент, второй analyzer, speech/music detector, новые STFT features,
+schema/correlation changes, dependency или acquisition media. Статус и следующий
+ARC scope зафиксированы в [ROADMAP](ROADMAP.md#audio-m3r3de).
 
 ## Кандидаты Stage 12 / Macro 2
 
