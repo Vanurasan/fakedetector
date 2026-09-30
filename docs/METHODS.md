@@ -135,6 +135,14 @@ SciPy не добавляется. Dataset dependency автоматически
 Production по-прежнему требует полного gate принятия метода выше. Измерительные
 эксперименты одним лишь решением M3-R1A не объявляются выполненными.
 
+**Как читать историю Macro 3 ниже:** промежуточные статусы `OPEN / REQUIRED`,
+разрешения на следующее исследование и прежний порядок работ относятся к моменту
+соответствующего инкремента. Текущие статусы приведены в таблице выше, итоговые
+dispositions — в M3-ATD-D1, M3-ASC-D1 и записи ARC disposition после M3-R3D-F.
+Исторические next steps не назначают новую работу; актуальная последовательность
+принадлежит [ROADMAP](ROADMAP.md#audio-m3-required-carry-forward).
+Принятые ограничения измерений и gate production acceptance сохраняются.
+
 **M3-R2A — DONE / OWNER ACCEPTED RESEARCH RESULT; owner acceptance: 2026-09-26.**
 Результаты и frozen V1/V2 protocol hashes — в
 [отчёте transition prototype](research/2026-09-26-audio-transition-measurement-prototype.md).
