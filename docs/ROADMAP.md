@@ -137,10 +137,11 @@ M2-CR1: DONE / OWNER_ACCEPTED_RESEARCH_CLOSURE; thumbnail — RESEARCH_ONLY / WE
 Проверка closure commit: полный quality barrier и strict certification на clean committed SHA dbc24e32c028808f599a7d9982f6776cfe014b3c — PASS; оставшихся проверок Macro 2 нет
 Слияние Macro 2: PR #67 merged в main как dee248b6ea2d7054c4e30d95c114d123a77918df; tree совпадает с сертифицированным closure tree; merge commit отдельно не сертифицировался
 M3-R1: DONE / OWNER ACCEPTED RESEARCH SELECTION (2026-09-26); production audio-метод не принят
-M3-ATD-D1: DONE / OWNER ACCEPTED DISPOSITION (2026-09-29); ATD — RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, carry-forward RESOLVED. Следующий активный topic Macro 3 — ASC-TV-1 carry-forward disposition; затем documentation/instruction hygiene audit и closure review. Новых измерений нет. M3-R3D-F DONE / OWNER ACCEPTED RESEARCH RESULT (2026-09-29), confirmation MIXED; дальнейшее ARC retention development в текущем Macro 3 DEFERRED; production promotion ARC отложено до calibration / production-readiness research; production calibration NOT AUTHORIZED; G1–G6 CLOSED / ACCEPTED
+M3-ASC-D1: DONE / OWNER ACCEPTED DISPOSITION (2026-09-30); ASC — RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, carry-forward RESOLVED; дальнейшей ASC promotion work в текущем Macro 3 нет. Следующий активный topic — MACRO 3 DOCUMENTATION / INSTRUCTION HYGIENE AUDIT, затем MACRO 3 CLOSURE REVIEW; Macro 3 IN_PROGRESS
+M3-ATD-D1: DONE / OWNER ACCEPTED DISPOSITION (2026-09-29); ATD — RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, carry-forward RESOLVED; ATD не переоткрывается. Новых измерений нет. M3-R3D-F DONE / OWNER ACCEPTED RESEARCH RESULT (2026-09-29), confirmation MIXED; дальнейшее ARC retention development в текущем Macro 3 DEFERRED; production promotion ARC отложено до calibration / production-readiness research; production calibration NOT AUTHORIZED; G1–G6 CLOSED / ACCEPTED
 M3-R2A: DONE / OWNER ACCEPTED RESEARCH RESULT (2026-09-26); production acceptance отсутствует
 M3-R2B: DONE / OWNER ACCEPTED RESEARCH RESULT (2026-09-26); ARC-NCC-1 — READY_FOR_LARGER_VALIDATION, только research readiness; статистическая независимость не установлена
-Обязательный carry-forward Macro 3: ATD-LOCAL-1 — RESOLVED решением владельца; ASC-TV-1 — OPEN / REQUIRED, NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD; перед закрытием Macro 3 остаётся явный disposition ASC (см. [правило закрытия](#audio-m3-required-carry-forward))
+Обязательный carry-forward Macro 3: ATD-LOCAL-1 и ASC-TV-1 — RESOLVED решениями владельца; MACRO3_ALL_REQUIRED_CARRY_FORWARD_RESOLVED: YES. Это не закрытие Macro 3: далее hygiene audit и closure review (см. [правило закрытия](#audio-m3-required-carry-forward))
 Будущие работы: Stage 12 Macros 4–10 — NOT_STARTED; Stage 13+ ML — AFTER_MVP / NOT_STARTED
 Критические блокеры принятого DQ scope M2-A: отсутствуют; остальные методы требуют собственных gates
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
@@ -2484,7 +2485,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 | 0 | Stage Definition, Licensing & Third-Party Policy | DONE / merged | План и политика оформлены; Apache-2.0 выбрана; лицензионная поставка и provenance проверены |
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
 | 2 | Image Analyzer Expansion — Wave 1 | DONE / CLOSED | Один новый production-анализатор DQ; остальные кандидаты research-only/deferred; M2-HR6 PASS / OWNER ACCEPTED; M2H-D01 → Macro 6 |
-| 3 | Audio Analyzer Expansion — Wave 1 | IN_PROGRESS | M3-R1/R2A/R2B/R3A приняты владельцем; M3-R3B disposition принят, broad validation отложена; M3-R3C, M3-R3D-P/E/F приняты владельцем; M3-R3D-F confirmation MIXED (5/8 rescues); ARC research measurement demonstrated, production promotion и дальнейшее ARC retention development текущего Macro 3 DEFERRED; M3H-A01 deferred; M3-ATD-D1 DONE / OWNER ACCEPTED DISPOSITION, ATD RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, carry-forward RESOLVED; следующий topic ASC disposition, ASC OPEN / REQUIRED; затем hygiene audit и closure review; production audio-метод не принят |
+| 3 | Audio Analyzer Expansion — Wave 1 | IN_PROGRESS | M3-R1/R2A/R2B/R3A приняты владельцем; M3-R3B disposition принят, broad validation отложена; M3-R3C, M3-R3D-P/E/F приняты владельцем; M3-R3D-F confirmation MIXED (5/8 rescues); ARC research measurement demonstrated, production promotion и дальнейшее ARC retention development текущего Macro 3 DEFERRED; M3H-A01 deferred; M3-ATD-D1 DONE / OWNER ACCEPTED DISPOSITION, ATD RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, carry-forward RESOLVED; M3-ASC-D1 DONE / OWNER ACCEPTED DISPOSITION, ASC RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, carry-forward RESOLVED; все required carry-forward разрешены; следующий topic — hygiene audit, затем closure review; production audio-метод не принят |
 | 4 | Video Analyzer Expansion — Wave 1 | NOT_STARTED | После 1–3: временные/контейнерные проверки и переиспользование image/audio-ядер |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
 | 6 | Correlation, Completeness & Result Semantics Review | NOT_STARTED | После 2–5: проверка выросшего набора без двойного учёта и завышения полноты; изменения дизайна только отдельным решением |
@@ -3400,11 +3401,16 @@ Production methods/thresholds не приняты, Findings/registration/fusion 
 | Профиль | Обязательство / disposition | Состояние |
 |---|---|---|
 | ATD-LOCAL-1 | RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, M3-ATD-D1, 2026-09-29 | RESOLVED |
-| ASC-TV-1 | Целевое исследование селективности на benign content | OPEN / REQUIRED |
+| ASC-TV-1 | RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, M3-ASC-D1, 2026-09-30 | RESOLVED |
 
-ATD-обязательство закрыто [принятым disposition](#audio-m3-atd-d1); дальнейшей
-ATD promotion work в текущем Macro 3 нет. Нерешённое обязательство остаётся у ASC.
-Ниже сохранены основания прежнего целевого протокола и общее правило закрытия.
+ATD-обязательство закрыто [принятым disposition](#audio-m3-atd-d1),
+ASC-обязательство — [принятым M3-ASC-D1](#audio-m3-asc-d1).
+**ASC REQUIRED CARRY-FORWARD: RESOLVED.**
+**MACRO3_ALL_REQUIRED_CARRY_FORWARD_RESOLVED: YES.** Дальнейшей ATD/ASC promotion
+work в текущем Macro 3 нет. Следующая активная задача — **MACRO 3 DOCUMENTATION /
+INSTRUCTION HYGIENE AUDIT**, затем **MACRO 3 CLOSURE REVIEW**.
+Macro 3 остаётся **IN_PROGRESS**. Ниже сохранены исторические основания прежнего
+целевого протокола и общее правило закрытия; текущие dispositions указаны выше.
 
 Целевой протокол требует реальных event annotations, content-matched controls,
 source-level holdout и проверки ресурсной применимости. Владелец отложил это
@@ -3913,6 +3919,50 @@ Review bundle acceptance: `FakeDetector-Work/reviews/M3-ATD-D1-disposition/accep
 intended diff с untracked report. `git diff --check`, просмотр diff и итогового
 status обязательны; тесты, эксперименты, full quality barrier и certification
 не запускались. Git mutations не выполнялись, staging/commit остаются владельцу.
+
+<a id="audio-m3-asc-d1"></a>
+
+### M3-ASC-D1 — DONE / OWNER ACCEPTED DISPOSITION
+
+**Owner acceptance: 2026-09-30. ASC carry-forward gate — CLOSED / RESOLVED.**
+
+**2026-09-30**, baseline `a2169e566a4d1cebf15bbd715397a75312eacb0b`, ожидаемые
+ветка/HEAD и clean start исходного review подтверждены. Запись принятия
+M3-ASC-D1-A выполнена на том же HEAD поверх ожидаемого dirty diff M3-ASC-D1.
+Выполнен review существующих ASC evidence
+M3-R2A, без новых экспериментов и без изменения предшествующих материалов.
+[Отчёт ASC](research/2026-09-30-audio-asc-disposition-review.md) отдельно
+рассматривает TV и flux, physical measurement, benign overlap, controlled
+manipulation и пределы локализации. Принятый disposition и ограничения
+зафиксированы в [METHODS](METHODS.md#audio-m3-asc-d1).
+
+**ASC-TV-1: RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED.**
+**ASC REQUIRED CARRY-FORWARD: RESOLVED.** Владелец принял валидность TV/flux
+как описательных измерений и отсутствие установленной forensic-селективности;
+численные свидетельства сохранены. **FURTHER_ASC_PROMOTION_WORK_IN_CURRENT_MACRO3:
+NONE**; новый ASC experiment не начинается, прототип остаётся research evidence.
+ATD — **RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED**, carry-forward **RESOLVED**;
+ATD не переоткрывается. ARC — **RESEARCH MEASUREMENT DEMONSTRATED / PRODUCTION
+PROMOTION DEFERRED**, активной работы нет; M3H-A01 остаётся deferred.
+
+**MACRO3_ALL_REQUIRED_CARRY_FORWARD_RESOLVED: YES.** Следующая активная задача —
+**MACRO 3 DOCUMENTATION / INSTRUCTION HYGIENE AUDIT**, затем
+**MACRO 3 CLOSURE REVIEW**. Macro 3 **IN_PROGRESS**, автоматического закрытия нет.
+Hygiene audit позднее проверит AGENTS.md, governance/process docs, устаревшие
+временные инструкции, дубли правил, obsolete owner gates, исторический материал
+для research/changelog и возможную неоднозначность прежнего carry-forward
+protocol text. **NO ACTION REQUIRED** остаётся допустимым исходом; необходимость
+cleanup не предрешена. Hygiene и closure в M3-ASC-D1-A не выполняются.
+
+Research/review bundles: `FakeDetector-Work/research/M3-ASC-D1-disposition/`
+и `FakeDetector-Work/reviews/M3-ASC-D1-disposition/`; новый review bundle принятия —
+`FakeDetector-Work/reviews/M3-ASC-D1-disposition/acceptance/`.
+Полный intended diff включает
+untracked отчёт. Проверки: `git diff --check`, просмотр полного diff и итогового
+status; full quality barrier, тесты и certification не запускались по scope.
+Production method/threshold/Finding не разрешены; Git mutations не выполнялись,
+изменения остаются unstaged. Disposition принят; корректность записи принятия
+и обновлённый полный diff требуют owner review, staging/commit остаются владельцу.
 
 ## Macro 6 — корреляция и смысл результата
 

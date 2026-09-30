@@ -91,7 +91,7 @@
 | Рабочий кандидат / профиль | Статус исследовательского профиля | Вопрос и inputs | Семейство и основной предел |
 |---|---|---|---|
 | `audio_temporal_discontinuity` / ATD-LOCAL-1 | RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED | Локальные waveform/energy переходы; существующие precision samples и framing | Общее исследовательское семейство переходов; plosive/перкуссия/quality artifacts дают сходный response |
-| `audio_spectral_consistency` / ASC-TV-1 | NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD | TV нормированных magnitude spectra и отдельный flux; готовый M1 STFT | То же семейство, без независимого голоса; фонемы/ноты/EQ/codec меняют спектр |
+| `audio_spectral_consistency` / ASC-TV-1 | RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED | TV нормированных magnitude spectra и отдельный flux; готовый M1 STFT | То же семейство, без независимого голоса; фонемы/ноты/EQ/codec меняют спектр |
 | `audio_background_noise_consistency` / ABN-FLOOR-1 | RESEARCH_ONLY / WEAK_SIGNAL | Описательные low-energy spectral floors; M1 STFT достаточен для измерений, но не для выделения фона | То же семейство условно; content/background matching не установлен, sensor noise/microphone identity не выводятся |
 | `audio_repeated_segment_correspondence` / ARC-NCC-1 | NEEDS_TARGETED_RESEARCH; RESEARCH MEASUREMENT DEMONSTRATED / PRODUCTION PROMOTION DEFERRED | Bounded descriptor retrieval и waveform NCC/support; M1 samples/STFT | Отдельный исследовательский трек повторов; легитимный loop неотличим по одному соответствию |
 | `audio_metadata_container_consistency` / AMC-RESP-1 | REJECT_DUPLICATE_RESPONSIBILITY / OWNER ACCEPTED NEGATIVE RESULT | Проверка пересечения validation, precision и timing обязанностей | Новое forensic-семейство не обосновано; invalid/unknown input не Finding |
@@ -183,6 +183,42 @@ fusion и статистическая независимость не утве�
 активным topic. Датированные записи прежних исследований сохраняют историю
 состояния до этого disposition.
 Текущее состояние gate — в [ROADMAP](ROADMAP.md#audio-m3-atd-d1).
+
+<a id="audio-m3-asc-d1"></a>
+
+**M3-ASC-D1 — DONE / OWNER ACCEPTED DISPOSITION; owner acceptance: 2026-09-30.**
+По [review ASC](research/2026-09-30-audio-asc-disposition-review.md) владелец
+явно принял **RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED** на основании
+существующих M3-R2A evidence. Запись принятия M3-ASC-D1-A не добавляет экспериментов.
+
+Normalized magnitude spectral TV (D1/D4) воспроизводимо описывает смену формы
+спектра, spectral flux (F1/F4) — отдельный положительный magnitude change.
+Контролируемые переходы поддерживают физический response обоих измерений;
+benign фонемные/перкуссионные/scene proxies, плавная смена частоты, gain/EQ
+и высокие ответы реальных speech/music не обосновывают forensic specificity
+ни одного из них. Причины отдельных real peaks без event annotations не
+устанавливаются. Диапазоны manipulated и benign responses существенно
+перекрываются; max-based localization ненадёжна в нескольких real-derived
+splice cases. Global maximum и union support не являются найденным cut;
+ни одна feature не получила доказанного преимущества в forensic-селективности.
+
+ASC даёт описание spectral change при почти постоянном RMS, отличное от ATD,
+но не новый независимый forensic vote. TV/flux и ASC/ATD не сливаются.
+Принятый ATD disposition не переоткрывается. Одна малая дополнительная study,
+способная изменить disposition текущего ASC профиля, не выделена.
+Формулы, M1 STFT и прежние evidence сохранены; post-hoc выбор feature/lag
+не выполнялся. Production method не разрешён, production threshold отсутствует,
+production analyzer не реализован, Finding не добавлен; severity/risk mapping
+и fake/authentic verdict не разрешены. ASC остаётся валидным описательным
+измерением; принятый предел forensic-интерпретации не означает его неисправность,
+бесполезность или математическую невозможность будущей ценности.
+
+**ASC carry-forward — RESOLVED** явным решением владельца.
+**FURTHER_ASC_PROMOTION_WORK_IN_CURRENT_MACRO3: NONE.** Новый ASC experiment
+в текущем Macro 3 не начинается. Прототип сохраняется как research/descriptive
+evidence для будущей работы, а не как нерешённое обязательство Macro 3.
+Состояние carry-forward и следующая работа — в
+[ROADMAP](ROADMAP.md#audio-m3-asc-d1).
 
 **M3-R2B — DONE / OWNER ACCEPTED RESEARCH RESULT; owner acceptance: 2026-09-26.**
 ARC-NCC-1: **READY_FOR_LARGER_VALIDATION**, только исследовательская готовность.
