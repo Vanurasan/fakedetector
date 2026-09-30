@@ -90,7 +90,7 @@
 
 | Рабочий кандидат / профиль | Статус исследовательского профиля | Вопрос и inputs | Семейство и основной предел |
 |---|---|---|---|
-| `audio_temporal_discontinuity` / ATD-LOCAL-1 | NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD | Локальные waveform/energy переходы; существующие precision samples и framing | Общее исследовательское семейство переходов; plosive/перкуссия/quality artifacts дают сходный response |
+| `audio_temporal_discontinuity` / ATD-LOCAL-1 | RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED | Локальные waveform/energy переходы; существующие precision samples и framing | Общее исследовательское семейство переходов; plosive/перкуссия/quality artifacts дают сходный response |
 | `audio_spectral_consistency` / ASC-TV-1 | NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD | TV нормированных magnitude spectra и отдельный flux; готовый M1 STFT | То же семейство, без независимого голоса; фонемы/ноты/EQ/codec меняют спектр |
 | `audio_background_noise_consistency` / ABN-FLOOR-1 | RESEARCH_ONLY / WEAK_SIGNAL | Описательные low-energy spectral floors; M1 STFT достаточен для измерений, но не для выделения фона | То же семейство условно; content/background matching не установлен, sensor noise/microphone identity не выводятся |
 | `audio_repeated_segment_correspondence` / ARC-NCC-1 | NEEDS_TARGETED_RESEARCH; RESEARCH MEASUREMENT DEMONSTRATED / PRODUCTION PROMOTION DEFERRED | Bounded descriptor retrieval и waveform NCC/support; M1 samples/STFT | Отдельный исследовательский трек повторов; легитимный loop неотличим по одному соответствию |
@@ -156,6 +156,33 @@ Owner-accepted prototype scope остаётся в силе; **production method
 и Findings не разрешены и не добавлены. Resource rejection
 Vibe Ace сохранён; владелец разрешил outcome-blind замену источника до измерений,
 без увеличения бюджета или изменения preprocessing.
+
+**M3-ATD-D1 — DONE / OWNER ACCEPTED DISPOSITION; owner acceptance: 2026-09-29.**
+По [review ATD](research/2026-09-29-audio-atd-disposition-review.md) владелец принял
+**RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED**, без новой measurement study. Сохранённые M3-R2A
+свидетельства подтверждают воспроизводимое описание локальных waveform/energy
+переходов и ответ на отдельные controlled step/DC/phase constructions, но не
+forensic-селективность. Generated benign attacks/percussion, clipping и level
+changes дают сильные ответы; gain/EQ пары разных экспериментальных ролей имеют
+одинаковые waveform и ATD outputs. На реальных originals нет event annotations,
+поэтому причины отдельных peaks не приписываются plosives или codec artifacts.
+Global maxima не обеспечивают общую splice localization. Принятый disposition относится
+к нынешнему измерительному профилю, не доказывает невозможность любого будущего
+метода и не выбирает production threshold.
+
+**ATD carry-forward — RESOLVED** явным решением владельца. Измерение остаётся
+валидным описанием переходов; сильный ответ сам по себе не является достаточным
+свидетельством монтажа. Benign и manipulated response ranges существенно
+перекрываются. Это не production method acceptance: порог отсутствует, production
+анализатор не реализован, Finding не добавлен, severity/risk mapping и
+fake/authentic verdict не разрешены. Дальнейших ATD promotion work и экспериментов
+в текущем Macro 3 нет; прототип сохраняется как research/descriptive evidence.
+Формулы и прототип не изменены. Вывод не зависит от ASC: измерения раздельны,
+fusion и статистическая независимость не утверждаются. ASC сохраняет
+**NEEDS_TARGETED_RESEARCH / REQUIRED CARRY-FORWARD** и становится следующим
+активным topic. Датированные записи прежних исследований сохраняют историю
+состояния до этого disposition.
+Текущее состояние gate — в [ROADMAP](ROADMAP.md#audio-m3-atd-d1).
 
 **M3-R2B — DONE / OWNER ACCEPTED RESEARCH RESULT; owner acceptance: 2026-09-26.**
 ARC-NCC-1: **READY_FOR_LARGER_VALIDATION**, только исследовательская готовность.
