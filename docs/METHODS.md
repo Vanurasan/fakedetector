@@ -73,6 +73,40 @@
 | Provenance / reference IDs | Стабильные IDs/якоря REFERENCES, происхождение собственного вклада и ссылки на research-свидетельства |
 | Открытые owner gates | Нерешённые вопросы и условия принятия; при ACCEPTED не остаётся блокирующих вопросов |
 
+<a id="video-m4r1"></a>
+## Кандидаты Stage 12 / Macro 4 — M4-R1
+
+**M4-R1 — DONE / OWNER ACCEPTED METHOD SELECTION**: владелец явно принял
+выбор исследовательского направления 2026-10-01 в M4-R1-A.
+**Production-метод не принят**; эксперименты и реализация не выполнялись.
+Основания, descriptive scorecard, проверка image reuse, sampling limitations
+и единственный proposed experiment находятся в
+[отчёте M4-R1](research/2026-10-01-video-method-selection.md).
+
+- **VRC-DENSE-1 — PROTOTYPE_NEXT / OWNER ACCEPTED RESEARCH DIRECTION:**
+  принято направление измерения соответствия разнесённых меняющихся
+  четырёхкадровых последовательностей на существующих dense RGB
+  и same-decode timing. Это исследование расширения ответственности
+  `video_sampled_frame_quality`, указанной в ROADMAP, без нового analyzer ID
+  или независимого вклада в риск. Повтор/малая distance не доказывают монтаж.
+- **VCM-FRAME-1 — TARGETED_RESEARCH / INACTIVE:** вторичное изучение сохранности
+  пространственного copy-move correspondence после video decode; прямой
+  перенос image analyzer/thresholds не разрешён.
+- Visual discontinuity и regional timing остаются **RESEARCH_ONLY**;
+  codec/GOP structure и semantic A/V synchronization — **DEFER**.
+  Adjacent exact-repeat и input-validation duplicates отклонены.
+  Image metadata reuse — **NOT_APPLICABLE**, JPEG DQ после decode —
+  **INVALID_AFTER_VIDEO_DECODE**.
+
+Параметры M4-R2 в отчёте остаются исследовательским протоколом, который нужно
+зафиксировать до измерений, а не production-спецификацией или thresholds.
+Forensic specificity ещё не установлена. Нет допуска Findings, severity/risk,
+probability/verdict, catalog registration, нового preprocessing, dependencies,
+runtime API/schema или изменения принятого video analyzer. Все production steps
+сохраняют gate принятия метода выше. Следующая активная задача — **M4-R2**,
+после owner review M4-R1-A и commit владельцем; сейчас она не выполняется.
+Очередность — в [ROADMAP](ROADMAP.md#video-m4r1). Macro 3 не переоткрывается.
+
 <a id="audio-m3r1"></a>
 
 ## Кандидаты Stage 12 / Macro 3 — M3-R1
