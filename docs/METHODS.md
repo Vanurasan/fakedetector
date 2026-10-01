@@ -98,13 +98,22 @@
   Image metadata reuse — **NOT_APPLICABLE**, JPEG DQ после decode —
   **INVALID_AFTER_VIDEO_DECODE**.
 
-Параметры M4-R2 в отчёте остаются исследовательским протоколом, который нужно
-зафиксировать до измерений, а не production-спецификацией или thresholds.
+Конкретизация M4-R1 §7 принята владельцем 2026-10-01 в M4-R2-P-A и зафиксирована в
+[протоколе M4-R2-P](research/2026-10-01-video-vrc-protocol.md):
+`VRC-DENSE-1/P1`, точные формулы, corpus/transform plan, oracles и execution gates.
+**M4-R2-P — DONE / OWNER ACCEPTED**.
+**VRC-DENSE-1/P1 — FROZEN RESEARCH PROTOCOL**: принят весь рассмотренный протокол,
+включая formulas, corpus manifest, transform recipes, truth/control mappings,
+oracles, resource limits и gates. Это не production-спецификация или thresholds.
+Материальное изменение требует новой документированной версии протокола
+и отдельного OWNER GATE; молчаливая правка P1 не разрешена.
+**M4-R2-E — NEXT / SEPARATE EXECUTION AUTHORIZATION REQUIRED**.
+Stage B — **BLOCKED / REAL_CORPUS_NOT_ADMITTED**.
 Forensic specificity ещё не установлена. Нет допуска Findings, severity/risk,
 probability/verdict, catalog registration, нового preprocessing, dependencies,
 runtime API/schema или изменения принятого video analyzer. Все production steps
-сохраняют gate принятия метода выше. Следующая активная задача — **M4-R2**,
-после owner review M4-R1-A и commit владельцем; сейчас она не выполняется.
+сохраняют gate принятия метода выше. Следующая задача — **M4-R2-E / Stage A**,
+после отдельного разрешения исполнения; Stage B также требует admission реальных источников.
 Очередность — в [ROADMAP](ROADMAP.md#video-m4r1). Macro 3 не переоткрывается.
 
 <a id="audio-m3r1"></a>

@@ -127,7 +127,7 @@ AFTER_MVP
 Последний завершённый Macro: Stage 12 Macro 3 — Audio Analyzer Expansion — Wave 1 (DONE / CLOSED / OWNER ACCEPTED / STRICTLY CERTIFIED — по подтверждению владельца в задании M4-R1)
 Статус Stage 12: IN_PROGRESS
 Активный Macro: Macro 4 — Video Analyzer Expansion — Wave 1; M4-R1 DONE / OWNER ACCEPTED METHOD SELECTION (2026-10-01)
-Ближайшее действие: owner review M4-R1-A и commit владельцем; следующая активная задача — M4-R2 — VRC-DENSE-1 Bounded Measurement Prototype, без production promotion
+Ближайшее действие: owner review записи M4-R2-P-A и commit владельцем; M4-R2-P DONE / OWNER ACCEPTED, VRC-DENSE-1/P1 FROZEN RESEARCH PROTOCOL; следующая задача M4-R2-E / Stage A требует отдельного разрешения исполнения, без production promotion
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Состояние Macro 2: DONE / CLOSED; принятые результаты и основания закрытия приведены в §2.2
@@ -2490,7 +2490,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
 | 2 | Image Analyzer Expansion — Wave 1 | DONE / CLOSED | Один новый production-анализатор DQ; остальные кандидаты research-only/deferred; M2-HR6 PASS / OWNER ACCEPTED; M2H-D01 → Macro 6 |
 | 3 | Audio Analyzer Expansion — Wave 1 | DONE / CLOSED / OWNER ACCEPTED | M3-R1/R2A/R2B/R3A приняты владельцем; M3-R3B disposition принят, broad validation отложена; M3-R3C, M3-R3D-P/E/F приняты владельцем; M3-R3D-F confirmation MIXED (5/8 rescues); ARC research measurement demonstrated, production promotion и дальнейшее ARC retention development текущего Macro 3 DEFERRED; M3H-A01 deferred; M3-ATD-D1 DONE / OWNER ACCEPTED DISPOSITION, ATD RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, carry-forward RESOLVED; M3-ASC-D1 DONE / OWNER ACCEPTED DISPOSITION, ASC RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, carry-forward RESOLVED; все required carry-forward разрешены; M3-HYG-1 DONE / OWNER ACCEPTED, hygiene gate CLOSED; M3-CR1 DONE / OWNER ACCEPTED CLOSURE (2026-10-01); STRICTLY CERTIFIED по подтверждению владельца в M4-R1 (см. Macro 4); production audio-метод не принят |
-| 4 | Video Analyzer Expansion — Wave 1 | IN_PROGRESS | M4-R1 DONE / OWNER ACCEPTED METHOD SELECTION (2026-10-01); VRC-DENSE-1 PROTOTYPE_NEXT / OWNER ACCEPTED RESEARCH DIRECTION; VCM-FRAME-1 TARGETED_RESEARCH / INACTIVE; следующая активная задача M4-R2 после review M4-R1-A и commit; production promotion не разрешено |
+| 4 | Video Analyzer Expansion — Wave 1 | IN_PROGRESS | M4-R1 DONE / OWNER ACCEPTED METHOD SELECTION (2026-10-01); VRC-DENSE-1 PROTOTYPE_NEXT / OWNER ACCEPTED RESEARCH DIRECTION; M4-R2-P DONE / OWNER ACCEPTED, VRC-DENSE-1/P1 FROZEN RESEARCH PROTOCOL (2026-10-01); M4-R2-E / Stage A NEXT, отдельное разрешение исполнения требуется; Stage B BLOCKED / REAL_CORPUS_NOT_ADMITTED; VCM-FRAME-1 TARGETED_RESEARCH / INACTIVE; production promotion не разрешено |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
 | 6 | Correlation, Completeness & Result Semantics Review | NOT_STARTED | После 2–5: проверка выросшего набора без двойного учёта и завышения полноты; изменения дизайна только отдельным решением |
 | 7 | WebUI Product Layer / Localization / Human-readable Results | NOT_STARTED | После 6: согласованное представление результата, RU/EN и проверка неизменности API/domain semantics |
@@ -4080,7 +4080,7 @@ certification artifacts не заявляет. Dispositions и carry-forward Mac
 не переоткрыты.
 
 **M4-R1 — DONE / OWNER ACCEPTED METHOD SELECTION**: решение владельца
-от 2026-10-01 записано в M4-R1-A. Текущая рабочая ветка —
+от 2026-10-01 записано в M4-R1-A. Рабочая ветка при M4-R1-A —
 `feat/stage12-macro4-video-analyzer-expansion-wave1`, HEAD тот же;
 начальное состояние M4-R1-A — ожидаемые незакоммиченные изменения M4-R1
 в METHODS, ROADMAP и новом research report. Принято исследовательское
@@ -4107,9 +4107,9 @@ responsibility `video_sampled_frame_quality`, без дублирующего а
 research-only, GOP/codec и semantic A/V — deferred. Image metadata/JPEG DQ
 не переносятся на decoded frames.
 
-**Следующая активная задача: M4-R2 — VRC-DENSE-1 Bounded Measurement
-Prototype**, после owner review M4-R1-A и commit владельцем. Сейчас M4-R2,
-media acquisition и измерения не выполняются. Предложенные параметры нужно
+**Следующая задача на момент M4-R1-A: M4-R2 — VRC-DENSE-1 Bounded Measurement
+Prototype**, после owner review M4-R1-A и commit владельцем. В M4-R1-A M4-R2,
+media acquisition и измерения не выполнялись. Предложенные параметры нужно
 зафиксировать до измерений; forensic specificity ещё не установлена,
 повторяющееся содержание не доказывает манипуляцию. Принятие не разрешает
 production method/thresholds, Findings, severity/risk, probability/verdict,
@@ -4126,6 +4126,58 @@ Graphify STALE, не использовался и не пересобиралс
 `reviews/M4-R1-video-selection/acceptance/`: acceptance-only.diff, complete.diff
 включая untracked report, review-summary.md и git-status.txt.
 Macro 4 и Stage 12 остаются IN_PROGRESS.
+
+### M4-R2-P — протокол и готовность корпуса, 2026-10-01
+
+**DONE / OWNER ACCEPTED**: владелец принял весь рассмотренный протокол
+2026-10-01 в M4-R2-P-A. **VRC-DENSE-1/P1 — FROZEN RESEARCH PROTOCOL**.
+Исторический baseline M4-R2-P: ветка
+`feat/stage12-macro4-video-analyzer-expansion-wave1`, HEAD
+`bc767c2cc2f8ea0110c2208705ae36d787130251`, чистое committed дерево;
+запись M4-R1-A уже присутствует в baseline. Это подготовка, не запуск M4-R2.
+M4-R2-P-A начата на той же ветке/HEAD с ожидаемыми незакоммиченными изменениями
+M4-R2-P: METHODS, ROADMAP и untracked protocol report; эти изменения сохранены.
+
+[Протокол VRC-DENSE-1/P1](research/2026-10-01-video-vrc-protocol.md)
+конкретизирует M4-R1 §7 без изменения формул и producer limits:
+Stage A — 42 procedural + 6 boundary slots; Stage B — до 12 независимых
+real groups × 4 variants. Реальные записи **NOT ADMITTED**, все 12 slots missing.
+Stage A самостоятельно даёт только SYNTHETIC_ONLY; added-value gate требует
+минимум двух независимых eligible real groups. Recipes и analytic/resource
+oracles заданы до outcomes; encoder capabilities проверены read-only,
+encoding/generation/measurements не выполнялись.
+
+- [x] подготовить profile, manifest/transform recipes, права/provenance template,
+  support/truth rules, resource и determinism plans для owner review;
+- [x] получить owner acceptance конкретного frozen protocol: 2026-10-01;
+- [ ] отдельно разрешить M4-R2-E и выполнить инженерную Stage A;
+- [ ] допустить permitted real files/provenance/hashes перед Stage B;
+- [ ] рассмотреть результаты без автоматического production promotion.
+
+**M4-R2-E — NEXT / SEPARATE EXECUTION AUTHORIZATION REQUIRED**.
+Следующая задача — **M4-R2-E / Stage A** (42 procedural + 6 boundary cases);
+в M4-R2-P-A она не выполняется. Stage B — **BLOCKED / REAL_CORPUS_NOT_ADMITTED**;
+R01–R12 не являются существующими/admitted research evidence.
+Synthetic-only результат не удовлетворяет real-source added-value gate.
+Engineering watchpoints Stage A сохранены в protocol report §8.4: возможные
+превышения 20 MiB lossless derivatives и 4 MiB полного JSONL pair output.
+Они не разрешают менять P1; материальное изменение требует новой версии
+протокола и отдельного OWNER GATE.
+Production method/thresholds, новый analyzer ID, Findings, preprocessing,
+dependencies и public API/config/schema не разрешены. VCM-FRAME-1
+TARGETED_RESEARCH / INACTIVE; Macro 3 CLOSED / STRICTLY CERTIFIED;
+Macro 4 и Stage 12 IN_PROGRESS. Production-каталог сохраняет пять анализаторов.
+
+Изменены только METHODS, ROADMAP и новый protocol report. Для этой docs-only
+задачи предусмотрены `git diff --check`, полный intended diff с untracked report
+и итоговый status; tests, full quality barrier и certification не запускаются.
+Внешние snapshots: `FakeDetector-Work/research/M4-R2-VRC/`; owner review bundle:
+`FakeDetector-Work/reviews/M4-R2-VRC-protocol/` (complete.diff с полным новым report).
+Принятие основано на явном решении владельца; запись M4-R2-P-A требует owner review.
+Acceptance bundle в подкаталоге `reviews/M4-R2-VRC-protocol/acceptance/`:
+acceptance-only.diff, complete.diff, review-summary.md, git-status.txt,
+protocol-sha256.txt. Hash финального report служит ссылкой для будущей M4-R2-E;
+исполнение, media generation, encoding trials и новые измерения не выполнялись.
 
 ## Macro 6 — корреляция и смысл результата
 
