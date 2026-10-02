@@ -31,6 +31,8 @@ from fakedetector.intake.media_tools import MediaToolSystemError
 from fakedetector.intake.validation import _classify_header
 
 _RECEIVED_AT = datetime(2026, 8, 13, tzinfo=UTC)
+# A complete unreferenced mdat box preserves existing sample offsets and encoded data.
+_MPEG_LIKE_MDAT = b"\x00\x00\x00\x10mdat\xff\xe3\x80\x00\x00\x00\x00\x00"
 _MATRIX = [
     ("jpg", "image/jpeg", MediaType.IMAGE, ImageTechnicalParameters),
     ("jpeg", "image/jpeg", MediaType.IMAGE, ImageTechnicalParameters),
@@ -120,6 +122,152 @@ def test_accepts_complete_canonical_matrix_with_required_parameters(
     assert all(check.passed for check in result.checks)
     with owner.open_for_read(controlled.owned_source) as source:
         assert source.read(1)
+    owner.cleanup(controlled.owned_source)
+
+
+@pytest.mark.parametrize(
+    ("extension", "mime_type", "media_type"),
+    [
+        ("mp4", "video/mp4", MediaType.VIDEO),
+        ("mov", "video/quicktime", MediaType.VIDEO),
+        ("m4a", "audio/mp4", MediaType.AUDIO),
+    ],
+)
+def test_iso_bmff_with_mpeg_like_mdat_preserves_container_and_stream_type(
+    tmp_path: Path,
+    media_files: dict[str, Path],
+    extension: str,
+    mime_type: str,
+    media_type: MediaType,
+) -> None:
+    payload = media_files[extension].read_bytes() + _MPEG_LIKE_MDAT
+    assert len(payload) < 64 * 1024  # The incidental pair must be in the inspected header.
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    controlled = controlled_source(
+        owner,
+        payload,
+        original_name=f"incidental.{extension}",
+        declared_content_type=mime_type,
+    )
+
+    result = FileValidator(
+        config=make_config(tmp_path / "temp"),
+        temporary_input_owner=owner,
+    ).validate(controlled)
+
+    assert result.accepted
+    assert result.errors == []
+    assert result.validated_file is not None
+    assert result.validated_file.detected_mime_type == mime_type
+    assert result.validated_file.media_type is media_type
+    assert result.validated_file.safe_read
+    assert result.validated_file.sha256 == controlled.sha256
+    owner.cleanup(controlled.owned_source)
+
+
+@pytest.mark.parametrize("keep_id3", [True, False], ids=["id3", "raw-mpeg-audio"])
+def test_genuine_mp3_with_or_without_id3_remains_accepted(
+    tmp_path: Path,
+    media_files: dict[str, Path],
+    keep_id3: bool,
+) -> None:
+    payload = media_files["mp3"].read_bytes()
+    assert payload.startswith(b"ID3")
+    assert not payload[5] & 0x10  # The generated fixture has no ID3 footer.
+    assert all(value < 128 for value in payload[6:10])
+    if not keep_id3:
+        tag_size = sum(
+            value << shift for value, shift in zip(payload[6:10], (21, 14, 7, 0), strict=True)
+        )
+        payload = payload[10 + tag_size :]
+        assert not payload.startswith(b"ID3")
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    controlled = controlled_source(
+        owner, payload, original_name="genuine.mp3", declared_content_type="audio/mpeg"
+    )
+
+    result = FileValidator(
+        config=make_config(tmp_path / "temp"),
+        temporary_input_owner=owner,
+    ).validate(controlled)
+
+    assert result.accepted
+    assert result.validated_file is not None
+    assert result.validated_file.detected_mime_type == "audio/mpeg"
+    assert result.validated_file.media_type is MediaType.AUDIO
+    assert result.validated_file.safe_read
+    owner.cleanup(controlled.owned_source)
+
+
+@pytest.mark.parametrize(
+    ("payload", "error_code"),
+    [
+        (b"junkftypisom" + bytes(16), "unsupported_mime_type"),
+        (b"\x00\x00\x00\x04ftypisom" + bytes(8), "unsupported_mime_type"),
+        (b"\x00\x00\x00\x20ftypisom", "unsupported_mime_type"),
+        (b"\x00\x00\x00\x10freeftypisom", "unsupported_mime_type"),
+        (
+            b"\x00\x00\x00\x10ftypisom" + bytes(4) + _MPEG_LIKE_MDAT,
+            "unsafe_or_unreadable_file",
+        ),
+    ],
+    ids=["not-boxes", "invalid-size", "truncated-ftyp", "ftyp-in-payload", "no-media"],
+)
+def test_incidental_ftyp_or_unreadable_bmff_is_not_accepted_as_mp4(
+    tmp_path: Path,
+    payload: bytes,
+    error_code: str,
+) -> None:
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    controlled = controlled_source(
+        owner, payload, original_name="malformed.mp4", declared_content_type="video/mp4"
+    )
+
+    result = FileValidator(
+        config=make_config(tmp_path / "temp"),
+        temporary_input_owner=owner,
+    ).validate(controlled)
+
+    assert not result.accepted
+    assert result.validated_file is None
+    assert result.errors[0].code == error_code
+    assert result.checks[-1].code == "file_signature_valid"
+    owner.cleanup(controlled.owned_source)
+
+
+@pytest.mark.parametrize(
+    ("name", "declared", "failed_check"),
+    [
+        ("renamed.mov", "video/mp4", "type_consistent"),
+        ("declared.mp4", "audio/mpeg", "declared_mime_consistent"),
+    ],
+)
+def test_bmff_with_mpeg_like_mdat_still_rejects_type_conflicts(
+    tmp_path: Path,
+    media_files: dict[str, Path],
+    name: str,
+    declared: str,
+    failed_check: str,
+) -> None:
+    owner = LocalTemporaryInputOwner(tmp_path / "temp")
+    controlled = controlled_source(
+        owner,
+        media_files["mp4"].read_bytes() + _MPEG_LIKE_MDAT,
+        original_name=name,
+        declared_content_type=declared,
+    )
+
+    result = FileValidator(
+        config=make_config(tmp_path / "temp"),
+        temporary_input_owner=owner,
+    ).validate(controlled)
+
+    assert not result.accepted
+    assert result.validated_file is None
+    assert result.errors[0].code == "file_signature_mismatch"
+    assert result.errors[0].safe_details == {"detected_mime_type": "video/mp4"}
+    assert result.checks[-1].code == failed_check
+    assert "safe_read_completed" not in {check.code for check in result.checks}
     owner.cleanup(controlled.owned_source)
 
 
