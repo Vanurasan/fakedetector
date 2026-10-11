@@ -341,6 +341,19 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-10-12
+
+#### Decision
+
+- **[Stage 12 / Macro 4 / M4-R2] Владелец принял закрытие VRC-DENSE-1 Stage A
+  с engineering failure и disposition G5 DEFER.** Предобъявленная composite
+  матрица завершена: 144 cells, 133 VALID и 11 LOCAL_FAIL; G2 FAIL и G3 PARTIAL
+  сохранены. Синтетическая измеримость не даёт оснований для real-source
+  validation или production promotion. Stage B не разрешена, дальнейший полный
+  Stage A rerun не планируется. Актуальные статус и методическая интерпретация —
+  в [ROADMAP](ROADMAP.md#video-m4r2-closeout) и [METHODS](METHODS.md#video-m4r1).
+  Macro 4 остаётся IN_PROGRESS; P1, корпус, production и runtime не изменены.
+
 ### 2026-09-25
 
 #### Decision

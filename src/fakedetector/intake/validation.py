@@ -394,11 +394,14 @@ def _classify_header(header: bytes) -> _HeaderCandidate | None:
         if document_type in {"matroska", "webm"}:
             return _HeaderCandidate("matroska", document_type=document_type)
         return None
-    if header.startswith(b"ID3") or _has_mpeg_audio_frame(header):
+    if header.startswith(b"ID3"):
         return _HeaderCandidate("mp3")
+    # Structural containers take priority over incidental MPEG sync bytes in their payload.
     brands = _iso_bmff_brands(header)
     if brands is not None:
         return _HeaderCandidate("isobmff", brands=brands)
+    if _has_mpeg_audio_frame(header):
+        return _HeaderCandidate("mp3")
     return None
 
 
