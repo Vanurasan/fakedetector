@@ -126,8 +126,10 @@ AFTER_MVP
 Статус Macros 0–8 Stage 11: DONE / owner accepted
 Последний завершённый Macro: Stage 12 Macro 3 — Audio Analyzer Expansion — Wave 1 (DONE / CLOSED / OWNER ACCEPTED / STRICTLY CERTIFIED — по подтверждению владельца в задании M4-R1)
 Статус Stage 12: IN_PROGRESS
-Активный Macro: Macro 4 — Video Analyzer Expansion — Wave 1; M4-R1 DONE / OWNER ACCEPTED METHOD SELECTION (2026-10-01)
-Ближайшее действие: owner review записи M4-R2-P-A и commit владельцем; M4-R2-P DONE / OWNER ACCEPTED, VRC-DENSE-1/P1 FROZEN RESEARCH PROTOCOL; следующая задача M4-R2-E / Stage A требует отдельного разрешения исполнения, без production promotion
+Активный Macro: Macro 4 — Video Analyzer Expansion — Wave 1 — IN_PROGRESS; M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12)
+M4-R2: COMPLETE_144_CELL_MATRIX; 133 VALID / 11 LOCAL_FAIL / 0 GLOBAL_STOP / 0 NOT_EXECUTED; G1 PASS / G2 FAIL / G3 PARTIAL / G4 NOT_EVALUATED_STAGE_A / G5 DEFER
+Stage B: BLOCKED / NOT AUTHORIZED; production: UNCHANGED / NO VRC PROMOTION; дальнейший полный Stage A rerun: NOT PLANNED
+Ближайшее действие: owner review документационного закрытия M4-R2; следующий нерешённый кандидат Macro 4 — VCM-FRAME-1, TARGETED_RESEARCH / INACTIVE, только навигация для решения владельца, без начала работы
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Состояние Macro 2: DONE / CLOSED; принятые результаты и основания закрытия приведены в §2.2
@@ -2490,7 +2492,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
 | 2 | Image Analyzer Expansion — Wave 1 | DONE / CLOSED | Один новый production-анализатор DQ; остальные кандидаты research-only/deferred; M2-HR6 PASS / OWNER ACCEPTED; M2H-D01 → Macro 6 |
 | 3 | Audio Analyzer Expansion — Wave 1 | DONE / CLOSED / OWNER ACCEPTED | M3-R1/R2A/R2B/R3A приняты владельцем; M3-R3B disposition принят, broad validation отложена; M3-R3C, M3-R3D-P/E/F приняты владельцем; M3-R3D-F confirmation MIXED (5/8 rescues); ARC research measurement demonstrated, production promotion и дальнейшее ARC retention development текущего Macro 3 DEFERRED; M3H-A01 deferred; M3-ATD-D1 DONE / OWNER ACCEPTED DISPOSITION, ATD RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, carry-forward RESOLVED; M3-ASC-D1 DONE / OWNER ACCEPTED DISPOSITION, ASC RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, carry-forward RESOLVED; все required carry-forward разрешены; M3-HYG-1 DONE / OWNER ACCEPTED, hygiene gate CLOSED; M3-CR1 DONE / OWNER ACCEPTED CLOSURE (2026-10-01); STRICTLY CERTIFIED по подтверждению владельца в M4-R1 (см. Macro 4); production audio-метод не принят |
-| 4 | Video Analyzer Expansion — Wave 1 | IN_PROGRESS | M4-R1 DONE / OWNER ACCEPTED METHOD SELECTION (2026-10-01); VRC-DENSE-1 PROTOTYPE_NEXT / OWNER ACCEPTED RESEARCH DIRECTION; M4-R2-P DONE / OWNER ACCEPTED, VRC-DENSE-1/P1 FROZEN RESEARCH PROTOCOL (2026-10-01); M4-R2-E / Stage A NEXT, отдельное разрешение исполнения требуется; Stage B BLOCKED / REAL_CORPUS_NOT_ADMITTED; VCM-FRAME-1 TARGETED_RESEARCH / INACTIVE; production promotion не разрешено |
+| 4 | Video Analyzer Expansion — Wave 1 | IN_PROGRESS | M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12); G1 PASS, G2 FAIL, G3 PARTIAL, G4 NOT_EVALUATED_STAGE_A, G5 DEFER; Stage B BLOCKED / NOT AUTHORIZED; полный Stage A rerun NOT PLANNED; VCM-FRAME-1 TARGETED_RESEARCH / INACTIVE; production UNCHANGED / NO VRC PROMOTION; [закрытие Stage A](#video-m4r2-closeout) |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
 | 6 | Correlation, Completeness & Result Semantics Review | NOT_STARTED | После 2–5: проверка выросшего набора без двойного учёта и завышения полноты; изменения дизайна только отдельным решением |
 | 7 | WebUI Product Layer / Localization / Human-readable Results | NOT_STARTED | После 6: согласованное представление результата, RU/EN и проверка неизменности API/domain semantics |
@@ -4068,7 +4070,102 @@ acceptance-only.diff, complete.diff от HEAD, review-summary.md и git-status.t
 <a id="video-m4r1"></a>
 ## Macro 4 — Video Analyzer Expansion — Wave 1 — IN_PROGRESS
 
+<a id="video-m4r2-closeout"></a>
+### M4-R2 — закрытие VRC-DENSE-1 Stage A и G5 DEFER, 2026-10-12
+
+**OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL**: владелец явно принял
+независимый OWNER review **PASS** в задании
+`M4-R2-VRC-STAGE-A-CLOSEOUT-DEFER`. Закрыт только исследовательский трек
+M4-R2 / VRC Stage A: **COMPLETE / SYNTHETIC_ONLY / COMPLETE_144_CELL_MATRIX**.
+Macro 4 и Stage 12 остаются **IN_PROGRESS**.
+
+| Показатель | Принятый результат |
+|---|---|
+| Composite matrix | 144 cells: 133 VALID, 11 LOCAL_FAIL, 0 GLOBAL_STOP, 0 NOT_EXECUTED |
+| G1 | PASS |
+| G2 | FAIL |
+| G3 | PARTIAL |
+| G4 | NOT_EVALUATED_STAGE_A |
+| G5 disposition | DEFER |
+| Formal determinism, 48 slots | 41 PASS, 0 FAIL, 7 NOT_FULLY_EVALUATED |
+| Stage B | BLOCKED / NOT AUTHORIZED |
+| Production | UNCHANGED / NO VRC PROMOTION; ровно пять анализаторов |
+| Further full Stage A rerun | NOT PLANNED |
+
+Composite объявлен отдельно: неизменный AJ-06 prefix, positions 1..132 до
+**B02-r3**, плюс AJ-07 **B03..B06**, все три fresh repeats, 12 cells.
+AJ-06 **B03-r1 и B03-r2 исключены** из composite. Это не переименование AJ-06
+в завершённую серию и не выбор успешных повторов по outcomes.
+
+Все 11 LOCAL_FAIL имеют причину **RESOURCE_MONITOR_SAMPLING_GAP**:
+это engineering/resource failures, не scientific mismatches. В принятом
+composite нет свидетельств numeric determinism mismatch, ошибки научной
+арифметики VRC, binding failure, RSS >1 GiB, scientific output-cap failure
+или lifecycle ownership failure. **NO OBSERVED NUMERIC MISMATCH** не означает
+**FORMAL DETERMINISM PASS FOR ALL 48 SLOTS**; семь NOT_FULLY_EVALUATED не становятся
+PASS на основании совпавших диагностических проекций.
+
+Научная интерпретация, exact-copy support/coverage и основания **DEFER** —
+в [METHODS](METHODS.md#video-m4r1). G2 FAIL и G3 PARTIAL сохранены; реальный
+корпус не допущен, G4 невозможно оценить в Stage A, а P1 требует разрешения
+engineering failures до Stage B. Допуска M4-R2-E real-source execution нет:
+acquisition, R01–R12 evidence и Stage B manifests не создаются. Production
+implementation, runtime/config/public schema, новый Finding type и независимый
+forensic/risk vote не разрешены.
+
+Матрица из 144 cells завершена. Дальнейший полный Stage A rerun **NOT PLANNED**;
+G2 failure сохраняется, outcome-driven rerun и retry-until-pass не разрешены.
+
+Исторические серии остаются неизменными свидетельствами:
+
+| Серия | Сохранённый статус |
+|---|---|
+| AJ-01 | STOPPED / G2 FAIL / historical |
+| AJ-02 | STOPPED / G2 FAIL / historical |
+| AJ-03 | STOPPED / G2 FAIL / historical |
+| AJ-04 | STOPPED / G2 FAIL / historical |
+| AJ-05 | STOPPED PREFLIGHT / 0 FORMAL ATTEMPTS / historical |
+| AJ-06 | STOPPED / G2 FAIL / historical |
+| AJ-07 | COMPLETED 12/12 completion extension |
+
+Исторический AJ-06 B03-r2 сохраняет **ROOT_CAUSE_NOT_ESTABLISHED**;
+публикационная гонка не объявляется доказанной причиной того JSONDecodeError.
+**HANDLE_COUNT_RESIDUAL: UNATTRIBUTED +3** сохраняется как
+**RESIDUAL / NOT ESTABLISHED AS HARNESS HANDLE LEAK**. Он не объявлен ни
+безвредным, ни доказанной утечкой. Исторические resource-monitor scheduling
+outliers сохранены в исходных evidence; новой диагностики или перезапуска
+ради этих findings в closeout нет.
+
+Основания и неизменные ссылки (SHA-256):
+
+- [Frozen P1](research/2026-10-01-video-vrc-protocol.md):
+  `e78cec2d22914f8bff26b5a8c831975be3d00dbcc4cd0aad04b96653ba738a0f`;
+- accepted AJ-07 harness manifest:
+  `d6b740c37a73342c06826673b06fff823d01c91af0974c956a6e8bb01a4dea37`;
+- accepted Stage A completion declaration:
+  `9e02b2b986c09fc25a6615635bc42575963159aaf7fe3e80f79ae97eed18ee33`.
+
+Принятый внешний bundle:
+`FakeDetector-Work/reviews/M4-R2-VRC-stage-a/formal-aj07-stage-a-completion/`
+(`07-aj07-manifest.json`, `08-stage-a-completion-declaration.json`,
+`14-stage-a-composite-final-matrix.json`, `15-composite-source-map.json`);
+AJ-06: `FakeDetector-Work/reviews/M4-R2-VRC-stage-a/formal-aj06-complete-matrix/`.
+Именованный независимый review —
+`FakeDetector_OWNER_REVIEW_STAGE_A_AJ07_2026-10-12.md`; локальная копия при
+closeout не найдена. Основание принятия — явное OWNER DECISION текущего задания,
+решение review не пересчитывалось. Closeout bundle с полным diff и source hashes:
+`FakeDetector-Work/reviews/M4-R2-VRC-stage-a/stage-a-final-closeout/`.
+
+**NEXT_UNRESOLVED_MACRO4_ITEM: VCM-FRAME-1** — существующий вторичный кандидат,
+**TARGETED_RESEARCH / INACTIVE**. Это навигация для владельца, не разрешение
+исследования и не назначение новой задачи. Остальные dispositions Macro 4
+сохранены. Закрытие VRC Stage A само по себе не закрывает Macro 4;
+следующая работа не начинается. **STOP / OWNER GATE** после review closeout.
+
 ### M4-R1 — выбор измерения и план исследования, 2026-10-01
+
+Ниже историческая запись состояния M4-R1-A; прежний checklist и следующий шаг
+не назначают текущую работу. Актуальный статус — в [закрытии Stage A](#video-m4r2-closeout).
 
 Исторический baseline M4-R1: ветка `feat/stage12-macro3-audio-analyzer-expansion-wave1`,
 HEAD `c4488109e56c90c3b715779ad7d11f900b51c5b8`, чистое рабочее дерево.
@@ -4099,7 +4196,7 @@ certification artifacts не заявляет. Dispositions и carry-forward Mac
 Подробные основания и proposed profile находятся в
 [отчёте M4-R1](research/2026-10-01-video-method-selection.md);
 методический статус — в [METHODS](METHODS.md#video-m4r1).
-**VRC-DENSE-1 — PROTOTYPE_NEXT / OWNER ACCEPTED RESEARCH DIRECTION**
+**На момент M4-R1-A: VRC-DENSE-1 — PROTOTYPE_NEXT / OWNER ACCEPTED RESEARCH DIRECTION**
 как исследование расширения существующей
 responsibility `video_sampled_frame_quality`, без дублирующего анализатора
 и независимого risk vote. **VCM-FRAME-1 — TARGETED_RESEARCH / INACTIVE** —
@@ -4129,6 +4226,11 @@ Macro 4 и Stage 12 остаются IN_PROGRESS.
 
 ### M4-R2-P — протокол и готовность корпуса, 2026-10-01
 
+Ниже историческая запись подготовки и принятия P1, включая checklist на тот
+момент. Текущее исполнение закрыто в [Stage A closeout](#video-m4r2-closeout).
+Frozen P1 сохранён byte-identical, его исторические planning statements
+не являются текущим статусом исполнения.
+
 **DONE / OWNER ACCEPTED**: владелец принял весь рассмотренный протокол
 2026-10-01 в M4-R2-P-A. **VRC-DENSE-1/P1 — FROZEN RESEARCH PROTOCOL**.
 Исторический baseline M4-R2-P: ветка
@@ -4154,8 +4256,8 @@ encoding/generation/measurements не выполнялись.
 - [ ] допустить permitted real files/provenance/hashes перед Stage B;
 - [ ] рассмотреть результаты без автоматического production promotion.
 
-**M4-R2-E — NEXT / SEPARATE EXECUTION AUTHORIZATION REQUIRED**.
-Следующая задача — **M4-R2-E / Stage A** (42 procedural + 6 boundary cases);
+**На момент M4-R2-P-A: M4-R2-E — NEXT / SEPARATE EXECUTION AUTHORIZATION REQUIRED**.
+Следующей задачей была **M4-R2-E / Stage A** (42 procedural + 6 boundary cases);
 в M4-R2-P-A она не выполняется. Stage B — **BLOCKED / REAL_CORPUS_NOT_ADMITTED**;
 R01–R12 не являются существующими/admitted research evidence.
 Synthetic-only результат не удовлетворяет real-source added-value gate.

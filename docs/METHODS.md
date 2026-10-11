@@ -74,16 +74,16 @@
 | Открытые owner gates | Нерешённые вопросы и условия принятия; при ACCEPTED не остаётся блокирующих вопросов |
 
 <a id="video-m4r1"></a>
-## Кандидаты Stage 12 / Macro 4 — M4-R1
+## Кандидаты Stage 12 / Macro 4 — M4-R1 / M4-R2
 
 **M4-R1 — DONE / OWNER ACCEPTED METHOD SELECTION**: владелец явно принял
 выбор исследовательского направления 2026-10-01 в M4-R1-A.
-**Production-метод не принят**; эксперименты и реализация не выполнялись.
+**Production-метод не принят**; в M4-R1 эксперименты и реализация не выполнялись.
 Основания, descriptive scorecard, проверка image reuse, sampling limitations
 и единственный proposed experiment находятся в
 [отчёте M4-R1](research/2026-10-01-video-method-selection.md).
 
-- **VRC-DENSE-1 — PROTOTYPE_NEXT / OWNER ACCEPTED RESEARCH DIRECTION:**
+- **VRC-DENSE-1 — DEFER / OWNER ACCEPTED DISPOSITION (2026-10-12):**
   принято направление измерения соответствия разнесённых меняющихся
   четырёхкадровых последовательностей на существующих dense RGB
   и same-decode timing. Это исследование расширения ответственности
@@ -107,14 +107,40 @@
 oracles, resource limits и gates. Это не production-спецификация или thresholds.
 Материальное изменение требует новой документированной версии протокола
 и отдельного OWNER GATE; молчаливая правка P1 не разрешена.
-**M4-R2-E — NEXT / SEPARATE EXECUTION AUTHORIZATION REQUIRED**.
-Stage B — **BLOCKED / REAL_CORPUS_NOT_ADMITTED**.
-Forensic specificity ещё не установлена. Нет допуска Findings, severity/risk,
+
+Владелец принял независимый review завершённой composite Stage A 2026-10-12:
+**COMPLETE / SYNTHETIC_ONLY / COMPLETE WITH ENGINEERING FAIL**.
+Состав матрицы, G1–G4, формальный determinism и неизменные исторические серии —
+в [закрытии M4-R2](ROADMAP.md#video-m4r2-closeout).
+
+**G3 — PARTIAL:** в формально пригодных свидетельствах 65 exact-copy observations:
+49 **SUPPORTED_ELIGIBLE** и 16 **COVERAGE_MISS**. Все 49 supported eligible
+наблюдений удовлетворяют `D_color = 0`, `D_delta = 0`. Coverage misses остаются
+отсутствием поддержки, а не успешными zero-distance detections.
+
+VRC показывает контролируемую синтетическую измеримость. В динамических
+конструкциях P01/P02 заранее заданная V02 copy pair даёт нулевую VRC distance,
+соответствующий untouched control — ненулевую; существующий adjacent exact-run
+baseline не описывает то же структурное соответствие. При этом сохранены
+неспецифичные нули, ties или близкие наблюдения в static, periodic, slides и
+обычных edit/cut/flash/lighting constructions. Эти результаты не устанавливают
+forensic specificity, manipulation classifier, универсальный порог,
+real-world added value, population accuracy/FPR или production readiness.
+
+**G5 — DEFER:** VRC остаётся исследовательским кандидатом с продемонстрированным
+синтетическим сигналом. Переход к real-source validation по frozen P1 отложен:
+G2 **FAIL**, G3 **PARTIAL**, G4 **NOT_EVALUATED_STAGE_A**, реальный корпус не допущен;
+P1 требует разрешить engineering failures Stage A до Stage B.
+Stage B — **BLOCKED / NOT AUTHORIZED**. Полный повтор Stage A **NOT PLANNED**;
+retry-until-pass и подбор повторов по outcomes не разрешены.
+
+Production-каталог сохраняет ровно пять анализаторов; VRC promotion отсутствует.
+Нет допуска нового Finding type, независимого forensic/risk vote, severity/risk,
 probability/verdict, catalog registration, нового preprocessing, dependencies,
-runtime API/schema или изменения принятого video analyzer. Все production steps
-сохраняют gate принятия метода выше. Следующая задача — **M4-R2-E / Stage A**,
-после отдельного разрешения исполнения; Stage B также требует admission реальных источников.
-Очередность — в [ROADMAP](ROADMAP.md#video-m4r1). Macro 3 не переоткрывается.
+runtime/config/public schema или изменения принятого video analyzer. Все
+production steps сохраняют gate принятия метода выше. Очередность — в
+[ROADMAP](ROADMAP.md#video-m4r1); VCM-FRAME-1 остаётся TARGETED_RESEARCH / INACTIVE.
+Macro 3 не переоткрывается.
 
 <a id="audio-m3r1"></a>
 
