@@ -1958,6 +1958,7 @@ PyYAML
 Pillow
 opencv-python-headless
 numpy
+pyjpegio
 ```
 
 В Stage 8 Macro 2 фактически добавлены зависимости рабочего окружения `jinja2` и

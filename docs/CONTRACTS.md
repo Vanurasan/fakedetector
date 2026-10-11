@@ -1687,7 +1687,7 @@ native children запускаются последовательно. Слот 
 Допуск не ждёт свободного слота; подтверждение barrier использует прежнюю bounded
 terminate/kill/reap процедуру. Это не межпроцессный или системный semaphore.
 Прямые вызовы private kernels/tools и legacy dispatch без forensic demand этим
-механизмом не ограничены. Текущий production catalog forensic demand не запрашивает.
+механизмом не ограничены.
 Жёсткой OS RSS quota нет; process isolation, deadlines, размеры и этот допуск
 не дают гарантии общего native working set для нескольких Python processes.
 

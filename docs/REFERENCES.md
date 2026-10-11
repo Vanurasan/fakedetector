@@ -57,6 +57,165 @@ repository не добавляются. Deterministic generated positive, negati
 false-positive/challenge и boundary/not-applicable fixtures не являются
 статистической validation dataset и не должны так описываться.
 
+<a id="audio-m3r2a"></a>
+
+## M3-R2A — происхождение подготовленных аудиоисточников
+
+Проверка и доступ: **2026-09-26**. Только внешний исследовательский workspace;
+production dataset/dependency не добавлена. Пять selected real sources прошли
+measurement validation; Vibe Ace сохранён как historical resource rejection:
+см. [отчёт M3-R2A](research/2026-09-26-audio-transition-measurement-prototype.md).
+Точные downloads, archive members, hashes и derivative recipes сохраняются в
+`FakeDetector-Work/research/M3-R2A-transition/provenance/corpus-v2.json` (активный
+состав), `corpus.json` (V1 history) и внешних
+скриптах. Файлы corpus/fixtures не входят в Git.
+
+| ID / категория | Источник и фактическое использование | Права и attribution |
+|---|---|---|
+| M3-TR-01 / DATASET | [LibriSpeech, OpenSLR SLR12](https://www.openslr.org/12/), test-clean; первые FLAC первых трёх разных speakers в порядке streaming archive. Bounded M1 окна и generated derivatives измерены frozen ATD/ASC протоколом | CC BY 4.0, явно указана поставщиком; LibriSpeech — Vassil Panayotov, Guoguo Chen, Daniel Povey, Sanjeev Khudanpur; исходные LibriVox narrations, speaker IDs ниже. Attribution, ссылка на источник/лицензию и обозначение изменений сохраняются |
+| M3-TR-02 / DATASET | [Glacier Bay / NPS, underwater sound recordings](https://www.nps.gov/glba/learn/nature/soundclips.htm), humpback contact call, 25Sep2001; M1 окна и derivatives измерены frozen ATD/ASC протоколом | NPS явно обозначает записи как собственные hydrophone recordings. [NPS ownership policy](https://www.nps.gov/aboutus/disclaimer.htm): US Government work, public domain в США, если не указаны исключения; для этой записи отдельного исключения не заявлено. Attribution: National Park Service / Glacier Bay; не утверждать endorsement, при коммерческой перепубликации сохранять требуемое указание original US Government work |
+| M3-TR-03 / DATASET | [Vibe Ace — Kevin MacLeod, Free Music Archive / Jazz Sampler](https://freemusicarchive.org/music/Kevin_MacLeod/Jazz_Sampler/Vibe_Ace), исходный MP3. Загружен, проверен, но M1 resource preflight отказал; numeric artifacts и ATD/ASC результаты из него не получены | CC BY 3.0, ссылка на точную лицензию прочитана на странице записи; независимая запись происхождения [librosa data](https://raw.githubusercontent.com/librosa/data/main/audio/Kevin_MacLeod_-_Vibe_Ace.txt) согласуется. Attribution: Vibe Ace by Kevin MacLeod, Free Music Archive, Jazz Sampler |
+| M3-TR-04 / DATASET | [solo trumpet -06in F - 90bpm.wav — Mihai Sorohan / sorohanro, Freesound 77711](https://freesound.org/people/sorohanro/sounds/77711/), [полный provider HQ MP3 preview](https://cdn.freesound.org/previews/77/77711_1179015-hq.mp3). Первый и единственный replacement candidate; outcome-blind выбор и PASS неизменённого M1 preflight до ATD/ASC, 11 172 400 bytes при 52 428 800 budget. Реальная запись трубы, downloaded MP3 без локального crop/resample/downmix/re-encode; underlying WAV с login не скачивался | Текущая canonical sound page явно указывает CC BY 4.0; snapshot `provenance/freesound-77711.html` сохранён. [Historical librosa provenance](https://raw.githubusercontent.com/librosa/data/main/audio/sorohanro_-_solo-trumpet-06.txt) указывает BY 3.0; действующий выбор опирается на прямое разрешение текущей авторской страницы BY 4.0. Attribution: title, Mihai Sorohan / sorohanro, Freesound 77711, source/license link, изменения derivatives; no endorsement |
+
+Применимые [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) и
+[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) разрешают использование,
+переработку и распространение, включая коммерческое, при соблюдении attribution,
+license link и change notices; ограничения прав третьих лиц лицензией не
+отменяются. Данные используются для проверки измерений, не для имитации личности
+или заявлений об одобрении проекта авторами. Производные разрешено сохранять
+во внешнем workspace с provenance; никаких media здесь не распространяется.
+Generated derivatives не становятся оригинальными untouched recordings.
+
+| Source group / файл | SHA-256 загруженного оригинала |
+|---|---|
+| libri-speaker-6930 / `6930-75918-0000.flac` | `9ce35224156f071ab58eb7feb8a5ceae600f6f9f353da2a6cbf797b6b1ac8a23` |
+| libri-speaker-1320 / `1320-122617-0003.flac` | `bbe9ef85bbe228c73a414f064c9bd992c94135d73f9900b33104ad93c07d0594` |
+| libri-speaker-5639 / `5639-40744-0032.flac` | `ecba1c65406f3d2fdfe383a22385dfe19cc117b71b126817f5e20df791f22a50` |
+| nps-humpback-20010925 / `nps-humpback.mp3` | `b2d1086dbba2fe72f6f9456d905f29a7e5db2b6087e86295fc9c897bf3cce79d` |
+| kevin-macleod-vibe-ace / `vibe-ace.mp3` | `14634cc7c6f825db857c1594ac8c609bf49321336f625bd6559a039644bfc9f6` |
+| sorohanro-freesound-77711 / `sorohanro-77711-hq.mp3` | `1aa175783edddd4db6aa0fdc26c1a0fa01dab19028c7b58eeb575eb66b1b06bf` |
+
+В M3-R2A Vibe Ace остаётся только historical resource-boundary case и не является шестой
+measured source group. Для replacement использована предоставленная платформой
+lossy версия записи, не заявляется byte identity с uploaded lossless WAV.
+Все кандидаты фактической замены и preflight записаны в
+`provenance/replacement-selection-rule.md` и `replacement-selection.json`.
+
+Все derivatives каждого original остаются в одной группе. Synthetic generation
+имеет одну консервативную lineage, seed `20260926`, собственные аналитические
+waveforms/NumPy recipes; права сторонних media к ней не приписываются.
+Choice с NonCommercial лицензией не использован. Librosa implementation не
+копируется и library не устанавливается; ссылка использована только для provenance.
+Неизменённые runtime building blocks сохраняют ранее записанные лицензии.
+
+<a id="audio-m3r3a-lamit"></a>
+
+## M3-R3A — LaMIT: независимые повторные произнесения
+
+**M3-SP-01 / DATASET.** Проверка источника: **2026-09-26 UTC**.
+[LaMIT v2, Mendeley Data, DOI 10.17632/sjwb9hymhn.2](https://data.mendeley.com/datasets/sjwb9hymhn/2).
+Attribution: Maria-Gabriella Di Benedetto, Luca De Nardis,
+Stefanie Shattuck-Hufnagel, Jeung-Yoon Elizabeth Choi; LaMIT database v2.
+Поставщик явно указывает [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/):
+разрешены использование, производные и распространение, включая коммерческое,
+с attribution, ссылкой на лицензию и обозначением изменений, без endorsement.
+Права личности и сторонних правообладателей этим не расширяются.
+
+Provider description и README подтверждают: четыре speakers, 100 предложений,
+по два произнесения в разных recording sessions. Из 800 уникальных WAV выбран
+outcome-blind subset: все четыре speakers, 25 phrase IDs (1,5,…,97), оба takes;
+200 файлов, mono PCM16 / 44.1 kHz. Одинаковые WAV в каталогах Audio и
+Audio_and_labels не считаются независимыми takes. Исходные SHA-256 сверены
+с provider metadata; speaker IDs в результатах непрозрачные S01–S04.
+Независимость исполнений основана на протоколе поставщика, не только hashes.
+
+Фактическое использование: внешний measurement-only workspace M3-R3A,
+штатная M1-подготовка, лабораторные paired fixtures и controlled derivatives.
+Это итальянская studio/read speech, не корпус реальных voice messages.
+Голоса, source metadata и производные не входят в Git и не распространяются;
+production dataset/runtime dependency не создаётся, код корпуса не заимствован.
+Изменения данных и пределы использования — в
+[отчёте M3-R3A](research/2026-09-26-audio-arc-speech-source-validation.md).
+
+External root: `FakeDetector-Work/research/M3-R3A-arc-speech/`.
+`corpus/manifest.json` содержит все 200 source hashes, provider IDs/URLs и
+speaker/phrase/take mapping; SHA-256 manifest:
+`501095c3e26a0797adfc86e8919a9ed7248c28aa0bf79826d93b60a674077f4d`.
+Snapshots `provenance/lamit-provider.json`, `lamit-README.txt`, `CC-BY-4.0.html`
+и `verified-scope.json` сохраняют лицензию, attribution и intended use.
+Хэши provider/README/license snapshots и измерительных scripts входят в
+external predeclaration SHA manifest.
+
+<a id="audio-m3r3c-sources"></a>
+
+## M3-R3C — фактически измеренные stress/challenge источники
+
+Дата доступа/повторной проверки: **2026-09-28**. Только локальное дипломное
+некоммерческое исследование; raw media и derivatives вне Git, без distribution
+или production dataset/runtime dependency. Новая библиотека не устанавливалась.
+Полные URLs, attribution, доступные license сведения, source SHA и actual roles:
+`FakeDetector-Work/research/M3-R3C-arc-stress/sources/manifest.json`;
+их копия в review `source-summary.md` / `provenance-summary.md`.
+
+Повторно использованы M3-TR-01/02/04 и пять LaMIT recordings M3-SP-01:
+S01/P001/T1, S01/P005/T1, S02/P001/T1, S03/P001/T1, S04/P001/T1.
+Это8 speech recordings /7 speakers, исходные SHA сверены.
+M3-TR-03 Vibe Ace в новом scope использован для заранее выбранных native-rate /
+channel8s excerpt fixtures и пары разных source sections. Полный MP3 снова
+получил M1 resource rejection; исторический M3-R2A результат не изменён.
+External FFmpeg atrim/float64 WAV recipes и parent/derivative SHA сохранены;
+исследовательские fragments не заявляются production fallback или untouched originals.
+
+**M3-ST-01 / DATASET — ESC-50**, Karol J. Piczak,
+[репозиторий поставщика](https://github.com/karolpiczak/ESC-50),
+[LICENSE с individual attribution](https://github.com/karolpiczak/ESC-50/blob/master/LICENSE).
+Dataset — CC BY-NC3.0; individual source notices сохранены дословно в manifest,
+включая Sampling+ для washing-machine source. Они не заменены blanket BY/CC0.
+Выбран первый CSV entry каждой указанной категории до ARC outcomes.
+Downloaded WAV5s — поставляемые dataset clips, уже производные Freesound;
+не утверждается, что это untouched целые полевые записи. Использование: standalone
+background и фиксированные overlays для rain/vacuum/engine/alarm; остальные
+категории — standalone. Dataset `esc-meta.csv` и `esc-LICENSE` сохранены externally.
+
+| Файл / Freesound source ID | Категория / автор исходной записи | Individual notice | SHA-256 downloaded WAV |
+|---|---|---|---|
+| `1-100210-A-36.wav` / 100210 | vacuum_cleaner / joshfeed | CC-BY-NC | `f97e97b0fe0afce323d858503b6fa3ffd6c8cb1162c43cf3b24461300fb9abf6` |
+| `1-21896-A-35.wav` / 21896 | washing_machine / ulcered | CC-Sampling+ | `1b4210c50a01cabab07065a112463fad4f82de60385ef9aaf6316afe7d4b976c` |
+| `1-18527-A-44.wav` / 18527 | engine / Corsica_S | CC-BY | `83eb3e6065246fd87d1acbbe414aa5bfb7c2081a57c188713cdc017819ffc38f` |
+| `1-13613-A-37.wav` / 13613 | clock_alarm / hookhead | CC0 | `2e28b25e14611723cdcc0becfa36468a8d0329a0c141e4f1d894bd6bb5773f34` |
+| `1-21934-A-38.wav` / 21934 | clock_tick / dobroide | CC-BY | `8d26e40e0e382b0d2d7f6dafcb132cfe703ee3f7f32780e878fdb5a1aaffcc28` |
+| `1-17367-A-10.wav` / 17367 | rain / cognito perceptu | CC0 | `d732acd2e0c7c40405968010f49f250740c86998fc416eff2ed5330fc8c89dea` |
+| `1-137296-A-16.wav` / 137296 | wind / Benboncan | CC-BY | `73e2dd5e66dda29f76a54b53c3c8e33441d105fc35c1d231bfbd8f7a18442969` |
+| `1-119125-A-45.wav` / 119125 | train / Benboncan | CC-BY | `d78fe04767546d49b741d9d7df6173152e06dcb4224d70f350c3cb73768f265d` |
+| `1-18631-A-23.wav` / 18631 | breathing / Walter_Odington | CC0 | `cdbd39617f2955d86ec18a4032ecd9090369c23f3d8c6d650f62e9e1ee19ea6a` |
+
+**M3-ST-02 / DATASET — RoomTone01**, richwise,
+[Freesound474823](https://freesound.org/people/richwise/sounds/474823/), CC0 1.0.
+Сохранён полный provider HQ MP3 preview; описание автора: engineering lab,
+air-conditioned room, server/fan/hum noise. Full-source M1 preflight отказал;
+измерены три заранее выбранных native48kHz/stereo8s excerpt fixtures.
+Snapshot `provenance/room.html`; не заявляется byte identity с uploaded WAV.
+
+**M3-ST-03 / DATASET — Sweet Waltz**, Setuniman,
+[Freesound147793](https://freesound.org/people/setuniman/sounds/147793/),
+CC BY-NC4.0 на текущей авторской странице. Full provider HQ MP3 preview сохранён;
+полный source получил M1 resource rejection, измерены три native44.1kHz/stereo
+excerpt fixtures и пара разных sections. Snapshot `provenance/sweetwaltz.html`.
+Attribution, license links и change recipes сохранены; коммерческие права из
+данного исследовательского использования не выводятся.
+
+| Источник | SHA-256 provider MP3 |
+|---|---|
+| room | `a5e5a1c729188d7fcab209e611f008cede3dd27d3b8bdf805e284f3099e193bb` |
+| sweetwaltz | `18f0a6193fec084a19ce4220178c73764ee0caaff39b81414eb787ba6edb9652` |
+
+Для всех derivatives retained exact parent/recipe/final hashes и source intervals.
+Generated tone/hum/beep/rhythm/silence — собственные NumPy analytical fixtures,
+одна synthetic lineage; не дополнительные licensed natural source groups.
+TV-like speech mixture использует уже принятую LaMIT recording, не настоящий
+TV recording. Choice/новые librosa audio files не использованы.
+Итоги и ограничения — в [отчёте M3-R3C](research/2026-09-27-audio-arc-diploma-stress-validation.md).
+
 ## Политика сторонних материалов Stage 12
 
 Принятое направление — `PROJECT.md` §20; план допуска методов — `ROADMAP.md`.
@@ -137,6 +296,176 @@ CORE, если их условия ограничивают предполага
 - лицензия dataset не гарантирует прав на каждую исходную запись;
 - лицензия framework не заменяет лицензии включённых методов;
 - разрешительная copyright-лицензия не доказывает отсутствие сторонних патентов.
+
+<a id="audio-m3r1"></a>
+
+## M3-R1 — классические аудиоизмерения, 2026-09-26
+
+Проверка для [исследования M3-R1](research/2026-09-26-audio-method-selection.md)
+на baseline `1acaf4f9129d5b36c6c69a6ab6250e49e2da4d09`.
+Все записи ниже — **RESEARCH_REFERENCE**, не допуск production-метода.
+URL проверены 2026-09-26, ограничения доступа указаны явно. Формулы и выбор
+параметров профилей независимо сформулированы для FakeDetector; реализации пока нет.
+Чужой код/данные/иллюстрации не копируются и не включаются в wheel/release.
+Для коммерческого Apache-2.0 контекста разрешение на собственную реализацию
+математической идеи не следует путать с лицензией на чужой текст, код или корпус.
+Эта запись не является юридическим заключением или patent clearance.
+
+<a id="m3-aud-01"></a>
+
+**M3-AUD-01 — A Tutorial on Onset Detection in Music Signals.** Juan Pablo Bello,
+Laurent Daudet, Samer Abdallah, Chris Duxbury, Mike Davies, Mark B. Sandler,
+IEEE Transactions on Speech and Audio Processing 13(5), 1035–1047, 2005.
+[DOI 10.1109/TSA.2005.851998](https://doi.org/10.1109/TSA.2005.851998),
+[текст статьи](https://hans.fugal.net/comps/papers/bello_2005.pdf).
+Роль: taxonomy energy/spectral/transient измерений, обычные музыкальные события
+как альтернативное объяснение ATD/ASC. Использованы библиография и abstract
+индексированного оригинала, не заявлена репликация экспериментов статьи.
+Код не изучался; лицензия кода/данных не установлена, использование/распространение
+не предлагается. Литературная ссылка допустима в исследовании; никаких прав на
+коммерческое включение сторонних материалов этим не утверждается.
+
+<a id="m3-aud-02"></a>
+
+**M3-AUD-02 — Onset Detection Revisited.** Simon Dixon, DAFx-06, 133–137, 2006.
+[Оригинал в архиве конференции](https://www.dafx.de/paper-archive/2006/papers/p_133.pdf).
+Прочитаны описание и §2.1: positive magnitude differences / L1 spectral flux.
+Роль: математическое основание flux и контрпример «onset не равен splice».
+ASC-TV-1 отличается нормализацией, Hann/hop, лагами и отчётностью; опубликованные
+параметры/результаты не переносятся. Код не изучался; разрешительная code/data
+license не установлена, datasets статьи не предлагаются. Только ссылка/идеи для
+независимой спецификации, без копирования материалов в коммерческий продукт.
+
+<a id="m3-aud-03"></a>
+
+**M3-AUD-03 — Analyzing the Impact of Splicing Artifacts in Partially Fake Speech
+Signals.** Viola Negroni, Davide Salvi, Paolo Bestagini, Stefano Tubaro, 2024,
+[arXiv:2408.13784v1](https://arxiv.org/html/2408.13784v1).
+Роль: induced splice artifacts и bias искусственно составленных корпусов;
+стык waveform и spectral leakage — связанные наблюдения. Статья явно показывает
+CC BY 4.0; её условия требуют attribution при повторном использовании текста,
+но здесь используются только ссылка и краткое изложение. Код не изучался и
+не заимствуется. PartialSpoof/HAD упомянуты как предмет статьи, **не предложены**
+как datasets M3-R2; их права и права исходных записей здесь не проверены.
+Коммерческое использование кода/корпусов не допущено этой записью; ML не внедряется.
+
+<a id="m3-aud-04"></a>
+
+**M3-AUD-04 — Detecting Splicing in Digital Audios Using Local Noise Level
+Estimation.** Xunyu Pan, Xing Zhang, Siwei Lyu, ICASSP 2012, 1841–1844.
+[Авторский PDF](https://cse.buffalo.edu/~siweilyu/papers/icassp12.pdf).
+Роль: направление noise-level estimation как splice cue; не источник точной
+формулы ABN-FLOOR-1. В поисковой выдаче доступен abstract оригинала; прямое
+открытие полного текста вернуло 403. Поэтому точная процедура/экспериментальные
+претензии статьи не считаются проверенными. Код и datasets не изучались,
+license неизвестна; коммерческое включение не разрешено. Это ограниченная
+литературная запись, не proposed implementation path и не основание READY.
+
+<a id="m3-aud-05"></a>
+
+**M3-AUD-05 — Noise Power Spectral Density Estimation Based on Optimal Smoothing
+and Minimum Statistics.** Rainer Martin, IEEE Transactions on Speech and Audio
+Processing 9(5), 504–512, 2001.
+[DOI 10.1109/89.928915](https://doi.org/10.1109/89.928915),
+[оригинальная статья, университетская копия](https://www.csd.uoc.gr/~hy578/2005/projects/ieee_sp_tsap_2001009_05jul_0504mart.pdf).
+Роль: noise estimation требует модели smoothing и bias compensation; нижний
+квантиль не становится автоматически noise PSD. Изучены abstract/введение,
+полная реализация estimator не выбрана. Код не изучался; сторонние MATLAB и
+другие реализации не используются. Code/data licenses не установлены, datasets
+не предлагаются; только литературное основание ограничения, без включения
+copyrighted материалов в Apache-2.0 поставку.
+
+<a id="m3-aud-06"></a>
+
+**M3-AUD-06 — Audio Splicing Detection and Localization Using Environmental
+Signature.** Hong Zhao, Yifan Chen, Rui Wang, Hafiz Malik,
+[arXiv:1411.7084](https://arxiv.org/html/1411.7084).
+Роль: ambient noise/channel response, reference/query comparison; проверено,
+что процедура использует обучаемую clean-speech GMM и TIMIT. Она не является
+подходящим готовым non-ML pipeline для M3. Нельзя называть ABN «этим методом без ML».
+Текст содержит IEEE copyright/personal-use notice; код не изучался, лицензия
+кода не установлена. TIMIT не предлагается и его лицензия не проверялась.
+Ни текст, ни код, ни данные не включаются в коммерческий продукт; только
+исследовательская ссылка и отрицательный результат отбора.
+
+<a id="m3-aud-07"></a>
+
+**M3-AUD-07 — Fast Normalized Cross-Correlation.** J. P. Lewis, Industrial Light
+& Magic, расширенная версия материала Vision Interface 1995.
+[Авторский текст](https://scribblethink.org/Work/nvisionInterface/nip.html).
+Роль: centered NCC и нормирование FFT correlation через локальные суммы/квадраты.
+ARC адаптирует общую математическую идею к одномерным bounded аудиопарам;
+descriptor/retrieval/support policy — собственный вклад проекта. Прочитан текст,
+код не изучался/не копировался; разрешительная code license не установлена,
+datasets не предлагаются. Литературный источник допускается, перенос стороннего
+кода в Apache-2.0 продукт не предлагается; будущая реализация независимая.
+
+<a id="m3-aud-08"></a>
+
+**M3-AUD-08 — An Industrial-Strength Audio Search Algorithm.** Avery Li-Chun Wang,
+ISMIR 2003. [Оригинальная статья](https://www.ee.columbia.edu/~dpwe/papers/Wang03-shazam.pdf).
+Роль: ограниченный fingerprint candidate retrieval и согласованные time offsets;
+это поиск соответствий, не доказательство злонамеренного копирования.
+ARC не повторяет Shazam constellation hashes и не заявляет его robustness.
+Код Shazam не изучался; разрешительная лицензия его реализации не установлена.
+Datasets/recordings не предлагаются. Известность коммерческого продукта не
+означает права на его implementation; patent clearance не выполнялся. Только
+литературная ссылка, без переноса кода/данных/патентованного pipeline в ядро.
+
+<a id="m3-aud-09"></a>
+
+**M3-AUD-09 — ffprobe Documentation.** FFmpeg project,
+[официальная документация](https://ffmpeg.org/ffprobe.html), разделы
+`show_entries`, `show_packets`, `show_frames`, `read_intervals`.
+Роль: области наблюдения и неточность seek; не forensic decision engine.
+Код при исследовании не заимствовался. Лицензирование уже используемого внешнего
+FFmpeg executable определяется отдельными записями текущего реестра и точной
+сборкой; эта ссылка не меняет способ поставки и не лицензирует бинарник заново.
+Dataset отсутствует. Коммерческое использование требует выполнения уже
+зафиксированных условий выбранной сборки, новые компоненты не предлагаются.
+
+<a id="m3-aud-10"></a>
+
+**M3-AUD-10 — WAVEFORMATEXTENSIBLE structure (mmreg.h).** Microsoft,
+[официальная документация](https://learn.microsoft.com/en-us/windows/win32/api/mmreg/ns-mmreg-waveformatextensible).
+Роль: различать valid bits и container width, а также channel mask;
+их несовпадение не является forensic-противоречием само по себе.
+Win32 API/код не внедряется, struct snippet не копируется; лицензия отдельного
+reference implementation не рассматривалась. Dataset отсутствует. Только
+техническая ссылка, не разрешение переносить чужой код или документацию
+в коммерческий Apache-2.0 продукт.
+
+<a id="m3-aud-11"></a>
+
+**M3-AUD-11 — Technical Note TN2258: AAC Audio — Encoder Delay and Synchronization.**
+Apple, 2009-11-19,
+[официальный архив](https://developer.apple.com/library/archive/technotes/tn2258/_index.html).
+Роль: priming/remainder и доброкачественное расхождение packet/decoded durations.
+Это историческая справка, не актуальная универсальная константа delay всех AAC
+encoders; число 2112 не становится правилом FakeDetector. Код не изучался;
+copyright Apple, отдельная лицензия implementation не установлена; данных нет.
+Только литературное использование, никакие материалы не включаются в поставку.
+
+<a id="m3-aud-12"></a>
+
+**Дополнительная просмотренная документация — M3-AUD-12.** Meinard Müller,
+[FMP: Onset Detection](https://www.audiolabs-erlangen.de/resources/MIR/FMP/C6/C6S1_OnsetDetection.html).
+Роль: образовательная иллюстрация natural transients и masking. На странице
+просмотрены также notebook snippets с SciPy/librosa/libfmp; они не используются.
+Versioned license кодовой копии не удалось подтвердить по запрошенным URL,
+поэтому code license здесь **не установлена**, copying/adaptation запрещены.
+Содержимые музыкальные примеры не скачивались и не предлагаются: dataset/media
+rights отдельно не проверены. Коммерческое применение кода/данных не допущено;
+эта страница не implementation path, её зависимости в проект не добавляются.
+
+Для выбранных ATD/ASC/ARC путей нет зависимости от источника с неустановленной
+лицензией кода: предлагается собственная реализация арифметики на уже проверенном
+runtime NumPy. Точные версии текущих NumPy/OpenCV и их лицензионные записи остаются
+в существующем реестре; SciPy/librosa/libfmp не добавляются. Модели/веса не применимы.
+Никакой внешний dataset не выбран. Синтетические fixtures будущего harness должны
+иметь собственный генератор/параметры, а реальные speech/music/environment records —
+отдельный provenance/rights manifest до допуска G6. Неизвестные права не трактуются
+как разрешение на коммерческое использование или распространение.
 
 ## Текущая проверка лицензий — 2026-09-20
 
