@@ -1,20 +1,32 @@
-"""Closed trusted first-party production analyzer catalog."""
+"""Closed first-party catalogs: preserved CORE and opt-in experimental runtime."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from types import MappingProxyType
 
 from pydantic import BaseModel
 
+from fakedetector.analyzers._audio_experimental import (
+    AudioBackgroundNoiseConsistencyAnalyzer,
+    AudioSpectralConsistencyAnalyzer,
+    AudioTemporalDiscontinuityAnalyzer,
+)
 from fakedetector.analyzers._audio_pcm import (
     AudioPcmQualityAnalyzer,
     AudioPcmQualitySettings,
 )
+from fakedetector.analyzers._audio_repeated import AudioRepeatedSegmentCorrespondenceAnalyzer
+from fakedetector.analyzers._experimental_common import _ExperimentalSettings
 from fakedetector.analyzers._image_copy_move import (
     ImageCopyMoveCorrespondenceAnalyzer,
     ImageCopyMoveCorrespondenceSettings,
+)
+from fakedetector.analyzers._image_experimental import (
+    ImageNoiseResidualConsistencyAnalyzer,
+    ImageResamplingConsistencyAnalyzer,
 )
 from fakedetector.analyzers._image_jpeg_dq import (
     ImageJpegDoubleQuantizationAnalyzer,
@@ -29,12 +41,23 @@ from fakedetector.analyzers._models import (
     AnalyzerRegistration,
 )
 from fakedetector.analyzers._real_common import _MAX_REAL_ANALYZER_CANDIDATES
+from fakedetector.analyzers._video_experimental import (
+    VideoRepeatedContentCorrespondenceAnalyzer,
+    VideoTimingAnomalyAnalyzer,
+    VideoVisualDiscontinuityAnalyzer,
+)
 from fakedetector.analyzers._video_frames import (
     VideoSampledFrameQualityAnalyzer,
     VideoSampledFrameQualitySettings,
 )
 from fakedetector.domain import MediaType
 from fakedetector.preprocessing._requirements import ForensicCapability, PreprocessingRequirements
+
+
+class _AnalyzerMaturity(StrEnum):
+    CORE = "CORE"
+    EXPERIMENTAL = "EXPERIMENTAL"
+    EXPERIMENTAL_WEAK = "EXPERIMENTAL_WEAK"
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +73,7 @@ class _WorkerAnalyzerDefinition:
     preprocessing_requirements: PreprocessingRequirements
     candidate_finding_types: frozenset[str]
     max_candidate_findings: int
+    maturity: _AnalyzerMaturity = _AnalyzerMaturity.CORE
 
     def registration(self) -> AnalyzerRegistration:
         return AnalyzerRegistration(
@@ -77,6 +101,7 @@ def _definition(
     preprocessing_requirements: PreprocessingRequirements | None = None,
     candidate_finding_types: frozenset[str] = frozenset(),
     max_candidate_findings: int = 0,
+    maturity: _AnalyzerMaturity = _AnalyzerMaturity.CORE,
 ) -> _WorkerAnalyzerDefinition:
     return _WorkerAnalyzerDefinition(
         worker_key=worker_key,
@@ -90,6 +115,7 @@ def _definition(
         preprocessing_requirements=(preprocessing_requirements or PreprocessingRequirements()),
         candidate_finding_types=candidate_finding_types,
         max_candidate_findings=max_candidate_findings,
+        maturity=maturity,
     )
 
 
@@ -136,18 +162,106 @@ _BUILT_IN_ANALYZER_DEFINITIONS = (
     ),
 )
 
+_EXPERIMENTAL_ANALYZER_DEFINITIONS = (
+    _definition(
+        "diploma.audio_repeated_segment_correspondence.v1",
+        AudioRepeatedSegmentCorrespondenceAnalyzer,
+        settings_model=_ExperimentalSettings,
+        preprocessing_requirements=PreprocessingRequirements(
+            forensic=frozenset({ForensicCapability.AUDIO_SPECTRAL}),
+        ),
+        maturity=_AnalyzerMaturity.EXPERIMENTAL,
+    ),
+    _definition(
+        "diploma.video_repeated_content_correspondence.v1",
+        VideoRepeatedContentCorrespondenceAnalyzer,
+        settings_model=_ExperimentalSettings,
+        preprocessing_requirements=PreprocessingRequirements(
+            forensic=frozenset({ForensicCapability.DENSE_VIDEO}),
+        ),
+        maturity=_AnalyzerMaturity.EXPERIMENTAL_WEAK,
+    ),
+    _definition(
+        "diploma.video_visual_discontinuity.v1",
+        VideoVisualDiscontinuityAnalyzer,
+        settings_model=_ExperimentalSettings,
+        preprocessing_requirements=PreprocessingRequirements(
+            forensic=frozenset({ForensicCapability.DENSE_VIDEO}),
+        ),
+        maturity=_AnalyzerMaturity.EXPERIMENTAL_WEAK,
+    ),
+    _definition(
+        "diploma.video_timing_anomaly.v1",
+        VideoTimingAnomalyAnalyzer,
+        settings_model=_ExperimentalSettings,
+        preprocessing_requirements=PreprocessingRequirements(
+            forensic=frozenset({ForensicCapability.DENSE_VIDEO}),
+        ),
+        maturity=_AnalyzerMaturity.EXPERIMENTAL_WEAK,
+    ),
+    _definition(
+        "diploma.image_noise_residual_consistency.v1",
+        ImageNoiseResidualConsistencyAnalyzer,
+        settings_model=_ExperimentalSettings,
+        maturity=_AnalyzerMaturity.EXPERIMENTAL_WEAK,
+    ),
+    _definition(
+        "diploma.image_resampling_consistency.v1",
+        ImageResamplingConsistencyAnalyzer,
+        settings_model=_ExperimentalSettings,
+        maturity=_AnalyzerMaturity.EXPERIMENTAL_WEAK,
+    ),
+    _definition(
+        "diploma.audio_temporal_discontinuity.v1",
+        AudioTemporalDiscontinuityAnalyzer,
+        settings_model=_ExperimentalSettings,
+        preprocessing_requirements=PreprocessingRequirements(
+            forensic=frozenset({ForensicCapability.AUDIO_SAMPLES}),
+        ),
+        maturity=_AnalyzerMaturity.EXPERIMENTAL,
+    ),
+    _definition(
+        "diploma.audio_spectral_consistency.v1",
+        AudioSpectralConsistencyAnalyzer,
+        settings_model=_ExperimentalSettings,
+        preprocessing_requirements=PreprocessingRequirements(
+            forensic=frozenset({ForensicCapability.AUDIO_SPECTRAL}),
+        ),
+        maturity=_AnalyzerMaturity.EXPERIMENTAL,
+    ),
+    _definition(
+        "diploma.audio_background_noise_consistency.v1",
+        AudioBackgroundNoiseConsistencyAnalyzer,
+        settings_model=_ExperimentalSettings,
+        preprocessing_requirements=PreprocessingRequirements(
+            forensic=frozenset({ForensicCapability.AUDIO_SPECTRAL}),
+        ),
+        maturity=_AnalyzerMaturity.EXPERIMENTAL_WEAK,
+    ),
+)
+_RUNTIME_ANALYZER_DEFINITIONS = (
+    *_BUILT_IN_ANALYZER_DEFINITIONS,
+    *_EXPERIMENTAL_ANALYZER_DEFINITIONS,
+)
+
 _WORKER_DEFINITIONS = MappingProxyType(
-    {
-        definition.worker_key: definition
-        for definition in _BUILT_IN_ANALYZER_DEFINITIONS
-    }
+    {definition.worker_key: definition for definition in _RUNTIME_ANALYZER_DEFINITIONS}
 )
 _BUILT_IN_DEFINITIONS_BY_ID = MappingProxyType(
-    {
-        definition.analyzer_id: definition
-        for definition in _BUILT_IN_ANALYZER_DEFINITIONS
-    }
+    {definition.analyzer_id: definition for definition in _BUILT_IN_ANALYZER_DEFINITIONS}
 )
+_RUNTIME_DEFINITIONS_BY_ID = MappingProxyType(
+    {definition.analyzer_id: definition for definition in _RUNTIME_ANALYZER_DEFINITIONS}
+)
+
+
+def _runtime_analyzer_registrations() -> tuple[AnalyzerRegistration, ...]:
+    """Return the closed runtime catalog; config still selects the active IDs."""
+    return tuple(definition.registration() for definition in _RUNTIME_ANALYZER_DEFINITIONS)
+
+
+def _resolve_runtime_analyzer_definition(analyzer_id: str) -> _WorkerAnalyzerDefinition | None:
+    return _RUNTIME_DEFINITIONS_BY_ID.get(analyzer_id)
 
 
 def _resolve_worker_definition(worker_key: str) -> _WorkerAnalyzerDefinition | None:

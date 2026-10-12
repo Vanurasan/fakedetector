@@ -114,6 +114,26 @@ storage сохранённые terminal results доступны по прежн
 `probability=null` ожидаем; audio/video Profile B — технические quality и
 sampled-frame checks, не универсальные deepfake classifiers.
 
+## Дипломный experimental профиль
+
+В source checkout доступен отдельный [config/config.diploma.yaml](config/config.diploma.yaml):
+пять CORE и девять experimental анализаторов. После установки зависимостей,
+FFmpeg и переменных аутентификации, описанных выше, запуск из корня checkout:
+
+```powershell
+uv run fakedetector --config config/config.diploma.yaml
+```
+
+Профиль сохраняет `raw_metrics`; они доступны в API JSON и разделе «Результаты
+анализаторов» WebUI. Experimental методы публикуют описательные измерения без
+Findings, порога подделки и вклада в риск. Сильный response возможен на обычном
+содержании; отсутствие response не доказывает подлинность. Применимость,
+ограниченное покрытие и известные confounds — в
+[METHODS](docs/METHODS.md#diploma-experimental).
+Стандартный config и исторический Profile B не изменены. Штатные ресурсные
+лимиты сохраняются: например, длинный stereo audio может превысить общий
+бюджет precision/STFT artifacts и завершиться preprocessing error.
+
 ## Security boundaries
 
 Локальный demo по умолчанию слушает только loopback. WebUI Basic вне loopback

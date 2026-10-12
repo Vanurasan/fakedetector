@@ -343,6 +343,16 @@ YYYY-MM-DD
 
 ### 2026-10-12
 
+- По owner authorization `STAGE12-DIPLOMA-ANALYZER-EXPANSION-SPRINT1` разрешён
+  отдельный дипломный experimental tier с неизменными scientific/production
+  dispositions. CORE каталог пяти методов сохранён; runtime-композиция
+  дополнена девятью first-party measurement-only анализаторами. Maturity
+  хранится только внутри каталога, public/config схемы и риск не менялись.
+- Добавлены diploma config с сохранением измерений, отображение индивидуальных
+  результатов в WebUI и focused/сквозные проверки. Реализация ожидает owner
+  review; это не production promotion, strict certification или закрытие этапа.
+  Спецификации — `METHODS.md`, статус — `ROADMAP.md#diploma-sprint1`.
+
 #### Decision
 
 - **[Stage 12 / Macro 4 / M4-R2] Владелец принял закрытие VRC-DENSE-1 Stage A

@@ -18,7 +18,7 @@ from fakedetector.analyzers._candidates import (
     _validate_candidate_transport,
 )
 from fakedetector.analyzers._catalog import (
-    _resolve_built_in_analyzer_definition,
+    _resolve_runtime_analyzer_definition,
     _WorkerAnalyzerDefinition,
 )
 from fakedetector.domain import (
@@ -77,7 +77,7 @@ class FindingFormationService:
         try:
             for result_value in results:
                 result = _validated_result(result_value)
-                spec = _resolve_built_in_analyzer_definition(result.analyzer_id)
+                spec = _resolve_runtime_analyzer_definition(result.analyzer_id)
                 if spec is None:
                     continue
                 if result.status is not AnalyzerStatus.COMPLETED or not result.applicable:

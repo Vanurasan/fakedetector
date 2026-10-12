@@ -36,6 +36,19 @@
     </section>
 
     <section>
+      <h2>Результаты анализаторов</h2>
+      {% for analyzer in result.analyzers %}
+      <article>
+        <h3><code>{{ analyzer.analyzer_id }}</code></h3>
+        <p>{{ analyzer.status.value }}: {{ analyzer.summary }}</p>
+        {% if analyzer.raw_metrics %}
+        <details><summary>Измерения</summary><pre>{{ analyzer.raw_metrics | tojson(indent=2) }}</pre></details>
+        {% endif %}
+      </article>
+      {% else %}<p>Результаты анализаторов отсутствуют.</p>{% endfor %}
+    </section>
+
+    <section>
       <h2>Полнота и ограничения</h2>
       {% if result.completeness.explanation %}<p>{{ result.completeness.explanation }}</p>{% endif %}
       {% if result.risk_assessment and result.risk_assessment.limitations %}

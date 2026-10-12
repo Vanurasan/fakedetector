@@ -1,0 +1,135 @@
+# Дипломный профиль: CORE + экспериментальные описательные измерения.
+# Научная/production-приёмка experimental методов не заявляется.
+# Исходные лимиты и правила безопасности сохранены.
+# Пороги и веса risk_assessment не являются статистически валидированной моделью.
+# Запуск из checkout: uv run fakedetector --config config/config.diploma.yaml
+# Секреты (токены, пароли) передавайте только через переменные окружения.
+
+schema_version: "1.0"
+
+server:
+  host: "127.0.0.1"
+  port: 8080
+  request_timeout_seconds: 600
+
+access_channels:
+  webui:
+    enabled: true
+    require_authentication: true
+    credentials_env_var: "MEDIA_ANALYZER_WEBUI_CREDENTIALS"
+  api:
+    enabled: true
+    require_token: true
+    token_env_var: "MEDIA_ANALYZER_API_TOKEN"
+
+limits:
+  max_file_size_mb:
+    image: 20
+    audio: 50
+    video: 200
+  max_parallel_tasks:
+    image: 4
+    audio: 2
+    video: 1
+  processing_timeout_seconds: 600
+
+allowed_formats:
+  image:
+    extensions: ["jpg", "jpeg", "png", "webp"]
+    mime_types: ["image/jpeg", "image/png", "image/webp"]
+  audio:
+    extensions: ["wav", "mp3", "flac", "m4a"]
+    mime_types: ["audio/wav", "audio/mpeg", "audio/flac", "audio/mp4"]
+  video:
+    extensions: ["mp4", "mov", "avi", "mkv"]
+    mime_types: ["video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska"]
+
+validation:
+  check_extension: true
+  check_mime_type: true
+  check_file_signature: true
+  reject_if_type_mismatch: true
+  calculate_sha256: true
+  safe_decode: true
+
+temporary_storage:
+  root_path: "runtime/temp"
+  ttl_minutes: 60
+  cleanup_retries: 3
+  quarantine_enabled: true
+  quarantine_ttl_hours: 24
+
+preprocessing:
+  image:
+    extract_metadata: true
+    normalize_for_analysis: true
+  audio:
+    extract_metadata: true
+    fragment_duration_seconds: 10
+    build_spectrogram: true
+  video:
+    extract_metadata: true
+    keyframe_interval_seconds: 1
+    extract_audio_track: true
+
+analyzers:
+  defaults:
+    timeout_seconds: 120
+    continue_on_error: true
+  image:
+    enabled:
+      - image_metadata_consistency
+      - image_copy_move_correspondence
+      - image_jpeg_double_quantization
+      - image_noise_residual_consistency
+      - image_resampling_consistency
+  audio:
+    enabled:
+      - audio_pcm_quality
+      - audio_temporal_discontinuity
+      - audio_spectral_consistency
+      - audio_background_noise_consistency
+      - audio_repeated_segment_correspondence
+  video:
+    enabled:
+      - video_sampled_frame_quality
+      - video_repeated_content_correspondence
+      - video_visual_discontinuity
+      - video_timing_anomaly
+  settings: {}
+
+risk_assessment:
+  model_id: "score_model_v1"
+  model_version: "0.1.0"
+  thresholds:
+    low_max: 5
+    medium_max: 29
+  severity_scores:
+    weak: 5
+    significant: 25
+    critical: 25
+  critical_override:
+    enabled: false
+    allowed_finding_types: []
+  completeness:
+    minimum_for_assessment: 0.5
+
+result:
+  directory: "runtime/results"
+  atomic_write: true
+  include_raw_metrics: true
+  store_original_name: true
+
+error_handling:
+  continue_if_analyzer_fails: true
+  mark_partial_on_analyzer_failure: true
+  hide_internal_error_details: true # В схеме 1.0 допустимо только true.
+
+logging:
+  level: "INFO"
+  jsonl_path: "runtime/logs/application.jsonl"
+  rotation_max_bytes: 10485760
+  rotation_backup_count: 5
+
+external_systems:
+  enabled: false # Интеграции отсутствуют; допустимо только false.

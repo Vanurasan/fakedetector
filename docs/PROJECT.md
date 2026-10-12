@@ -790,12 +790,22 @@ task-level processing failure, а не набор обычных analyzer timeou
 риск или итоговый JSON. Он возвращает `AnalyzerResult` с кандидатами признаков;
 их нормализация принадлежит `FindingFormationService`.
 
-Рабочий набор — закрытый статический каталог пяти доверенных встроенных
-анализаторов в `analyzers/_catalog.py`: `image_metadata_consistency`,
+Исторический CORE / VALIDATED — закрытый статический каталог пяти доверенных
+встроенных анализаторов в `analyzers/_catalog.py`: `image_metadata_consistency`,
 `image_copy_move_correspondence`, `image_jpeg_double_quantization`,
 `audio_pcm_quality`, `video_sampled_frame_quality`.
-Из каталога выводятся регистрации, разрешение рабочих процессов, требования
-предобработки и метаданные проверки результатов. Динамическая загрузка и plugin API
+Решением владельца `STAGE12-DIPLOMA-ANALYZER-EXPANSION-SPRINT1` от 2026-10-12
+разрешён отдельный дипломный experimental tier. Runtime объединяет CORE с
+закрытым first-party каталогом `EXPERIMENTAL` / `EXPERIMENTAL_WEAK`; maturity —
+внутренние метаданные каталога, а не новая публичная схема. Включение происходит
+по существующему списку analyzer IDs. Оба набора проходят одинаковые bounded
+worker, preprocessing, проверку результатов и cleanup. CORE и исторический
+Profile B сохраняют своё значение; допуск experimental реализации не означает
+научную валидацию или production/core promotion. Точные измерения и пределы
+дипломного допуска принадлежат `METHODS.md`, статус реализации — `ROADMAP.md`.
+
+Из runtime-каталога выводятся регистрации, разрешение рабочих процессов,
+требования предобработки и метаданные проверки результатов. Динамическая загрузка и plugin API
 отсутствуют. Fake-анализаторы находятся только в `tests/support`, исключены из
 wheel и доступны лишь через явно внедрённый частный тестовый resolver.
 

@@ -26,6 +26,10 @@
 
 ## Gate принятия метода
 
+Этот gate сохраняется для production/core promotion. Отдельный дипломный
+допуск описан в [experimental tier](#diploma-experimental); он не превращает
+исследовательские отрицательные результаты в `ACCEPTED` production-методы.
+
 `CANDIDATE / METHOD NOT YET ACCEPTED` означает направление исследования.
 Даже наличие статьи, `RESEARCH_REFERENCE`, preprocessing capability или
 положительного экспериментального результата не разрешает production-реализацию.
@@ -72,6 +76,204 @@
 | Validation matrix | Positive, negative, benign/challenge, boundary, not-applicable, insufficient-evidence, determinism и resource/failure случаи; пределы синтетических fixtures и требуемые корпусные свидетельства |
 | Provenance / reference IDs | Стабильные IDs/якоря REFERENCES, происхождение собственного вклада и ссылки на research-свидетельства |
 | Открытые owner gates | Нерешённые вопросы и условия принятия; при ACCEPTED не остаётся блокирующих вопросов |
+
+<a id="diploma-experimental"></a>
+## Дипломный experimental tier — Sprint 1, 2026-10-12
+
+**OWNER AUTHORIZED** заданием `STAGE12-DIPLOMA-ANALYZER-EXPANSION-SPRINT1`:
+«Diploma experimental analyzer tier authorized». Разрешена экспериментальная
+runtime-реализация для дипломного прототипа; научный и production disposition
+сохранён: **experimental runtime implementation authorized for diploma prototype;
+scientific/production disposition unchanged**. Это отдельный допуск реализации,
+не ретроактивная приёмка метода, корпуса или результатов настоящего sprint.
+
+Исторические записи ниже и `research/` читаются в контексте своих задач:
+их запрет runtime implementation снят только для описанного experimental tier.
+Production/core promotion, изменение пяти CORE методов и переоткрытие Macro 2/3
+не разрешены. VRC остаётся G5 DEFER; P1 не меняется, Stage B не начинается.
+
+Все новые методы имеют версию `1.0.0`, фиксированный профиль без настроек,
+CPU-only выполнение на существующих NumPy/Pillow и внутренних ядрах. В Sprint 1
+они публикуют **измерения без Findings и без score**. Порогов подозрения,
+confidence, accuracy/FPR, probability, critical override или весового fusion нет.
+Численные границы support/устойчивости ниже не являются forensic thresholds.
+Отсутствие/неопределённость измерения не означает подлинность. Сильный response
+не отделяет монтаж от обычного содержания или обработки.
+
+| Analyzer ID | Runtime maturity | Сохранённое научное положение / профиль |
+|---|---|---|
+| `audio_temporal_discontinuity` | EXPERIMENTAL | RESEARCH_ONLY_NON_SPECIFIC; ATD-LOCAL-1 |
+| `audio_spectral_consistency` | EXPERIMENTAL | RESEARCH_ONLY_NON_SPECIFIC; ASC-TV-1 |
+| `audio_repeated_segment_correspondence` | EXPERIMENTAL | RESEARCH MEASUREMENT DEMONSTRATED / PRODUCTION PROMOTION DEFERRED; ARC-NCC-1 |
+| `audio_background_noise_consistency` | EXPERIMENTAL_WEAK | RESEARCH_ONLY / WEAK_SIGNAL; ABN-FLOOR-1 |
+| `image_noise_residual_consistency` | EXPERIMENTAL_WEAK | RESEARCH_ONLY / WEAK_SIGNAL; N-MAD-MATCH-1 |
+| `image_resampling_consistency` | EXPERIMENTAL_WEAK | RESEARCH_ONLY / WEAK_SIGNAL; R-D2-MATCH-1 |
+| `video_repeated_content_correspondence` | EXPERIMENTAL_WEAK | G5 DEFER; VRC-DENSE-DIPLOMA-1 на основе P1 |
+| `video_visual_discontinuity` | EXPERIMENTAL_WEAK | RESEARCH_ONLY; VISUAL-DENSE-DIPLOMA-1 |
+| `video_timing_anomaly` | EXPERIMENTAL_WEAK | RESEARCH_ONLY; TIMING-DENSE-DIPLOMA-1 |
+
+### Audio: применимость, процедуры и границы
+
+Точные формулы ATD/ASC/ABN/ARC из
+[M3-R1 §§3–7](research/2026-09-26-audio-method-selection.md) приняты этим
+дипломным допуском **только как описательные измерения**. Их значения и
+исследовательские результаты не перекалибровываются. Audio route, 8–48 kHz,
+mono/stereo; без resample/downmix, не более трёх observed precision windows
+по 10 s. Читаются только source-bound numeric artifacts; не source bytes.
+ATD требует `AUDIO_SAMPLES`, остальные — `AUDIO_SPECTRAL` с его dependency closure.
+Precision provenance — `ffmpeg_audio/1 : precision_windows/1`; спектр —
+`numpy_stft/1 : hann4096_hop1024/1`, magnitude, Hann4096/hop1024.
+Неподдерживаемый rate/channel или spectral layout неприменим; отсутствующий
+обязательный manifest/артефакт, отрицательная magnitude, nonfinite/повреждённые
+bytes — техническая ошибка. Короткое окно без полного STFT frame — недостаток
+поддержки, а не ошибка. Границы разных окон не сшиваются.
+
+- **ATD:** shared `frame_audio(2048,512)`, earliest максимальная разность
+  среди границ a+768…a+1279; стороны по 512 samples. После common-max
+  стабилизации раздельно `J=j/(j+d)`, `E=|rR-rL|/(rR+rL)`, signed `Es`,
+  `A=|medianR-medianL|/(|medianR-medianL|+MAD_L+MAD_R)`. d — медиана внутренних
+  абсолютных первых разностей, без соединяющего jump; RMS и MAD по M3-R1.
+  Zero denominator → null. Фрейм короче 2048 не дополняется. Нет вывода о splice.
+- **ASC:** пары готовых спектров одного окна/канала при h=1 и h=4.
+  Common-max до суммирования; `D=0.5*sum(abs(pR-pL))`,
+  `F=sum(max(MR-ML,0))/(sum(MR)+sum(ML))`. Нулевой спектр делает D
+  неопределённой; F определена при одном ненулевом спектре. Нет нового STFT.
+- **ABN:** в каждом окне границы b=2fs,3fs,…,N−2fs, стороны по 2fs;
+  только полностью входящие STFT frames, минимум 8 на сторону. После общего
+  масштабирования M вычисляется P=M². Стабильный отбор `max(4,ceil(n/5))`
+  самых тихих frames по sum(P), tie по ordinal. Bins1…2048 делятся на 16×128;
+  median средних полосных мощностей даёт v. Сохраняются v, sum(v), TV
+  нормированных v и signed level change. Уровни безразмерны, нормированы
+  на максимум именно этой пары; это не dBFS или оценка sensor noise PSD.
+  До 7 пар/окно/канал, до 42 строк. Независимого matching содержания нет:
+  `background_attribution=insufficient_evidence_no_independent_matching` всегда.
+  Низкая энергия не означает выделенный фон или identity микрофона.
+- **ARC:** сохранены L=1024·ceil(fs/1024), seeds через 4096 с полным 2L,
+  равномерное сокращение до 256; ≥4 готовых frames на descriptor, 16 полос без DC,
+  4 временные группы/L2; top4/seed/channel, непересекающийся 2L, union/cap64.
+  Поиск signed ZNCC δ=−4096…4096 при полном 2L в исходном окне; общий lag по
+  среднему информативных каналов, tie по |δ|, затем δ. Два support L/2 измеряются
+  на том же lag; exact decoded equality 2L хранится отдельно по каналам.
+  Сохранена numeric correction frozen v2 из M3-R2B: compensated prefix sums,
+  floor 64eps·m, guard 64eps вне [-1,1], linear FFT≤131072. Неинформативный lag
+  не выбирается; канал тишины может иметь exact equality, но не NCC/support.
+  Channel-best offsets и disagreement сохраняются. R1 diversification не
+  переносится: остаются known flooding/retention misses, unresolved attribution,
+  естественные loops/tones и высокая NCC фона. Это не новый ARC v3.
+
+Runtime-отчёт ATD/ASC компактен: по окну/каналу/метрике count, undefined_count,
+median, nearest-rank p95 и первое max с sample-support и source PTS при наличии.
+Вместо исследовательских всех строк/top16 сохраняется один максимум каждой
+метрики. Null остаётся null. ARC сохраняет до 64 пар, три NCC по каналам,
+sample-интервалы и PTS отдельно, seed/union/cap counts; полный research ledger
+не переносится. Эти координаты описывают поддержку измерения, не место монтажа.
+ATD/ASC/ABN причинно пересекаются; ARC не объявляется статистически независимым.
+Нового `correlation_group` и вклада в риск нет.
+
+Происхождение: [REFERENCES M3-R1](REFERENCES.md#audio-m3r1), M3-AUD-01–09;
+собственные измерительные комбинации и first-party код, без копирования
+сторонних реализаций. Для ARC переиспользована численная часть собственного
+frozen `arc_v2.py` (`04a2d54f…`, M3-R3C), без его файлового доступа, monitor,
+corpus harness и runtime-данных. Исторические evidence trees не изменены.
+
+### Image: применимость, процедуры и границы
+
+Точные N-MAD-MATCH-1 и R-D2-MATCH-1 из
+[M2-BR1 §§4–5](research/2026-09-24-image-noise-resampling-method-selection.md)
+приняты как experimental измерения без порога. Вход — обязательный legacy
+`normalized_image` PNG RGB/RGBA; дополнительный demand отсутствует, готовый
+residual artifact не предполагается. Обе стороны ≥512, pixels≤2^22,
+без resize для обхода лимита. Сетка 4×4: starts `2+floor(i*(size−132)/3)`,
+cores 128², halo 2. Общие `extract_image_tiles`, BT.601 luminance,
+`finite_differences`, binomial5 residual; только bounded tile arithmetic.
+
+N-MAD: строгий RGB support (4,251), alpha 255, erosion 5×5 и g≤8;
+≥8192 support pixels, median(g)≤12, median(Y)∈[16,239]. Unscaled residual MAD,
+variance/energy/lag1 — раздельные diagnostics. До 5 пространственно ближайших
+peers с |Δbrightness|≤16 и |log2((g_i+.25)/(g_j+.25))|≤.5, tie row-major,
+минимум 3; `d=abs(log2((MAD_i+.25)/(median_peer_MAD+.25)))`.
+Это остаток фильтра, не sensor noise, PRNU или camera fingerprint.
+
+R-D2: шаговые Dxx/Dyy, mean(abs(d2)) по ортогональной оси; центрирование,
+periodic Hann/rFFT128, normalized power без DC (denominator>1e−12).
+Исключаются k≤3 и расстояние≤2 от 16m. Все halo/core opaque/unsaturated,
+brightness∈[16,239]. Target с texture power≥.1 около своего пика (k±1)
+отклоняется; peer с veto остаётся reference, если spectrum пригоден.
+С тем же matching/minimum3 сравниваются мощности **на частоте target**:
+`q=max(0,log2((P_i[k]+1e−12)/(median_peer_P[k]+1e−12)))`.
+Phase половин — diagnostic без решения. Спектральная периодичность не
+устанавливает interpolation history; JPEG/texture/notch и отсутствие peers
+могут скрыть сигнал или создать ложное различие.
+
+Оба результата сохраняют поддержку/eligibility tiles, peers, сравнения и
+максимум (null при отсутствии сравнений), координаты oriented pixels.
+`core_pixels` — число обработанных core samples, не union coverage:
+у малых допустимых размеров cores могут перекрываться. Канонический
+half-open grid и максимум не являются вероятностью или p-value.
+Не более 16 tiles и 32 направлений; raster освобождается после извлечения tiles.
+Общий шум/текстура/сжатие связывают эти методы с image quality и JPEG evidence;
+независимый голос не добавляется. Provenance —
+[NR-RS-BR1-FIRSTPARTY](REFERENCES.md#nr-rs-br1-firstparty--собственные-исследовательские-профили).
+
+### Video: отдельные runtime-профили и границы P1
+
+Все три метода требуют только `DENSE_VIDEO` + dependency `STREAM_TIMING`:
+существующие RGB24/PTS одного decode, до 3 окон×32 кадра, ≤640×360,
+native≤3840×2160. Generic timing/AV не запрашиваются: совместный спрос
+всех представлений превысил бы manifest cap. Timing analyzer наблюдает
+**только dense frame PTS**, не packet/GOP/DTS и не semantic A/V sync.
+Frames не сортируются, gaps между окнами не сшиваются, target times legacy PNG
+не подставляются вместо PTS. Сохраняются requested/observed bounds,
+coverage/stop reason, rational time base. Missing/bad input — ошибка reader;
+неизвестные PTS — явно неопределённые сравнения, не suspicious Finding.
+
+- **VRC-DENSE-DIPLOMA-1:** неизменённые block mean432, integer half-up,
+  four-output-frame groups, geometry/stream compatibility, строгие PTS,
+  temporal nonoverlap и один spare frame внутри окна из
+  [P1 §2](research/2026-10-01-video-vrc-protocol.md). Все ≤3741 unordered
+  пары проверяются, static/periodic не удаляются. Сохраняются отдельные
+  D_color=N_color/440640, D_delta=N_delta/660960 и T numerator/330480.
+  Runtime выводит counts/распределения и первую пару минимума отдельно по
+  каждой distance с числителями и поддержкой; полный P1 JSONL/4MiB report
+  в envelope 64 KiB не переносится. Zero descriptor не означает pixel equality.
+  Этот профиль — разрешённая runtime-адаптация, **не правка frozen P1**,
+  не повтор Stage A и не свидетельство прохождения G2/G3/G4/G5.
+- **VISUAL-DENSE-DIPLOMA-1:** те же 16×9 RGB means; для соседних кадров
+  одного окна при known строго возрастающих PTS
+  `sum(abs(q_next−q_prev))/(432*255)`. До 93 пар; count/undefined,
+  median/p95/max и support первого максимума. Motion, cuts, flash и lighting
+  не различаются; threshold отсутствует.
+- **TIMING-DENSE-DIPLOMA-1:** gap соседних observed PTS вычисляется Python int,
+  отсутствующий PTS разрывает сравнение. Сохраняются gaps, duplicate/decrease
+  counts; reference — median положительных gaps данного окна. Описательная
+  deviation=`abs(gap−reference)/(abs(gap)+reference)` при наличии reference,
+  иначе null-summary. VFR и decoder timing — доброкачественные объяснения.
+
+Для VRC/visual размер ниже 16×9 неприменим, недостаток кадров/пар —
+`insufficient_evidence`. Timing не требует этой spatial geometry.
+Читается одно pixel-окно за раз; далее удерживаются только descriptors/timing.
+Происхождение: собственные методы из [M4-R1](research/2026-10-01-video-method-selection.md)
+и P1, NumPy и [M1-F foundations](REFERENCES.md#dense-video-foundations-m1-f--2026-09-21).
+Связь с `video_sampled_frame_quality` и между тремя методами сохраняется как
+ограничение интерпретации; нового risk vote нет.
+
+### Проверки и оставшиеся границы
+
+Focused tests включают математические positive/control oracles, silence/flat,
+support boundaries, alpha/saturation, matching/notches, exact/near NCC и
+periodic confounds, PTS duplicate/decrease/missing/negative/large ticks,
+determinism, malformed/nonfinite inputs и реальные spawned workers.
+Проверяются максимальные планы, seed/pair caps и envelope; сквозной тест
+исполняет diploma config через реальный preprocessing/API/persistence/WebUI/cleanup.
+Это инженерные проверки собственных синтетических fixtures, не корпусная
+forensic validation и не новые accuracy/FPR. Текущий итог — в ROADMAP.
+Worker timeout и existing artifact budgets действуют без послабления;
+длинный stereo audio может быть отклонён штатным общим бюджетом ещё до анализа.
+Нет гарантии full-media coverage или hard RSS quota.
+
+`image_embedded_thumbnail_consistency` не реализован: отсутствует bounded
+preprocessing producer/descriptor для настоящего embedded IFD1 JPEG. Нужны
+отдельные extraction/binding/resource изменения; самодельная миниатюра не evidence.
 
 <a id="video-m4r1"></a>
 ## Кандидаты Stage 12 / Macro 4 — M4-R1 / M4-R2
