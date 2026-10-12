@@ -126,10 +126,12 @@ AFTER_MVP
 Статус Macros 0–8 Stage 11: DONE / owner accepted
 Последний завершённый Macro: Stage 12 Macro 3 — Audio Analyzer Expansion — Wave 1 (DONE / CLOSED / OWNER ACCEPTED / STRICTLY CERTIFIED — по подтверждению владельца в задании M4-R1)
 Статус Stage 12: IN_PROGRESS
-Активный Macro: Macro 4 — Video Analyzer Expansion — Wave 1 — IN_PROGRESS; M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12)
+Текущий инкремент: Diploma Finish — контролируемая демонстрационная оценка, Sprint 1 — IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING (2026-10-13)
+Дипломные реализации: PR #70 analyzer expansion и PR #71 ensemble — OWNER ACCEPTED / MERGED; main baseline после PR #71: 4459e79
+Macro 4: Video Analyzer Expansion — Wave 1 — IN_PROGRESS; M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12)
 M4-R2: COMPLETE_144_CELL_MATRIX; 133 VALID / 11 LOCAL_FAIL / 0 GLOBAL_STOP / 0 NOT_EXECUTED; G1 PASS / G2 FAIL / G3 PARTIAL / G4 NOT_EVALUATED_STAGE_A / G5 DEFER
 Stage B: BLOCKED / NOT AUTHORIZED; production: UNCHANGED / NO VRC PROMOTION; дальнейший полный Stage A rerun: NOT PLANNED
-Ближайшее действие: owner review документационного закрытия M4-R2; следующий нерешённый кандидат Macro 4 — VCM-FRAME-1, TARGETED_RESEARCH / INACTIVE, только навигация для решения владельца, без начала работы
+Ближайшее действие: owner review полного bundle Diploma Finish; после решения владельца и staging новых файлов повторить package provenance / quality barrier; калибровка требует отдельного OWNER GATE
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Состояние Macro 2: DONE / CLOSED; принятые результаты и основания закрытия приведены в §2.2
@@ -2528,18 +2530,19 @@ Graphify не пересобран, его provenance `625b9e83…` — STALE.
 <a id="diploma-ensemble-sprint1"></a>
 ## Дипломный ансамбль — Sprint 1, 2026-10-13
 
-**IMPLEMENTED / OWNER REVIEW PENDING**, задание
+**OWNER ACCEPTED / MERGED**, PR #71, main baseline `4459e79`, задание
 `STAGE12-DIPLOMA-ENSEMBLE-SPRINT1`; baseline `97b1f0b156cfc2162c942ae5f221389dd6629609`,
 ветка `feat/stage12-diploma-ensemble-sprint1`, исходное дерево чистое.
 Owner gate закрыт для реализации эвристической нормализации, начальных весов,
 семейств, ограниченной агрегации, переключения diploma config и небольших
-изменений WebUI. Это не owner acceptance готового diff.
+изменений WebUI. Приёмка и merge подтверждены владельцем в задании
+`STAGE12-DIPLOMA-DEMO-EVALUATION-SPRINT1`.
 
 По вердикту `REMEDIATE` и явному разрешению владельца применено узкое исправление
 `STAGE12-DIPLOMA-ENSEMBLE-SPRINT1-R1`: итоговая нормализация использует каноническую
 ёмкость типа медиа. Baseline R1 — тот же HEAD и ожидаемые 11 unstaged tracked-файлов
 реализации Sprint 1, без untracked. Нормализаторы, семейства, веса, коэффициенты
-семейной агрегации и пороги сохранены. **OWNER REVIEW REQUIRED** для обновлённого diff.
+семейной агрегации и пороги сохранены. Обновлённый diff R1 принят в составе PR #71.
 
 Реализован `diploma_ensemble_v1@0.1.0` в существующем assessment layer: все 14
 анализаторов имеют определённую обработку, 12 семейств (четыре на media type),
@@ -2563,10 +2566,55 @@ tests и `uv run poe check`, полный diff, inventory и SHA-256 seal нах
 Проверки из dirty tree — development verification, **не strict certification**.
 Graphify остаётся STALE (`625b9e83…`); пересборка в этом задании не выполнялась.
 
-Следующий шаг — owner review полного bundle и вердикт PASS/REMEDIATE; staging
-и commit выполняет только владелец. Stage 12 и Macro 4 остаются IN_PROGRESS;
+После приёмки PR #71 следующий отдельный инкремент — Diploma Finish ниже.
+Stage 12 и Macro 4 остаются IN_PROGRESS;
 закрытие Macro 6/7, научная приёмка методов, корпусная калибровка и Stage B
 этим sprint не заявляются.
+
+<a id="diploma-demo-evaluation-sprint1"></a>
+## Diploma Finish — контролируемая демонстрационная оценка, Sprint 1, 2026-10-13
+
+**IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING**, задание
+`STAGE12-DIPLOMA-DEMO-EVALUATION-SPRINT1`; чистый baseline
+`4459e795b8d784a4e683487c0d5b3f8e155b8bce`, ветка
+`feat/stage12-diploma-demo-evaluation-sprint1`.
+PR #70 (14 runtime analyzers) и PR #71 (дипломный ансамбль с R1 capacity
+normalization) — **OWNER ACCEPTED / MERGED**, согласно текущему заданию владельца.
+
+Scope: детерминированный first-party корпус, внешний manifest и результаты,
+FILE_LEVEL_E2E через штатный intake, парные сравнения, раздельные observation /
+holdout отчёты, шесть демонстрационных случаев и русский исследовательский текст.
+`calibration_observation` — название split, не разрешение настройки модели.
+Ансамбль `diploma_ensemble_v1@0.1.0`, его веса, normalizers, семейства, ёмкости,
+пороги и probability=null заморожены до оценки. Новых методов, зависимостей,
+public/config schema fields и медиа в Git нет.
+
+Подготовлен `scripts/diploma_demo_evaluation.py` с командами generate/evaluate/report
+и [русский отчёт](research/2026-10-13-diploma-demo-evaluation.md).
+Финальный корпус: 40 файлов (14 image / 14 audio / 12 video),
+10 control / 16 manipulated / 14 confound_control;
+28 calibration_observation / 12 holdout_demo. Две генерации побайтно совпали.
+Все 40 FILE_LEVEL_E2E прошли штатные intake/preprocessing/workers/persistence/cleanup;
+COMPONENT_LEVEL=0. Наблюдаются 14/14 анализаторов и 12/12 семейств.
+Сохранены все результаты, парные дельты, девять elevated controls, четыре слабых
+целевых преобразования и шесть holdout-сценариев live demo.
+Рекомендация — **NEED_MORE_DATA**; модель после результатов не менялась.
+
+Focused tests: **245 passed**. `uv run poe check` выполнен один раз:
+pre-commit и mypy PASS, pytest **3068 passed / 17 skipped / 1 failed**.
+Единственный fail — `test_sdist_wheel_metadata_entry_point_and_resources`:
+sdist provenance отвергает intended untracked-файлы. Read-only сверка архива
+подтвердила ровно три таких новых файла, без иных лишних/пропущенных членов,
+дубликатов или расхождений байтов. **OWNER_VERIFY_REQUIRED**, guard не ослаблен,
+staging не выполнялся. CLI smoke выполнен отдельно — PASS; Ruff новых файлов
+и `git diff --check` — PASS. Это development verification, не strict certification.
+Полный diff, новые файлы целиком, manifest, таблицы, логи и SHA-256 seal —
+во внешнем review bundle `DIPLOMA-demo-evaluation-sprint1`.
+
+История Macro 4, VRC G5 DEFER и запрет Stage B сохранены. Этот инкремент не
+закрывает Stage 12, Macro 8, научную валидацию или production-калибровку.
+Следующий gate — owner review полного diff,
+результатов и ограничений; любые изменения калибровки требуют отдельного задания.
 
 ## Карта Macro и зависимости
 
