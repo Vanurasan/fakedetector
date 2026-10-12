@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import math
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from functools import partial
 
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 from pydantic_core import PydanticSerializationError
 
 from fakedetector.config.models import CompletenessConfig, RiskAssessmentConfig
@@ -16,6 +18,7 @@ from fakedetector.domain import (
     CompletenessStatus,
     Finding,
     FindingSeverity,
+    MediaType,
     Recommendation,
     RiskAssessment,
     RiskLevel,
@@ -86,7 +89,7 @@ class CompletenessAssessmentService:
 
 
 class RiskAssessmentService:
-    """Apply score_model_v1 to authoritative findings without media I/O."""
+    """Dispatch deterministic assessment over authoritative facts without media I/O."""
 
     def __init__(
         self,
@@ -141,6 +144,10 @@ class RiskAssessmentService:
             ):
                 raise ValueError("completeness does not match analyzer results")
             _validate_finding_provenance(results, validated_findings)
+            if self._config.model_id == "diploma_ensemble_v1":
+                return self._ensemble_assessment(
+                    validated_completeness, results, validated_findings
+                )
             buckets = self._build_scoring_buckets(validated_findings)
             qualifying_ids = self._qualifying_critical_finding_ids(
                 validated_completeness,
@@ -275,7 +282,137 @@ class RiskAssessmentService:
             limitations=_risk_limitations(completeness, results, findings),
         )
 
-    def _score_level(self, score: int) -> RiskLevel:
+    def _ensemble_assessment(
+        self,
+        completeness: AnalysisCompleteness,
+        results: tuple[AnalyzerResult, ...],
+        findings: tuple[Finding, ...],
+    ) -> RiskAssessment:
+        media_types = {result.media_type for result in results}
+        if len(media_types) > 1:
+            raise ValueError("ensemble requires one media type")
+        media = next(iter(media_types), None)
+        families = tuple(family for family in _ENSEMBLE_FAMILIES if family.media_type is media)
+        specs = {spec.analyzer_id: spec for family in families for spec in family.members}
+        if any(result.analyzer_id not in specs for result in results):
+            raise ValueError("unknown ensemble analyzer")
+        by_id = {result.analyzer_id: result for result in results}
+        responses = {
+            analyzer_id: _ensemble_response(spec, by_id.get(analyzer_id), findings)
+            for analyzer_id, spec in specs.items()
+        }
+        family_values: list[tuple[str, float]] = []
+        details: list[str] = []
+        unavailable: list[str] = []
+        for family in families:
+            usable: list[tuple[str, float]] = []
+            for spec in family.members:
+                response, state = responses[spec.analyzer_id]
+                effective = (
+                    _effective_response(response, spec.weight) if response is not None else None
+                )
+                details.append(
+                    f"{spec.analyzer_id}: response={_signal_text(response)}, "
+                    f"weight={spec.weight:g}, effective={_signal_text(effective)}, state={state}."
+                )
+                if effective is not None:
+                    usable.append((spec.analyzer_id, effective))
+                else:
+                    unavailable.append(f"{spec.analyzer_id}={state}")
+            ordered = sorted(usable, key=lambda item: (-item[1], item[0]))
+            value = _family_response([item[1] for item in ordered])
+            family_values.append((family.key, value))
+            diminished = (
+                ", ".join(
+                    f"{analyzer_id} × {_family_factor(index):g}"
+                    for index, (analyzer_id, _) in enumerate(ordered)
+                )
+                or "нет доступных откликов"
+            )
+            details.append(
+                f"family={family.key}, response={_signal_text(value)}; "
+                f"вклады с подавлением корреляции: {diminished}; cap=1."
+            )
+        assessable = completeness.status is not CompletenessStatus.INSUFFICIENT
+        score = (
+            _ensemble_score([value for _, value in family_values], media)
+            if assessable and media is not None
+            else None
+        )
+        level = self._score_level(score) if score is not None else None
+        strongest = (
+            ", ".join(
+                f"{key}={_signal_text(value)}"
+                for key, value in sorted(family_values, key=lambda item: (-item[1], item[0]))
+                if value > 0
+            )
+            or "нет положительных откликов"
+        )
+        thresholds = self._config.thresholds
+        limitations = _risk_limitations(
+            completeness.model_copy(
+                update={"missing_capabilities": sorted(completeness.missing_capabilities)}
+            ),
+            tuple(sorted(results, key=lambda item: item.analyzer_id)),
+            findings,
+        )
+        limitations.extend(
+            [
+                "Шкала 0..100 — сводный эвристический сигнал, не вероятность подделки "
+                "и не статистическая уверенность. Коэффициенты начальные; "
+                "калибровка и FPR/FNR не установлены. 100 — теоретический максимум "
+                "текущей канонической политики для типа медиа, "
+                "не эмпирическая сопоставимость разных типов медиа.",
+                "Семейства не считаются статистически независимыми. ATD/ASC подавляются "
+                "внутри одного семейства; ABN, повторы и качество также могут коррелировать.",
+                "Обычная обработка, текстура, речь, музыка, статичные сцены, монтаж и VFR "
+                "могут давать сильные отклики. Измеряется только доступное покрытие; "
+                "ARC ограничен поиском кандидатов, VRC — двумя сохранёнными парами минимумов.",
+                "Нулевой сигнал и отсутствие данных не доказывают подлинность. "
+                "Недоступные отклики дают арифметический ноль и не уменьшают "
+                "каноническую ёмкость в знаменателе.",
+            ]
+        )
+        if unavailable:
+            limitations.append("Недоступные свидетельства: " + ", ".join(unavailable) + ".")
+        return RiskAssessment(
+            model_id=self._config.model_id,
+            model_version=self._config.model_version,
+            score=score,
+            score_based_level=level,
+            critical_override_applied=False,
+            critical_finding_ids=[],
+            final_level=level,
+            probability=None,
+            probability_method=None,
+            summary=(
+                f"Сводный эвристический сигнал: {score:.1f}/100, уровень {level.value.upper()}."
+                if score is not None and level is not None
+                else "Полнота анализа недостаточна для формирования сводного сигнала."
+            ),
+            explanation=(
+                f"Модель {self._config.model_id}@{self._config.model_version}; "
+                f"media_type={media.value if media is not None else 'не определён (пустой план)'}; "
+                f"полнота: status={completeness.status.value}, "
+                f"coverage_ratio={completeness.coverage_ratio}; "
+                f"score={_signal_text(score)}/100. "
+                f"Пороги: LOW: score <= {thresholds.low_max}; "
+                f"MEDIUM: {thresholds.low_max} < score <= {thresholds.medium_max}; "
+                f"HIGH: score > {thresholds.medium_max}. "
+                "Формула: clamp(100 × сумма откликов четырёх семейств / "
+                "каноническая ёмкость типа медиа, 0, 100); "
+                "media_capacity="
+                f"{_signal_text(_media_capacity(media) if media is not None else None)}. "
+                "Ёмкость вычислена по всем каноническим членам семейств, их весам "
+                "и коэффициентам уменьшения вкладов; недоступные отклики её не меняют; "
+                "округление только для отображения. "
+                + " ".join(details)
+                + f" Наибольшие отклики семейств: {strongest}. Critical override: disabled."
+            ),
+            limitations=limitations,
+        )
+
+    def _score_level(self, score: float) -> RiskLevel:
         thresholds = self._config.thresholds
         if score <= thresholds.low_max:
             return RiskLevel.LOW
@@ -656,6 +793,345 @@ def _suppressed_finding_ids(bucket: _ScoringBucket) -> tuple[str, ...]:
         for item in bucket.findings
         if item.finding_id != bucket.representative.finding_id
     )
+
+
+def _metric_object(value: JsonValue) -> dict[str, JsonValue]:
+    if not isinstance(value, dict):
+        raise ValueError("expected metric object")
+    return value
+
+
+def _metric_rows(
+    metrics: dict[str, JsonValue], key: str, limit: int
+) -> tuple[dict[str, JsonValue], ...]:
+    value = metrics.get(key)
+    if not isinstance(value, list) or len(value) > limit:
+        raise ValueError("invalid bounded metric rows")
+    return tuple(_metric_object(row) for row in value)
+
+
+def _metric_number(value: JsonValue, *, low: float = 0, high: float = 1) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
+        raise ValueError("metric outside finite domain")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("nonfinite metric")
+    return number
+
+
+def _metric_count(value: JsonValue, maximum: int) -> int:
+    if type(value) is not int or not 0 <= value <= maximum:
+        raise ValueError("invalid metric count")
+    return value
+
+
+def _unit_measurement(value: JsonValue, *, signed: bool = False) -> float:
+    # Existing TV/flux reductions may overshoot a natural bound by float64 roundoff.
+    # This numerical guard is not a decision or normalization threshold.
+    tolerance = 64 * math.ulp(1.0)
+    low = -1.0 if signed else 0.0
+    number = _metric_number(value, low=low - tolerance, high=1 + tolerance)
+    return max(low, min(1.0, number))
+
+
+def _metric_peak(value: JsonValue) -> float | None:
+    summary = _metric_object(value)
+    count = _metric_count(summary.get("count"), 1000)
+    if "max" not in summary:
+        raise ValueError("missing metric maximum")
+    peak = summary["max"]
+    if count == 0 and peak is None:
+        return None
+    if count == 0 or peak is None:
+        raise ValueError("metric support does not match maximum")
+    return _unit_measurement(peak)
+
+
+def _maximum_defined(values: Sequence[float | None]) -> float | None:
+    return max((value for value in values if value is not None), default=None)
+
+
+def _window_response(
+    metrics: dict[str, JsonValue], *, names: tuple[str, ...], limit: int
+) -> float | None:
+    values: list[float | None] = []
+    for row in _metric_rows(metrics, "windows", limit):
+        if row.get("state") in {"no_full_stft_frame", "unsupported_geometry"}:
+            continue
+        values.extend(_metric_peak(row.get(name)) for name in names)
+    return _maximum_defined(values)
+
+
+def _log_ratio_response(metrics: dict[str, JsonValue]) -> float | None:
+    if "max_log2_ratio" not in metrics:
+        raise ValueError("missing log ratio")
+    value = metrics["max_log2_ratio"]
+    if value is None:
+        return None
+    x = _metric_number(value, high=float.fromhex("0x1.fffffffffffffp+1023"))
+    # DIPLOMA_HEURISTIC_NORMALIZATION: one log2 unit is half response.
+    return x / (1 + x)
+
+
+def _background_response(metrics: dict[str, JsonValue]) -> float | None:
+    values: list[float | None] = []
+    for row in _metric_rows(metrics, "contexts", 42):
+        for name, signed in (("tv", False), ("signed_level_change", True)):
+            if name not in row:
+                raise ValueError("missing background metric")
+            value = row[name]
+            values.append(
+                abs(_unit_measurement(value, signed=signed)) if value is not None else None
+            )
+    return _maximum_defined(values)
+
+
+def _audio_repetition_response(metrics: dict[str, JsonValue]) -> float | None:
+    values: list[float] = []
+    for pair in _metric_rows(metrics, "pairs", 64):
+        if pair.get("state") in {"insufficient_support", "insufficient_evidence"}:
+            continue
+        if pair.get("state") != "measured":
+            raise ValueError("unknown ARC pair state")
+        for channel in _metric_rows(pair, "channels", 2):
+            support = channel.get("support_rhos")
+            if not isinstance(support, list) or len(support) != 2 or "rho" not in channel:
+                raise ValueError("invalid ARC support")
+            correlations = [channel["rho"], *support]
+            valid = [_unit_measurement(v, signed=True) for v in correlations if v is not None]
+            supported = len(valid) == 3
+            if channel.get("structural_support") is not supported:
+                raise ValueError("inconsistent ARC structural support")
+            if supported:
+                values.append(max(0.0, min(valid)))
+    return _maximum_defined(values)
+
+
+def _video_repetition_response(metrics: dict[str, JsonValue]) -> float | None:
+    # Evaluate color and delta on the SAME retained pair, never combine unrelated minima.
+    values: list[float] = []
+    for key in ("minimum_color_pair", "minimum_delta_pair"):
+        if key not in metrics:
+            raise ValueError("missing VRC pair")
+        if metrics[key] is None:
+            continue
+        pair = _metric_object(metrics[key])
+        color = _metric_count(pair.get("color_numerator"), 440640) / 440640
+        delta = _metric_count(pair.get("delta_numerator"), 660960) / 660960
+        values.append(1 - max(color, delta))
+    return _maximum_defined(values)
+
+
+def _timing_response(metrics: dict[str, JsonValue]) -> float | None:
+    values: list[float | None] = []
+    for row in _metric_rows(metrics, "windows", 3):
+        observed = _metric_count(row.get("observed_pairs"), 31)
+        duplicates = _metric_count(row.get("duplicate_pts_pairs"), observed)
+        decreasing = _metric_count(row.get("decreasing_pts_pairs"), observed)
+        if duplicates + decreasing > observed:
+            raise ValueError("timing counts exceed observed pairs")
+        peak = _metric_peak(row.get("gap_deviation"))
+        if not observed and peak is not None:
+            raise ValueError("timing maximum without observed pairs")
+        values.extend((peak, (duplicates + decreasing) / observed if observed else None))
+    return _maximum_defined(values)
+
+
+@dataclass(frozen=True, slots=True)
+class _EnsembleAnalyzer:
+    analyzer_id: str
+    weight: float
+    profile: str | None = None
+    normalizer: Callable[[dict[str, JsonValue]], float | None] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _EvidenceFamily:
+    key: str
+    media_type: MediaType
+    members: tuple[_EnsembleAnalyzer, ...]
+
+
+# Canonical assessment policy, deliberately independent of worker implementations.
+# Catalog maturity/ID parity is verified by tests; no duplicate runtime maturity catalog.
+_ENSEMBLE_FAMILIES = (
+    _EvidenceFamily(
+        "image_metadata", MediaType.IMAGE, (_EnsembleAnalyzer("image_metadata_consistency", 1.0),)
+    ),
+    _EvidenceFamily(
+        "image_recompression",
+        MediaType.IMAGE,
+        (_EnsembleAnalyzer("image_jpeg_double_quantization", 1.0),),
+    ),
+    _EvidenceFamily(
+        "image_region_correspondence",
+        MediaType.IMAGE,
+        (_EnsembleAnalyzer("image_copy_move_correspondence", 1.0),),
+    ),
+    _EvidenceFamily(
+        "image_local_processing",
+        MediaType.IMAGE,
+        (
+            _EnsembleAnalyzer(
+                "image_noise_residual_consistency", 0.35, "N-MAD-MATCH-1", _log_ratio_response
+            ),
+            _EnsembleAnalyzer(
+                "image_resampling_consistency", 0.35, "R-D2-MATCH-1", _log_ratio_response
+            ),
+        ),
+    ),
+    _EvidenceFamily(
+        "audio_quality", MediaType.AUDIO, (_EnsembleAnalyzer("audio_pcm_quality", 1.0),)
+    ),
+    _EvidenceFamily(
+        "audio_transition",
+        MediaType.AUDIO,
+        (
+            _EnsembleAnalyzer(
+                "audio_temporal_discontinuity",
+                0.65,
+                "ATD-LOCAL-1",
+                partial(_window_response, names=("J", "E", "A"), limit=6),
+            ),
+            _EnsembleAnalyzer(
+                "audio_spectral_consistency",
+                0.65,
+                "ASC-TV-1",
+                partial(_window_response, names=("D1", "D4", "F1", "F4"), limit=6),
+            ),
+        ),
+    ),
+    _EvidenceFamily(
+        "audio_repetition",
+        MediaType.AUDIO,
+        (
+            _EnsembleAnalyzer(
+                "audio_repeated_segment_correspondence",
+                0.65,
+                "ARC-NCC-1",
+                _audio_repetition_response,
+            ),
+        ),
+    ),
+    _EvidenceFamily(
+        "audio_background",
+        MediaType.AUDIO,
+        (
+            _EnsembleAnalyzer(
+                "audio_background_noise_consistency", 0.35, "ABN-FLOOR-1", _background_response
+            ),
+        ),
+    ),
+    _EvidenceFamily(
+        "video_quality", MediaType.VIDEO, (_EnsembleAnalyzer("video_sampled_frame_quality", 1.0),)
+    ),
+    _EvidenceFamily(
+        "video_repetition",
+        MediaType.VIDEO,
+        (
+            _EnsembleAnalyzer(
+                "video_repeated_content_correspondence",
+                0.35,
+                "VRC-DENSE-DIPLOMA-1",
+                _video_repetition_response,
+            ),
+        ),
+    ),
+    _EvidenceFamily(
+        "video_visual_transition",
+        MediaType.VIDEO,
+        (
+            _EnsembleAnalyzer(
+                "video_visual_discontinuity",
+                0.35,
+                "VISUAL-DENSE-DIPLOMA-1",
+                partial(_window_response, names=("transition",), limit=3),
+            ),
+        ),
+    ),
+    _EvidenceFamily(
+        "video_timing",
+        MediaType.VIDEO,
+        (
+            _EnsembleAnalyzer(
+                "video_timing_anomaly", 0.35, "TIMING-DENSE-DIPLOMA-1", _timing_response
+            ),
+        ),
+    ),
+)
+
+
+def _ensemble_response(
+    spec: _EnsembleAnalyzer,
+    result: AnalyzerResult | None,
+    findings: tuple[Finding, ...],
+) -> tuple[float | None, str]:
+    if result is None:
+        return None, "not_planned"
+    if result.analyzer_version != "1.0.0":
+        raise ValueError("unsupported ensemble analyzer version")
+    if result.status is not AnalyzerStatus.COMPLETED:
+        return None, result.status.value
+    if not result.applicable:
+        return None, "not_applicable"
+    source_findings = tuple(f for f in findings if f.source_analyzer_id == spec.analyzer_id)
+    metrics = result.raw_metrics
+    if spec.normalizer is None:
+        if (
+            spec.analyzer_id == "image_jpeg_double_quantization"
+            and metrics.get("decision") == "insufficient_evidence"
+        ):
+            if source_findings:
+                raise ValueError("DQ finding without measurement support")
+            return None, "insufficient_evidence"
+        response: float | None = 1.0 if source_findings else 0.0
+    else:
+        if source_findings or result.candidate_findings or result.score is not None:
+            raise ValueError("experimental ensemble input must remain measurement-only")
+        if metrics.get("profile") != spec.profile:
+            raise ValueError("unexpected ensemble measurement profile")
+        state = metrics.get("state")
+        if state == "insufficient_evidence":
+            return None, "insufficient_evidence"
+        if state != "measured":
+            raise ValueError("unknown measurement state")
+        response = spec.normalizer(metrics)
+    if response is None:
+        return None, "insufficient_evidence"
+    response = _metric_number(response)
+    return response, "signal" if response else "completed_no_signal"
+
+
+def _effective_response(response: float, weight: float) -> float:
+    return _metric_number(response) * _metric_number(weight)
+
+
+def _family_factor(index: int) -> float:
+    return (1.0, 0.25, 0.10)[index] if index < 3 else 0.0
+
+
+def _family_response(effective: Sequence[float]) -> float:
+    ordered = sorted((_metric_number(value) for value in effective), reverse=True)
+    return min(1.0, math.fsum(value * _family_factor(i) for i, value in enumerate(ordered)))
+
+
+def _media_capacity(media: MediaType) -> float:
+    return math.fsum(
+        _family_response([member.weight for member in family.members])
+        for family in _ENSEMBLE_FAMILIES
+        if family.media_type is media
+    )
+
+
+def _ensemble_score(families: Sequence[float], media: MediaType) -> float:
+    if len(families) != 4:
+        raise ValueError("ensemble requires the canonical four family responses")
+    total = math.fsum(sorted(_metric_number(value) for value in families))
+    return max(0.0, min(100.0, 100 * total / _media_capacity(media)))
+
+
+def _signal_text(value: float | None) -> str:
+    return "null" if value is None else f"{value:.6g}"
 
 
 _RECOMMENDATIONS: dict[

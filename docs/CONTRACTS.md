@@ -2475,6 +2475,9 @@ result. Будущая persistence может использовать composite
 
 ### 11.3. Обязательные ограничения
 
+Баллы и пороги в этом подразделе относятся к историческому `score_model_v1`;
+отдельная дипломная политика использует тот же контракт по §11.7.
+
 - `model_id=score_model_v1`, `model_version=0.1.0` для набора правил v1;
 - вклады по `severity`: `weak=5`, `significant=25`, `critical=25` до
   `critical_override`;
@@ -2532,7 +2535,7 @@ critical-правил текущего Profile B пуст. Ни один тек�
 
 ### 11.6. `explanation` и `limitations`
 
-`explanation` детерминированно перечисляет `finding_id`, `Finding.type`,
+Для `score_model_v1` поле `explanation` детерминированно перечисляет `finding_id`, `Finding.type`,
 `severity`, исходный анализатор и его версию, группы подсчёта баллов,
 `correlation_group`, представителя, подавленные повторные вклады, `score`,
 `thresholds`, факт `critical_override` и статус полноты.
@@ -2553,6 +2556,41 @@ critical-правил текущего Profile B пуст. Ни один тек�
 сильнее фактических наблюдений.
 
 **Статус политик риска, корреляции и `critical_override` v1: FIXED.**
+
+### 11.7. `diploma_ensemble_v1` в существующей схеме
+
+`model_id=diploma_ensemble_v1`, `model_version=0.1.0` обозначают дипломный
+эвристический ансамбль. `RiskAssessment.score` содержит конечное число `0..100`
+при `complete`/`partial`; при `insufficient` score, score_based_level и final_level
+равны null. `probability` и `probability_method` всегда null,
+`critical_override_applied=false`, `critical_finding_ids=[]`.
+Алгоритм полноты и матрица рекомендаций остаются прежними. Формулы и смысл шкалы
+принадлежат [PROJECT §10.8](PROJECT.md#diploma-ensemble),
+точные нормализаторы — [METHODS](METHODS.md#diploma-ensemble-normalization).
+
+Новых публичных полей, API routes или версии схемы `AnalysisResult` нет.
+Девять experimental анализаторов сохраняют собственный `score=null`, пустые
+candidate_findings и отсутствие нормализованных Findings. Их raw_metrics
+используются до существующей проекции `include_raw_metrics`; скрытие измерений
+при сохранении не меняет уже рассчитанную оценку. CORE provenance проверяется
+до выбора политики. Неизвестный analyzer ID, несовместимый media type/версия,
+неверный measurement profile, повреждённые используемые структуры, bool/string
+вместо числа, выход за домен сверх численного допуска METHODS и nonfinite
+отклоняются как `invalid_risk_input`.
+Это не нулевой сигнал и не частично принятая оценка.
+
+`summary` кратко показывает эвристический сигнал и уровень. `explanation`
+детерминированно содержит model identity, media type, score, пороги, полноту,
+формулу с канонической ёмкостью типа медиа, четыре семейства, отклики/веса
+анализаторов и уменьшенные вклады. Ёмкость выводится из политики PROJECT,
+не из доступных откликов. Наибольшие положительные отклики сортируются по убыванию
+вклада, затем по ключу семейства.
+`limitations` раскрывает ограничения эвристики и недоступные свидетельства:
+`not_planned`, `not_applicable`, `error`, `timeout`, `skipped`,
+`insufficient_evidence`. `completed_no_signal` означает только нулевой отклик
+доступной проверки. При пустом плане media type нельзя вывести из результатов;
+объяснение явно сообщает это, оценка и ёмкость отсутствуют. При непустом плане
+тип медиа выводится из согласованных результатов; расширения входа lifecycle не требуется.
 
 ---
 
@@ -3397,6 +3435,11 @@ Stage 4 не вводятся.
 `model_version=0.1.0`, `low_max=5`, `medium_max=29`, `weak=5`,
 `significant=25`, `critical=25`, `minimum_for_assessment=0.5`,
 `critical_override.enabled=false`, `allowed_finding_types=[]`.
+
+Дипломный config выбирает `diploma_ensemble_v1@0.1.0` теми же полями;
+его пороги определены в PROJECT §10.8. Новых config fields нет. Существующие
+`severity_scores` остаются валидируемой частью схемы, но используются только
+исторической политикой. Коэффициенты ансамбля задаёт внутренняя политика, не YAML.
 
 `model_id` и `model_version` должны быть непустыми; `low_max < medium_max`;
 `weak > 0`; `significant > weak`; значения `allowed_finding_types` непусты и

@@ -2487,7 +2487,7 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 <a id="diploma-sprint1"></a>
 ## Дипломный analyzer expansion — Sprint 1, 2026-10-12
 
-**IMPLEMENTED / OWNER REVIEW PENDING**, задание
+**OWNER ACCEPTED / MERGED**, PR #70, merge commit main `97b1f0b`, задание
 `STAGE12-DIPLOMA-ANALYZER-EXPANSION-SPRINT1`, baseline
 `fff73dd6415610b02bf36e6511c1a99094f98865`, рабочая ветка
 `feat/stage12-diploma-analyzer-expansion-sprint1`.
@@ -2520,10 +2520,53 @@ SHA-256 review seal — во внешнем bundle
 Это development verification dirty tree, **не strict certification**.
 Graphify не пересобран, его provenance `625b9e83…` — STALE.
 
-Следующий шаг этого задания — owner review полного diff, включая intended
-untracked-файлы. Агент не выполняет staging/commit. Приёмка реализации,
-закрытие Stage 12 или Macro 4/5/10 не заявляются; следующая исследовательская
-кампания и весовая модель этим sprint не начинаются.
+Владелец подтвердил приёмку и merge PR #70 в задании следующего sprint.
+Этот факт закрывает review реализации analyzer expansion, но не Stage 12
+или Macro 4/5/10. Следующая весовая модель разрешена отдельным заданием ниже;
+новая исследовательская кампания автоматически не начинается.
+
+<a id="diploma-ensemble-sprint1"></a>
+## Дипломный ансамбль — Sprint 1, 2026-10-13
+
+**IMPLEMENTED / OWNER REVIEW PENDING**, задание
+`STAGE12-DIPLOMA-ENSEMBLE-SPRINT1`; baseline `97b1f0b156cfc2162c942ae5f221389dd6629609`,
+ветка `feat/stage12-diploma-ensemble-sprint1`, исходное дерево чистое.
+Owner gate закрыт для реализации эвристической нормализации, начальных весов,
+семейств, ограниченной агрегации, переключения diploma config и небольших
+изменений WebUI. Это не owner acceptance готового diff.
+
+По вердикту `REMEDIATE` и явному разрешению владельца применено узкое исправление
+`STAGE12-DIPLOMA-ENSEMBLE-SPRINT1-R1`: итоговая нормализация использует каноническую
+ёмкость типа медиа. Baseline R1 — тот же HEAD и ожидаемые 11 unstaged tracked-файлов
+реализации Sprint 1, без untracked. Нормализаторы, семейства, веса, коэффициенты
+семейной агрегации и пороги сохранены. **OWNER REVIEW REQUIRED** для обновлённого diff.
+
+Реализован `diploma_ensemble_v1@0.1.0` в существующем assessment layer: все 14
+анализаторов имеют определённую обработку, 12 семейств (четыре на media type),
+фиксированная каноническая ёмкость типа медиа и объяснение вкладов. Спецификация —
+[PROJECT](PROJECT.md#diploma-ensemble), таблица нормализации —
+[METHODS](METHODS.md#diploma-ensemble-normalization). `score_model_v1` и default
+config сохранены, экспериментальные методы остаются measurement-only.
+Публичные/config схемы, зависимости, preprocessing и analyzer implementations
+не менялись. Вероятность не рассчитывается; critical override не расширен.
+
+Проверки охватывают арифметику, все 14 ID, ATD/ASC correlation control,
+повреждённые/неопределённые метрики, полноту и регрессию исторической политики.
+R1 дополнительно проверяет ёмкости, максимум 100/HIGH для всех типов медиа
+и отсутствие усиления оставшихся откликов при недоступных свидетельствах.
+Сквозные image/audio/video пути используют реальные preprocessing и workers,
+сохраняют ensemble score, возвращают тот же JSON через API, показывают summary
+и explanation в WebUI, завершают cleanup. Отдельные synthetic oracles
+проверяют существующие outputs девяти experimental методов. Итоги focused
+tests и `uv run poe check`, полный diff, inventory и SHA-256 seal находятся в
+`C:\Users\Vanur\Desktop\FakeDetector-Work\reviews\DIPLOMA-ensemble-sprint1`.
+Проверки из dirty tree — development verification, **не strict certification**.
+Graphify остаётся STALE (`625b9e83…`); пересборка в этом задании не выполнялась.
+
+Следующий шаг — owner review полного bundle и вердикт PASS/REMEDIATE; staging
+и commit выполняет только владелец. Stage 12 и Macro 4 остаются IN_PROGRESS;
+закрытие Macro 6/7, научная приёмка методов, корпусная калибровка и Stage B
+этим sprint не заявляются.
 
 ## Карта Macro и зависимости
 

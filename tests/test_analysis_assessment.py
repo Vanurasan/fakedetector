@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from typing import Any
 
@@ -21,10 +22,17 @@ from fakedetector.domain import (
     RiskLevel,
 )
 from fakedetector.lifecycle._assessment import (
+    _ENSEMBLE_FAMILIES,
     AnalysisAssessmentError,
+    AnalysisAssessmentService,
     CompletenessAssessmentService,
     RecommendationService,
     RiskAssessmentService,
+    _effective_response,
+    _ensemble_response,
+    _ensemble_score,
+    _family_response,
+    _media_capacity,
     _TrustedCriticalRule,
 )
 
@@ -734,3 +742,554 @@ def test_explanations_are_deterministic_and_avoid_forensic_verdicts() -> None:
     assert "файл поддельный" not in text
     assert "файл настоящий" not in text
     assert "вероятность подделки" not in text
+
+
+_ENSEMBLE_SPECS = {
+    spec.analyzer_id: (family.media_type, spec)
+    for family in _ENSEMBLE_FAMILIES
+    for spec in family.members
+}
+_EXPECTED_CAPACITIES = {MediaType.IMAGE: 3.4375, MediaType.AUDIO: 2.8125, MediaType.VIDEO: 2.05}
+
+
+def _ensemble_config():
+    return RiskAssessmentConfig.model_validate(
+        {
+            "model_id": "diploma_ensemble_v1",
+            "model_version": "0.1.0",
+            "thresholds": {"low_max": 25, "medium_max": 55},
+        }
+    )
+
+
+def _ensemble_metrics(analyzer_id, value):
+    peak = {"count": int(value is not None), "max": value}
+    metrics = {
+        "audio_temporal_discontinuity": {"windows": [dict.fromkeys(("J", "E", "A"), peak)]},
+        "audio_spectral_consistency": {"windows": [dict.fromkeys(("D1", "D4", "F1", "F4"), peak)]},
+        "audio_repeated_segment_correspondence": {
+            "pairs": [
+                {
+                    "state": "measured",
+                    "channels": [
+                        {
+                            "rho": value,
+                            "support_rhos": [value, value],
+                            "structural_support": value is not None,
+                        }
+                    ],
+                }
+            ],
+        },
+        "audio_background_noise_consistency": {
+            "contexts": [{"tv": value, "signed_level_change": value}],
+        },
+        "image_noise_residual_consistency": {"max_log2_ratio": value},
+        "image_resampling_consistency": {"max_log2_ratio": value},
+        "video_repeated_content_correspondence": {
+            key: {
+                "color_numerator": int((1 - value) * 440640),
+                "delta_numerator": int((1 - value) * 660960),
+            }
+            if value is not None
+            else None
+            for key in ("minimum_color_pair", "minimum_delta_pair")
+        },
+        "video_visual_discontinuity": {"windows": [{"transition": peak}]},
+        "video_timing_anomaly": {
+            "windows": [
+                {
+                    "observed_pairs": int(value is not None),
+                    "duplicate_pts_pairs": 0,
+                    "decreasing_pts_pairs": 0,
+                    "gap_deviation": peak,
+                }
+            ]
+        },
+    }.get(analyzer_id, {})
+    return {"profile": _ENSEMBLE_SPECS[analyzer_id][1].profile, "state": "measured", **metrics}
+
+
+def _ensemble_result(analyzer_id, value=0, status=AnalyzerStatus.COMPLETED):
+    media, _ = _ENSEMBLE_SPECS[analyzer_id]
+    return _result(analyzer_id, status).model_copy(
+        update={"media_type": media, "raw_metrics": _ensemble_metrics(analyzer_id, value)}
+    )
+
+
+def _ensemble_risk(results, findings=()):
+    return _risk(results, findings, config=_ensemble_config())
+
+
+def test_ensemble_closed_policy_matches_catalog_maturity_and_four_families():
+    from fakedetector.analyzers._catalog import (
+        _resolve_runtime_analyzer_definition,
+        _runtime_analyzer_registrations,
+    )
+
+    assert len(_ENSEMBLE_SPECS) == 14
+    assert len(_ENSEMBLE_FAMILIES) == 12
+    assert set(_ENSEMBLE_SPECS) == {r.analyzer_id for r in _runtime_analyzer_registrations()}
+    for media in MediaType:
+        assert sum(family.media_type is media for family in _ENSEMBLE_FAMILIES) == 4
+    weights = {"CORE": 1, "EXPERIMENTAL": 0.65, "EXPERIMENTAL_WEAK": 0.35}
+    for analyzer_id, (media, spec) in _ENSEMBLE_SPECS.items():
+        definition = _resolve_runtime_analyzer_definition(analyzer_id)
+        assert definition.supported_media_types == {media}
+        assert definition.analyzer_version == "1.0.0"
+        assert spec.weight == weights[definition.maturity]
+
+
+@pytest.mark.parametrize("analyzer_id", _ENSEMBLE_SPECS)
+def test_every_ensemble_analyzer_zero_strong_bounded_deterministic(analyzer_id):
+    media, spec = _ENSEMBLE_SPECS[analyzer_id]
+    clean = _ensemble_result(analyzer_id, 0)
+    strong = _ensemble_result(analyzer_id, 1)
+    findings = () if spec.normalizer else (_finding("accepted", source_analyzer_id=analyzer_id),)
+    assert _ensemble_response(spec, clean, ()) == (0, "completed_no_signal")
+    response, state = _ensemble_response(spec, strong, findings)
+    expected = 0.5 if analyzer_id.startswith(("image_noise", "image_resampling")) else 1
+    assert response == expected and state == "signal"
+    risk = _ensemble_risk([strong], findings)
+    assert risk == _ensemble_risk([strong], findings)
+    assert risk.score == pytest.approx(100 * spec.weight * expected / _EXPECTED_CAPACITIES[media])
+    assert risk.model_id == "diploma_ensemble_v1" and risk.model_version == "0.1.0"
+    assert risk.probability is risk.probability_method is None
+    assert math.isfinite(response) and 0 <= response <= 1
+    assert math.isfinite(risk.score) and 0 <= risk.score <= 100
+    assert f"{analyzer_id}: response=" in risk.explanation
+    assert not strong.candidate_findings
+    assert not risk.critical_override_applied and not risk.critical_finding_ids
+
+
+@pytest.mark.parametrize("analyzer_id", _ENSEMBLE_SPECS)
+@pytest.mark.parametrize(
+    "status",
+    [
+        AnalyzerStatus.ERROR,
+        AnalyzerStatus.TIMEOUT,
+        AnalyzerStatus.SKIPPED,
+        AnalyzerStatus.NOT_APPLICABLE,
+    ],
+)
+def test_ensemble_failed_or_inapplicable_response_is_missing_not_clean(analyzer_id, status):
+    _, spec = _ENSEMBLE_SPECS[analyzer_id]
+    result = _ensemble_result(analyzer_id, 1, status)
+    assert _ensemble_response(spec, result, ()) == (None, status.value)
+    risk = _ensemble_risk([result])
+    assert risk.score is risk.score_based_level is risk.final_level is None
+    assert f"{analyzer_id}={status.value}" in " ".join(risk.limitations)
+
+
+@pytest.mark.parametrize(
+    "analyzer_id", [k for k, (_, s) in _ENSEMBLE_SPECS.items() if s.normalizer]
+)
+@pytest.mark.parametrize("explicit", [True, False])
+def test_experimental_undefined_and_insufficient_are_not_zero(analyzer_id, explicit):
+    _, spec = _ENSEMBLE_SPECS[analyzer_id]
+    result = _ensemble_result(analyzer_id, None)
+    if explicit:
+        result.raw_metrics["state"] = "insufficient_evidence"
+    assert _ensemble_response(spec, result, ()) == (None, "insufficient_evidence")
+    risk = _ensemble_risk([result])
+    assert risk.score == 0  # Execution complete, but no usable measurement: fixed denominator.
+    assert "response=null" in risk.explanation
+    assert f"{analyzer_id}=insufficient_evidence" in " ".join(risk.limitations)
+    assert "Наибольшие отклики семейств: нет положительных откликов" in risk.explanation
+
+
+@pytest.mark.parametrize(
+    "analyzer_id", [k for k, (_, s) in _ENSEMBLE_SPECS.items() if s.normalizer]
+)
+@pytest.mark.parametrize(
+    "bad", [{}, {"state": "unknown"}, {"profile": "wrong", "state": "measured"}]
+)
+def test_experimental_malformed_metrics_fail_closed(analyzer_id, bad):
+    result = _ensemble_result(analyzer_id).model_copy(update={"raw_metrics": bad})
+    with pytest.raises(AnalysisAssessmentError) as exc:
+        _ensemble_risk([result])
+    assert exc.value.reason_code == "invalid_risk_input"
+
+
+@pytest.mark.parametrize(
+    "bad", [True, "0.5", -0.1, 1.01, float("nan"), float("inf"), -float("inf")]
+)
+def test_ensemble_rejects_invalid_numeric_metrics_and_arithmetic(bad):
+    result = _ensemble_result("audio_temporal_discontinuity")
+    result.raw_metrics["windows"][0]["J"]["max"] = bad
+    result.raw_metrics["windows"][0]["J"]["count"] = 1
+    with pytest.raises(AnalysisAssessmentError):
+        _ensemble_risk([result])
+    with pytest.raises(ValueError):
+        _effective_response(bad, 0.65)
+    with pytest.raises(ValueError):
+        _effective_response(0.5, bad)
+    with pytest.raises(ValueError):
+        _family_response([bad])
+    with pytest.raises(ValueError):
+        _ensemble_score([0, 0, 0, bad], MediaType.AUDIO)
+
+
+@pytest.mark.parametrize("media,capacity", _EXPECTED_CAPACITIES.items())
+def test_ensemble_arithmetic_oracles(media, capacity):
+    assert _media_capacity(media) == pytest.approx(capacity)
+    assert _effective_response(0.8, 0.65) == pytest.approx(0.52)
+    assert _family_response([0.4, 0.8, 0.2, 1e-3]) == pytest.approx(0.92)
+    assert _family_response([1, 1, 1, 1]) == 1
+    assert _family_response([]) == 0
+    assert _ensemble_score([0, 0, 0, 0], media) == 0
+    assert _ensemble_score([1, 1, 1, 1], media) == 100
+    assert _ensemble_score([0.5, 0.25, 0, 1], media) == pytest.approx(100 * 1.75 / capacity)
+    for values in ([0.5, 0.25, 0, 1], [0.1, 0.2, 0.3, 0.4]):
+        assert _family_response(values) == _family_response(values[::-1])
+        assert _ensemble_score(values, media) == _ensemble_score(values[::-1], media)
+        assert 0 <= _ensemble_score(values, media) <= 100
+    with pytest.raises(ValueError):
+        _ensemble_score([1, 1, 1], media)
+
+
+@pytest.mark.parametrize(
+    "positive_id,sibling_id,response,weight,capacity",
+    [
+        ("image_noise_residual_consistency", "image_resampling_consistency", 0.5, 0.35, 3.4375),
+        ("audio_temporal_discontinuity", "audio_spectral_consistency", 1, 0.65, 2.8125),
+        ("video_repeated_content_correspondence", "video_timing_anomaly", 1, 0.35, 2.05),
+    ],
+)
+@pytest.mark.parametrize(
+    "state",
+    [
+        "not_planned",
+        "not_applicable",
+        "completed_inapplicable",
+        "error",
+        "timeout",
+        "skipped",
+        "insufficient_evidence",
+    ],
+)
+def test_unavailable_sibling_never_reduces_capacity_or_boosts_score(
+    positive_id, sibling_id, response, weight, capacity, state
+):
+    positive = _ensemble_result(positive_id, 1)
+    sibling = _ensemble_result(sibling_id, 0)
+    reference = _ensemble_risk([positive, sibling])
+    results = [positive]
+    if state != "not_planned":
+        if state == "insufficient_evidence":
+            sibling.raw_metrics["state"] = state
+        elif state == "completed_inapplicable":
+            sibling.applicable = False
+        else:
+            sibling = _ensemble_result(sibling_id, 1, AnalyzerStatus(state))
+        results.append(sibling)
+    risk = _ensemble_risk(results)
+    assert risk.score == reference.score == pytest.approx(100 * response * weight / capacity)
+    assert risk.probability is risk.probability_method is None
+    assert f"media_capacity={capacity:g}" in risk.explanation
+    reported_state = "not_applicable" if state == "completed_inapplicable" else state
+    assert f"{sibling_id}={reported_state}" in " ".join(risk.limitations)
+    assert _ensemble_risk(results[::-1]) == risk
+
+
+@pytest.mark.parametrize(
+    "score,level",
+    [
+        (0, RiskLevel.LOW),
+        (25, RiskLevel.LOW),
+        (math.nextafter(25, math.inf), RiskLevel.MEDIUM),
+        (55, RiskLevel.MEDIUM),
+        (math.nextafter(55, math.inf), RiskLevel.HIGH),
+        (100, RiskLevel.HIGH),
+    ],
+)
+def test_ensemble_exact_unrounded_boundaries(score, level):
+    assert RiskAssessmentService(_ensemble_config())._score_level(score) is level
+
+
+def test_atd_asc_diminish_while_unrelated_families_accumulate():
+    atd = _ensemble_result("audio_temporal_discontinuity", 1)
+    asc = _ensemble_result("audio_spectral_consistency", 1)
+    arc = _ensemble_result("audio_repeated_segment_correspondence", 1)
+    assert (
+        _ensemble_risk([atd]).score
+        == _ensemble_risk([asc]).score
+        == pytest.approx(100 * 0.65 / 2.8125)
+    )
+    together = _ensemble_risk([atd, asc])
+    assert together.score == pytest.approx(100 * (0.65 + 0.25 * 0.65) / 2.8125)
+    independent = _ensemble_risk([atd, arc])
+    assert independent.score == pytest.approx(100 * (0.65 + 0.65) / 2.8125)
+    assert independent.score > together.score
+    assert "audio_temporal_discontinuity × 0.25" in together.explanation
+    assert together == _ensemble_risk([asc, atd])
+    partial = [
+        _ensemble_result("audio_pcm_quality", status=AnalyzerStatus.ERROR),
+        atd,
+        asc,
+        _ensemble_result("audio_background_noise_consistency", status=AnalyzerStatus.TIMEOUT),
+    ]
+    assert _ensemble_risk(partial) == _ensemble_risk(partial[::-1])
+
+
+def test_ensemble_partial_and_insufficient_keep_recommendation_rules():
+    results = [
+        _ensemble_result("audio_temporal_discontinuity", 1),
+        _ensemble_result("audio_pcm_quality", status=AnalyzerStatus.ERROR),
+    ]
+    service = AnalysisAssessmentService(_ensemble_config())
+    complete, risk, recommendation = service.assess([r.analyzer_id for r in results], results, [])
+    assert complete.status is CompletenessStatus.PARTIAL
+    assert risk.score == pytest.approx(100 * 0.65 / 2.8125)
+    assert "status=partial" in risk.explanation
+    assert "partial" in " ".join(risk.limitations)
+    assert recommendation.requires_manual_review
+    results.append(_ensemble_result("audio_spectral_consistency", status=AnalyzerStatus.TIMEOUT))
+    complete, risk, recommendation = service.assess([r.analyzer_id for r in results], results, [])
+    assert complete.status is CompletenessStatus.INSUFFICIENT
+    assert risk.score is risk.score_based_level is risk.final_level is None
+    assert recommendation.requires_manual_review
+    assert _ensemble_risk([]).score is None
+
+
+def test_core_findings_count_once_and_dq_insufficiency_remains_visible():
+    result = _ensemble_result("image_copy_move_correspondence")
+    findings = [_finding(str(i), source_analyzer_id=result.analyzer_id) for i in range(8)]
+    assert _ensemble_risk([result], findings).score == pytest.approx(100 / 3.4375)
+    assert _ensemble_risk([result], findings) == _ensemble_risk([result], findings[::-1])
+    dq = _ensemble_result("image_jpeg_double_quantization")
+    dq.raw_metrics = {"decision": "insufficient_evidence"}
+    risk = _ensemble_risk([dq])
+    assert "image_jpeg_double_quantization=insufficient_evidence" in " ".join(risk.limitations)
+    with pytest.raises(AnalysisAssessmentError):
+        _ensemble_risk([dq], [_finding("invalid", source_analyzer_id=dq.analyzer_id)])
+
+
+def test_ensemble_rejects_unknown_mixed_or_changed_sources_and_experimental_findings():
+    atd = _ensemble_result("audio_temporal_discontinuity")
+    invalid_inputs = [
+        [_result("unknown")],
+        [atd, _ensemble_result("video_timing_anomaly")],
+        [atd.model_copy(update={"analyzer_version": "2.0.0"})],
+        [atd.model_copy(update={"candidate_findings": [{"type": "injected"}]})],
+        [atd.model_copy(update={"score": 1, "score_name": "injected"})],
+    ]
+    for results in invalid_inputs:
+        with pytest.raises(AnalysisAssessmentError):
+            _ensemble_risk(results)
+    with pytest.raises(AnalysisAssessmentError):
+        _ensemble_risk([atd], [_finding("injected", source_analyzer_id=atd.analyzer_id)])
+
+
+def test_score_model_and_unknown_legacy_ids_preserve_historical_policy():
+    results = [_ensemble_result("audio_temporal_discontinuity", 1), _result("analyzer_a")]
+    findings = [
+        _finding("b", severity=FindingSeverity.SIGNIFICANT, correlation_group="shared"),
+        _finding("a", correlation_group="shared"),
+        _finding("c"),
+    ]
+    expected = _risk(results, findings)
+    assert expected.score == 30 and expected.final_level is RiskLevel.HIGH
+    for model_id in ("score_model_v1", "legacy_custom_model"):
+        actual = _risk(results, findings, config=RiskAssessmentConfig(model_id=model_id))
+        assert actual.model_dump(exclude={"model_id"}) == expected.model_dump(exclude={"model_id"})
+
+
+def test_normalizer_specific_support_and_pair_semantics():
+    arc = _ensemble_result("audio_repeated_segment_correspondence", 1)
+    channel = arc.raw_metrics["pairs"][0]["channels"][0]
+    channel["support_rhos"] = [0.3, 0.8]
+    assert _ensemble_risk([arc]).score == pytest.approx(100 * 0.65 * 0.3 / 2.8125)
+    channel["support_rhos"] = [-0.8, 1]
+    assert _ensemble_risk([arc]).score == 0
+    channel["support_rhos"] = [None, 1]
+    channel["structural_support"] = False
+    assert "response=null" in _ensemble_risk([arc]).explanation
+    vrc = _ensemble_result("video_repeated_content_correspondence", 0)
+    vrc.raw_metrics["minimum_color_pair"]["color_numerator"] = 0
+    vrc.raw_metrics["minimum_delta_pair"]["delta_numerator"] = 0
+    assert _ensemble_risk([vrc]).score == 0  # Different minima must not fabricate one good pair.
+    timing = _ensemble_result("video_timing_anomaly", None)
+    timing.raw_metrics["windows"][0].update(observed_pairs=10, duplicate_pts_pairs=10)
+    # No positive-gap reference required.
+    assert _ensemble_risk([timing]).score == pytest.approx(100 * 0.35 / 2.05)
+    background = _ensemble_result("audio_background_noise_consistency", 0)
+    background.raw_metrics["contexts"][0]["signed_level_change"] = -1
+    assert _ensemble_risk([background]).score == pytest.approx(100 * 0.35 / 2.8125)
+    noise = _ensemble_result("image_noise_residual_consistency", 1)
+    noise.raw_metrics["max_log2_ratio"] = 1e308
+    assert _ensemble_risk([noise]).score == pytest.approx(100 * 0.35 / 3.4375)
+
+
+@pytest.mark.parametrize(
+    "analyzer_id,field,bad",
+    [
+        ("audio_temporal_discontinuity", "windows", "not rows"),
+        ("audio_temporal_discontinuity", "windows", [{}] * 7),
+        ("audio_spectral_consistency", "windows", [1]),
+        ("audio_spectral_consistency", "windows", [{"D1": {"count": 0, "max": 1}}]),
+        ("audio_spectral_consistency", "windows", [{"D1": {"count": 1, "max": None}}]),
+        ("audio_repeated_segment_correspondence", "pairs", [{"state": "unknown"}]),
+        (
+            "audio_repeated_segment_correspondence",
+            "pairs",
+            [{"state": "measured", "channels": [{"support_rhos": [1]}]}],
+        ),
+        (
+            "audio_repeated_segment_correspondence",
+            "pairs",
+            [
+                {
+                    "state": "measured",
+                    "channels": [{"rho": 1, "support_rhos": [1, 1], "structural_support": False}],
+                }
+            ],
+        ),
+        ("audio_background_noise_consistency", "contexts", [{"tv": 0}]),
+        (
+            "audio_background_noise_consistency",
+            "contexts",
+            [{"tv": 0, "signed_level_change": -1.1}],
+        ),
+        ("image_noise_residual_consistency", "max_log2_ratio", -1),
+        ("image_resampling_consistency", "max_log2_ratio", "1"),
+        (
+            "video_repeated_content_correspondence",
+            "minimum_color_pair",
+            {"color_numerator": True, "delta_numerator": 0},
+        ),
+        (
+            "video_repeated_content_correspondence",
+            "minimum_color_pair",
+            {"color_numerator": 440641, "delta_numerator": 0},
+        ),
+        ("video_visual_discontinuity", "windows", [{"transition": {"count": 1}}]),
+        (
+            "video_timing_anomaly",
+            "windows",
+            [{"observed_pairs": 1, "duplicate_pts_pairs": 1, "decreasing_pts_pairs": 1}],
+        ),
+        (
+            "video_timing_anomaly",
+            "windows",
+            [
+                {
+                    "observed_pairs": 0,
+                    "duplicate_pts_pairs": 0,
+                    "decreasing_pts_pairs": 0,
+                    "gap_deviation": {"count": 1, "max": 1},
+                }
+            ],
+        ),
+    ],
+)
+def test_each_normalizer_rejects_corrupt_consumed_metrics(analyzer_id, field, bad):
+    result = _ensemble_result(analyzer_id)
+    result.raw_metrics[field] = bad
+    with pytest.raises(AnalysisAssessmentError) as exc:
+        _ensemble_risk([result])
+    assert exc.value.reason_code == "invalid_risk_input"
+
+
+def test_missing_support_subrows_do_not_hide_other_usable_measurements():
+    asc = _ensemble_result("audio_spectral_consistency", 1)
+    asc.raw_metrics["windows"].insert(0, {"state": "no_full_stft_frame"})
+    assert _ensemble_risk([asc]).score == pytest.approx(100 * 0.65 / 2.8125)
+    visual = _ensemble_result("video_visual_discontinuity", 1)
+    visual.raw_metrics["windows"].insert(0, {"state": "unsupported_geometry"})
+    assert _ensemble_risk([visual]).score == pytest.approx(100 * 0.35 / 2.05)
+    arc = _ensemble_result("audio_repeated_segment_correspondence", 1)
+    arc.raw_metrics["pairs"].insert(0, {"state": "insufficient_support"})
+    assert _ensemble_risk([arc]).score == pytest.approx(100 * 0.65 / 2.8125)
+    for result, key in ((asc, "windows"), (visual, "windows"), (arc, "pairs")):
+        risk = _ensemble_risk([result])
+        result.raw_metrics[key].reverse()
+        assert _ensemble_risk([result]) == risk
+
+
+def test_ensemble_ranking_excludes_zeros_and_breaks_ties_by_family_key():
+    risk = _ensemble_risk(
+        [
+            _ensemble_result("audio_temporal_discontinuity", 1),
+            _ensemble_result("audio_repeated_segment_correspondence", 1),
+        ]
+    )
+    top = risk.explanation.split("Наибольшие отклики семейств: ")[1]
+    assert top.startswith("audio_repetition=0.65, audio_transition=0.65.")
+    assert "audio_quality" not in top and "audio_background" not in top
+
+
+@pytest.mark.parametrize("media", MediaType)
+def test_canonical_profile_maximum_is_100_and_high_for_every_media(media):
+    results, findings = [], []
+    for analyzer_id, (source_media, spec) in _ENSEMBLE_SPECS.items():
+        if source_media is not media:
+            continue
+        result = _ensemble_result(analyzer_id, 1)
+        if "max_log2_ratio" in result.raw_metrics:
+            result.raw_metrics["max_log2_ratio"] = 1e308
+        if spec.normalizer is None:
+            findings.append(_finding(analyzer_id, source_analyzer_id=analyzer_id))
+        results.append(result)
+    risk = _ensemble_risk(results, findings)
+    assert risk.score == pytest.approx(100)
+    assert risk.score_based_level is risk.final_level is RiskLevel.HIGH
+    assert risk.probability is risk.probability_method is None
+    assert risk == _ensemble_risk(results[::-1], findings[::-1])
+
+
+def test_ensemble_never_expands_override_and_does_not_claim_authenticity():
+    result = _ensemble_result("audio_pcm_quality")
+    finding = _finding(
+        "accepted",
+        finding_type="trusted_test_signal",
+        source_analyzer_id=result.analyzer_id,
+        severity=FindingSeverity.CRITICAL,
+        eligible=True,
+    )
+    config = _ensemble_config().model_copy(
+        update={
+            "critical_override": _risk_config(
+                override_enabled=True, allowed_finding_types=[finding.type]
+            ).critical_override
+        }
+    )
+    risk = _risk(
+        [result],
+        [finding],
+        config=config,
+        rules=[_TrustedCriticalRule(finding.type, result.analyzer_id, "1.0.0")],
+    )
+    assert not risk.critical_override_applied and risk.critical_finding_ids == []
+    assert risk.score == pytest.approx(100 / 2.8125)
+    assert risk.score_based_level is risk.final_level is RiskLevel.MEDIUM
+    text = " ".join([risk.summary, risk.explanation, *risk.limitations]).lower()
+    for unsupported in (
+        "файл поддельный",
+        "файл настоящий",
+        "подлинность подтверждена",
+        "% fake",
+        "confidence of forgery",
+    ):
+        assert unsupported not in text
+
+
+def test_completed_but_inapplicable_is_disclosed_and_provenance_is_still_checked():
+    result = _ensemble_result("image_metadata_consistency").model_copy(update={"applicable": False})
+    risk = _ensemble_risk([result])
+    assert risk.score == 0
+    assert "image_metadata_consistency=not_applicable" in " ".join(risk.limitations)
+    with pytest.raises(AnalysisAssessmentError):
+        _ensemble_risk([result], [_finding("bad", source_analyzer_id=result.analyzer_id)])
+
+
+@pytest.mark.parametrize(
+    "value,expected", [(math.nextafter(1, math.inf), 1), (math.nextafter(0, -math.inf), 0)]
+)
+def test_natural_measurement_roundoff_is_clamped_without_loosening_arithmetic(value, expected):
+    result = _ensemble_result("audio_temporal_discontinuity")
+    for peak in result.raw_metrics["windows"][0].values():
+        peak["count"], peak["max"] = 1, value
+    assert _ensemble_risk([result]).score == pytest.approx(100 * 0.65 * expected / 2.8125)
+    with pytest.raises(ValueError):
+        _effective_response(value, 1)
