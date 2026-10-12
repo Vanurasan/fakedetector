@@ -94,8 +94,10 @@ Production/core promotion, изменение пяти CORE методов и п
 
 Все новые методы имеют версию `1.0.0`, фиксированный профиль без настроек,
 CPU-only выполнение на существующих NumPy/Pillow и внутренних ядрах. В Sprint 1
-они публикуют **измерения без Findings и без score**. Порогов подозрения,
-confidence, accuracy/FPR, probability, critical override или весового fusion нет.
+они публикуют **измерения без Findings и без собственного score**. Порогов подозрения,
+confidence, accuracy/FPR, probability или critical override у анализаторов нет.
+Отдельная последующая политика дипломного fusion описана
+[ниже](#diploma-ensemble-normalization); она не меняет runtime-измерения.
 Численные границы support/устойчивости ниже не являются forensic thresholds.
 Отсутствие/неопределённость измерения не означает подлинность. Сильный response
 не отделяет монтаж от обычного содержания или обработки.
@@ -168,7 +170,8 @@ median, nearest-rank p95 и первое max с sample-support и source PTS п�
 sample-интервалы и PTS отдельно, seed/union/cap counts; полный research ledger
 не переносится. Эти координаты описывают поддержку измерения, не место монтажа.
 ATD/ASC/ABN причинно пересекаются; ARC не объявляется статистически независимым.
-Нового `correlation_group` и вклада в риск нет.
+Нового `Finding.correlation_group` нет; дипломное объединение откликов задаётся
+отдельной политикой assessment, а не анализаторами.
 
 Происхождение: [REFERENCES M3-R1](REFERENCES.md#audio-m3r1), M3-AUD-01–09;
 собственные измерительные комбинации и first-party код, без копирования
@@ -212,7 +215,7 @@ Phase половин — diagnostic без решения. Спектральн�
 half-open grid и максимум не являются вероятностью или p-value.
 Не более 16 tiles и 32 направлений; raster освобождается после извлечения tiles.
 Общий шум/текстура/сжатие связывают эти методы с image quality и JPEG evidence;
-независимый голос не добавляется. Provenance —
+статистически независимый голос не заявляется. Provenance —
 [NR-RS-BR1-FIRSTPARTY](REFERENCES.md#nr-rs-br1-firstparty--собственные-исследовательские-профили).
 
 ### Video: отдельные runtime-профили и границы P1
@@ -255,7 +258,7 @@ coverage/stop reason, rational time base. Missing/bad input — ошибка rea
 Происхождение: собственные методы из [M4-R1](research/2026-10-01-video-method-selection.md)
 и P1, NumPy и [M1-F foundations](REFERENCES.md#dense-video-foundations-m1-f--2026-09-21).
 Связь с `video_sampled_frame_quality` и между тремя методами сохраняется как
-ограничение интерпретации; нового risk vote нет.
+ограничение интерпретации; статистическая независимость не заявляется.
 
 ### Проверки и оставшиеся границы
 
@@ -274,6 +277,93 @@ Worker timeout и existing artifact budgets действуют без посла
 `image_embedded_thumbnail_consistency` не реализован: отсутствует bounded
 preprocessing producer/descriptor для настоящего embedded IFD1 JPEG. Нужны
 отдельные extraction/binding/resource изменения; самодельная миниатюра не evidence.
+
+<a id="diploma-ensemble-normalization"></a>
+## Нормализация дипломного ансамбля — 2026-10-13
+
+**OWNER AUTHORIZED**, `STAGE12-DIPLOMA-ENSEMBLE-SPRINT1`. Это инженерная
+нормализация уже существующих результатов версии `1.0.0`, не принятие новых
+forensic decision rules, не изменение scientific disposition и не новая
+корпусная валидация. Общая модель, начальные коэффициенты и пороги принадлежат
+[PROJECT §10.8](PROJECT.md#diploma-ensemble); публичное представление и отказ —
+[CONTRACTS §11.7](CONTRACTS.md#117-diploma_ensemble_v1-в-существующей-схеме).
+
+Исправление владельца `STAGE12-DIPLOMA-ENSEMBLE-SPRINT1-R1` меняет только итоговую
+нормализацию по канонической ёмкости в PROJECT §10.8. Все 14 преобразований
+ниже, членство в семействах и коэффициенты влияния сохранены.
+
+В таблице `max_defined` берёт максимум определённых значений, без замены null
+нулём; если таких значений нет, response=null (`insufficient_evidence`).
+Общая входная граница: только `completed && applicable` даёт измеряемый отклик.
+`error`/`timeout`/`skipped`/`not_applicable` и отсутствующий в активном плане ID
+дают response=null с отдельной причиной. Явное `state=insufficient_evidence`
+у experimental также даёт null. Завершение исполнения и достаточность измерения
+не отождествляются. Все response конечны и принадлежат `[0,1]`.
+
+`B` — **DIPLOMA_HEURISTIC_NORMALIZATION** бинарного CORE-свидетельства:
+`1`, если есть хотя бы один принятый `Finding` этого источника, иначе `0`.
+Severity, source_score и повторные локализации не суммируются. Это не новая
+серьёзность Finding: существующие CORE Findings остаются `weak`, а `1` означает
+срабатывание принятого правила источника, не силу доказательства подделки.
+
+| Analyzer ID | Семейство | Maturity / влияние | Источник и точное преобразование | Направление, отсутствие данных, confounds |
+|---|---|---|---|---|
+| `image_metadata_consistency` | `image_metadata` | CORE / 1.00 | `B` по принятым Findings о несогласованных размерах | Появление Finding: 0→1; отсутствие/удаление EXIF само по себе не сигнал; переэкспорт и устаревшие теги |
+| `image_copy_move_correspondence` | `image_region_correspondence` | CORE / 1.00 | `B` по принятым Findings соответствующих регионов | Появление Finding: 0→1; обе локализации и несколько кластеров не умножают отклик; естественные повторы/текстуры |
+| `image_jpeg_double_quantization` | `image_recompression` | CORE / 1.00 | `B` по `jpeg_recompression_pattern`; `raw_metrics.decision=insufficient_evidence` → null | Появление Finding: 0→1; insufficient вместе с Finding — противоречие; обычное повторное JPEG-сжатие |
+| `audio_pcm_quality` | `audio_quality` | CORE / 1.00 | `B` по принятому saturation Finding | Появление Finding: 0→1; число фрагментов не увеличивает response; перегрузка записи/мастеринг |
+| `video_sampled_frame_quality` | `video_quality` | CORE / 1.00 | `B` по принятым resolution-change/repeated-frame Findings | Появление Finding: 0→1; оба типа учитываются один раз; статичные сцены, обычный монтаж |
+| `audio_temporal_discontinuity` | `audio_transition` | EXPERIMENTAL / 0.65 | `max_defined(windows[*].{J,E,A}.max)` | Не убывает по каждой unsigned метрике; Es уже представлен через E и повторно не используется; речь, музыка, transients |
+| `audio_spectral_consistency` | `audio_transition` | EXPERIMENTAL / 0.65 | `max_defined(windows[*].{D1,D4,F1,F4}.max)` | Не убывает по TV/flux; `no_full_stft_frame` пропускается; смены тембра, музыкальные переходы, усиление |
+| `audio_repeated_segment_correspondence` | `audio_repetition` | EXPERIMENTAL / 0.65 | По measured pairs/channels с `structural_support=true`: `max_defined(max(0,min(rho,support_rhos[0],support_rhos[1])))` | Не убывает по каждому signed NCC; все три значения обязаны быть определены; exact_decoded без NCC не голосует; loops, tones, фон, retrieval misses |
+| `audio_background_noise_consistency` | `audio_background` | EXPERIMENTAL_WEAK / 0.35 | `max_defined(contexts[*].tv, abs(contexts[*].signed_level_change))` | Не убывает по TV и модулю изменения уровня; attribution остаётся insufficient независимо от response; тихая речь/музыка и общий звук вместо выделенного фона |
+| `image_noise_residual_consistency` | `image_local_processing` | EXPERIMENTAL_WEAK / 0.35 | `x=max_log2_ratio`, `response=x/(1+x)` | Не убывает по x≥0; null→null; текстура, фильтрация, JPEG, ограниченное matching; не PRNU |
+| `image_resampling_consistency` | `image_local_processing` | EXPERIMENTAL_WEAK / 0.35 | `x=max_log2_ratio`, `response=x/(1+x)` | Не убывает по x≥0; null→null; периодическая текстура, JPEG/notches, нехватка peers; не доказательство resampling |
+| `video_repeated_content_correspondence` | `video_repetition` | EXPERIMENTAL_WEAK / 0.35 | Для каждого ненулевого `minimum_color_pair` и `minimum_delta_pair`: `r=1-max(color_numerator/440640,delta_numerator/660960)`; response=max_defined(r) | Не возрастает по дистанциям одной пары; две разные минимальные дистанции не склеиваются; null pairs→null; статические сцены, периодические движения, грубые descriptors |
+| `video_visual_discontinuity` | `video_visual_transition` | EXPERIMENTAL_WEAK / 0.35 | `max_defined(windows[*].transition.max)` | Не убывает по переходу; `unsupported_geometry` пропускается; движение, flash, lighting, обычные cuts |
+| `video_timing_anomaly` | `video_timing` | EXPERIMENTAL_WEAK / 0.35 | По окну: максимум `gap_deviation.max` и `(duplicate_pts_pairs+decreasing_pts_pairs)/observed_pairs`; response=max_defined по окнам | Не убывает по deviation и доле нарушений; observed_pairs=0→null; доля определена и без positive-gap reference; VFR/decoder timing |
+
+Для обоих image log-ratio масштаб `1` —
+**DIPLOMA_HEURISTIC_NORMALIZATION**: одна log2 единица означает удвоение исходного
+стабилизированного отношения и даёт response `0.5`; `x→∞` даёт `1`.
+Это не порог forensic решения. Масштаб выбран из единиц самой метрики, а не
+подогнан по accuracy. Синтетические fixtures предыдущего sprint подтверждают
+измеримость log-ratio, но не валидируют этот коэффициент для реальных файлов.
+У остальных experimental преобразований используются естественные границы
+TV, относительных изменений, signed NCC и нормированных descriptor distances;
+новых эмпирических anchors нет. Max по окнам — чувствительный к экстремумам
+эвристический выбор, не статистическая оценка и не независимое голосование окон.
+
+Численная безопасность: используемые числа проверяются на конечность, тип
+(bool и string не числа) и исходный домен. NCC допускает `[-1,1]`, signed
+level change — `[-1,1]`, unsigned ответы — `[0,1]`, log-ratio — конечный `x≥0`.
+Для естественно ограниченных float-измерений допускается только численная
+погрешность `64*ulp(1.0)` за границей с последующим clamp в исходный домен:
+существующая TV reduction может вернуть `1.0000000000000002`. Это не forensic
+threshold и не normalization anchor. Существенный выход за домен отклоняется;
+для целых счётчиков, log-ratio, весов и арифметики семейств допуск не применяется.
+Делитель `1+x` положителен и не переполняется для конечного float64 x;
+остальные делители — положительные фиксированные константы или проверенный
+ненулевой count. Метрики max требуют целый `count>0`, null — `count=0`.
+Сумма duplicate/decrease не превышает observed_pairs. В VRC принимаются
+целые числители в их естественных границах; минимум вычисляется для сохранённых
+пар, полный pair ledger не восстанавливается. Любая ошибка используемого
+значения отклоняет оценку, а не становится чистым откликом. Неиспользуемые
+диагностические поля не интерпретируются повторно.
+
+Обход ограничен текущими runtime-профилями: ATD/ASC ≤6 строк окон/каналов
+(каждый distribution count ≤1000), ABN ≤42 контекстов, ARC ≤64 пар ×2 канала,
+video ≤3 окон и ≤31 наблюдаемых пар/окно. Порядок окон, пар, каналов и Findings
+не влияет на ответ. Пустые/неинформативные выборки остаются null. Естественная
+тишина у ATD/ASC/ABN может давать неопределённое измерение, а не нулевой отклик.
+
+Карта семейств сохраняет предложенную владельцем. Уменьшение ATD/ASC и
+noise/resampling подавляет очевидное внутрисемейное повторение; корреляции
+между семействами не устранены и не объявлены отсутствующими. В частности,
+CORE video repetition и VRC могут реагировать на одну статичную сцену;
+image local processing и JPEG — на обычное сжатие. Это явное ограничение
+интерпретации начального дипломного ансамбля. Новых Findings, corpus campaign,
+accuracy/FPR/FNR или изменения frozen P1/ARC-v2 нет.
 
 <a id="video-m4r1"></a>
 ## Кандидаты Stage 12 / Macro 4 — M4-R1 / M4-R2

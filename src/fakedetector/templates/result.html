@@ -28,6 +28,17 @@
       {% if result.cleanup %}<dt>Очистка</dt><dd>{{ result.cleanup.status.value }}</dd>{% endif %}
     </dl>
 
+    {% if result.risk_assessment %}
+    <section>
+      <h2>Сводная оценка</h2>
+      <p>{{ result.risk_assessment.summary }}</p>
+      {% if result.risk_assessment.model_id == 'diploma_ensemble_v1' %}
+      <p>Сводный сигнал — эвристическая шкала 0–100, не вероятность подделки.</p>
+      {% endif %}
+      <details><summary>Объяснение оценки</summary><p>{{ result.risk_assessment.explanation }}</p></details>
+    </section>
+    {% endif %}
+
     <section>
       <h2>Признаки</h2>
       {% if result.findings %}

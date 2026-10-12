@@ -99,11 +99,11 @@ analyzers:
   settings: {}
 
 risk_assessment:
-  model_id: "score_model_v1"
+  model_id: "diploma_ensemble_v1"
   model_version: "0.1.0"
   thresholds:
-    low_max: 5
-    medium_max: 29
+    low_max: 25
+    medium_max: 55
   severity_scores:
     weak: 5
     significant: 25
