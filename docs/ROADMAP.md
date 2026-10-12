@@ -2484,6 +2484,47 @@ Stage 12 не реализует ML и не добавляет ML runtime,
 допустим, реализация отложена в Stage 13+. Калибровка вероятности, новая
 инфраструктура и интеграции не становятся частью этапа автоматически.
 
+<a id="diploma-sprint1"></a>
+## Дипломный analyzer expansion — Sprint 1, 2026-10-12
+
+**IMPLEMENTED / OWNER REVIEW PENDING**, задание
+`STAGE12-DIPLOMA-ANALYZER-EXPANSION-SPRINT1`, baseline
+`fff73dd6415610b02bf36e6511c1a99094f98865`, рабочая ветка
+`feat/stage12-diploma-analyzer-expansion-sprint1`.
+Отдельным owner authorization разрешён experimental tier и этот implementation
+sprint, без ожидания production/core promotion и без переоткрытия Macro 2/3.
+Научные dispositions, VRC G5 DEFER, Stage A engineering fail и запрет Stage B
+сохранены. Исторические ограничения runtime ниже относятся к прежним задачам;
+нынешнее узкое исключение — [METHODS, experimental tier](METHODS.md#diploma-experimental).
+
+Реализованы **9 новых runtime IDs**: ATD, ASC, ARC — `EXPERIMENTAL`;
+ABN, image noise/resampling, video repeated content/visual discontinuity/timing —
+`EXPERIMENTAL_WEAK`. Точные IDs и спецификации находятся в METHODS.
+Пять CORE алгоритмов/версий не менялись. Runtime получает общий закрытый каталог;
+новые методы включаются существующими списками ID и используют штатный worker.
+Новых зависимостей, public/config schema fields, Findings, risk fusion и ML нет.
+`config/config.diploma.yaml` включает все 14 методов и `include_raw_metrics=true`;
+исторический config/Profile B сохранён. WebUI показывает результаты без Findings.
+
+Triage: ATD/ASC/ABN/timing — EASY; noise/resampling/VRC/visual — MEDIUM;
+ARC — HARD, реализован после остальных с переиспользованием frozen-v2 арифметики;
+thumbnail — **DEFERRED_FROM_SPRINT**: нет bounded embedded-thumbnail producer,
+descriptor/binding и безопасного nested decode в preprocessing. Псевдоминиатюры
+не создавались. VCM-FRAME-1 не включён в этот sprint; прежний INACTIVE сохранён.
+
+Инженерные свидетельства: focused unit/worker tests, synthetic positive/control,
+применимость, nonfinite/malformed input, caps и сквозной diploma API/WebUI тест
+с реальными preprocessing, persistence и cleanup. Полный итог проверок и
+SHA-256 review seal — во внешнем bundle
+`C:\Users\Vanur\Desktop\FakeDetector-Work\reviews\DIPLOMA-analyzer-expansion-sprint1`.
+Это development verification dirty tree, **не strict certification**.
+Graphify не пересобран, его provenance `625b9e83…` — STALE.
+
+Следующий шаг этого задания — owner review полного diff, включая intended
+untracked-файлы. Агент не выполняет staging/commit. Приёмка реализации,
+закрытие Stage 12 или Macro 4/5/10 не заявляются; следующая исследовательская
+кампания и весовая модель этим sprint не начинаются.
+
 ## Карта Macro и зависимости
 
 | Macro | Название | Статус | Вход / результат и критерий перехода |
