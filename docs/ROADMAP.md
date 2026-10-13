@@ -126,12 +126,12 @@ AFTER_MVP
 Статус Macros 0–8 Stage 11: DONE / owner accepted
 Последний завершённый Macro: Stage 12 Macro 3 — Audio Analyzer Expansion — Wave 1 (DONE / CLOSED / OWNER ACCEPTED / STRICTLY CERTIFIED — по подтверждению владельца в задании M4-R1)
 Статус Stage 12: IN_PROGRESS
-Текущий инкремент: Diploma Finish — контролируемая демонстрационная оценка, Sprint 1 — IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING (2026-10-13)
-Дипломные реализации: PR #70 analyzer expansion и PR #71 ensemble — OWNER ACCEPTED / MERGED; main baseline после PR #71: 4459e79
+Текущий инкремент: DIPLOMA BENIGN VALIDATION — Sprint 1 — IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING (2026-10-13)
+Дипломные реализации: PR #70 analyzer expansion, PR #71 ensemble, PR #72 controlled demo evaluation — OWNER ACCEPTED / MERGED; текущий main baseline: bc30188
 Macro 4: Video Analyzer Expansion — Wave 1 — IN_PROGRESS; M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12)
 M4-R2: COMPLETE_144_CELL_MATRIX; 133 VALID / 11 LOCAL_FAIL / 0 GLOBAL_STOP / 0 NOT_EXECUTED; G1 PASS / G2 FAIL / G3 PARTIAL / G4 NOT_EVALUATED_STAGE_A / G5 DEFER
 Stage B: BLOCKED / NOT AUTHORIZED; production: UNCHANGED / NO VRC PROMOTION; дальнейший полный Stage A rerun: NOT PLANNED
-Ближайшее действие: owner review полного bundle Diploma Finish; после решения владельца и staging новых файлов повторить package provenance / quality barrier; калибровка требует отдельного OWNER GATE
+Ближайшее действие: owner review DIPLOMA BENIGN VALIDATION; рекомендация TARGETED_RESEARCH_REQUIRED для VRC, без настройки модели; дальнейшее исследование и калибровка требуют отдельного OWNER GATE
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Состояние Macro 2: DONE / CLOSED; принятые результаты и основания закрытия приведены в §2.2
@@ -2574,7 +2574,7 @@ Stage 12 и Macro 4 остаются IN_PROGRESS;
 <a id="diploma-demo-evaluation-sprint1"></a>
 ## Diploma Finish — контролируемая демонстрационная оценка, Sprint 1, 2026-10-13
 
-**IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING**, задание
+**OWNER ACCEPTED / MERGED**, PR #72, main baseline `bc30188`; задание
 `STAGE12-DIPLOMA-DEMO-EVALUATION-SPRINT1`; чистый baseline
 `4459e795b8d784a4e683487c0d5b3f8e155b8bce`, ветка
 `feat/stage12-diploma-demo-evaluation-sprint1`.
@@ -2613,8 +2613,58 @@ staging не выполнялся. CLI smoke выполнен отдельно �
 
 История Macro 4, VRC G5 DEFER и запрет Stage B сохранены. Этот инкремент не
 закрывает Stage 12, Macro 8, научную валидацию или production-калибровку.
-Следующий gate — owner review полного diff,
-результатов и ограничений; любые изменения калибровки требуют отдельного задания.
+Приёмка и merge PR #72 подтверждены владельцем в задании
+`STAGE12-DIPLOMA-BENIGN-VALIDATION-SPRINT1`. Приведённые выше результаты
+проверок отражают историю агентской реализации до staging владельцем,
+не текущую сертификацию baseline. Следующий инкремент — benign-валидация ниже;
+любые изменения калибровки требуют отдельного задания.
+
+<a id="diploma-benign-validation-sprint1"></a>
+## Diploma Finish — независимая benign-валидация, Sprint 1, 2026-10-13
+
+**IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING**, задание
+`STAGE12-DIPLOMA-BENIGN-VALIDATION-SPRINT1`; чистый baseline
+`bc301888281fdc6954b70c267c33354c12c1b39f`, ветка
+`feat/stage12-diploma-benign-validation-sprint1`.
+PR #70, #71 и #72 — **OWNER ACCEPTED / MERGED** по подтверждению владельца.
+
+Отдельный `scripts/diploma_benign_validation.py`: объявление лицензированных
+источников, ограниченная загрузка, детерминированная подготовка, E2E и отчёт.
+Источник происхождения/лицензий —
+[REFERENCES](REFERENCES.md#diploma-benign-validation-sources),
+методика и результаты — [русский отчёт](research/2026-10-13-diploma-benign-validation.md).
+Новых production методов, зависимостей, public/config schemas и медиа в Git нет.
+`diploma_ensemble_v1@0.1.0` и полный source/config/lock fingerprint сохранены.
+
+Корпус: 32 файла, 8 audio + 8 video source families (по 16 файлов/media),
+16 BENIGN_REFERENCE / 12 BENIGN_PROCESSING / 4 BENIGN_CONFOUND.
+Объём оригиналов 95 575 335 bytes; лицензии CC BY 3.0, CC BY-SA 3.0/4.0, CC0.
+Source-family split закреплён до оценки: 20 observation / 12 holdout_benign.
+Две подготовки дали побайтное совпадение всех 32 файлов.
+FILE_LEVEL_E2E=32 / COMPONENT_LEVEL=0: все completed/complete/cleanup completed,
+все 5 audio и 4 video анализатора наблюдались, один ABN insufficient_evidence.
+
+Аудио: LOW/MEDIUM/HIGH=0/16/0, score>25 у 16/16 файлов и 8/8 семейств;
+HIGH нет. Видео: 16/0/0, VRC≥0.75 у 16/16 файлов и 8/8 семейств,
+median=0.997052, p75=0.998907. CORE video_quality=0 везде, поэтому
+Pearson/Spearman undefined; совместных ненулевых responses 0/16.
+Это не FPR/accuracy и не доказательство независимости семейств.
+**PRIMARY_DECISION: TARGETED_RESEARCH_REQUIRED** — насыщение VRC на benign
+материале требует отдельного исследования масштаба/выбора экстремума;
+численная remediation не обоснована, настройка модели не выполнялась.
+
+Focused tests: **271 passed**, 2 targeted follow-up checks PASS. Единственный
+`uv run poe check`: pre-commit/mypy PASS; pytest **3094 passed / 17 skipped / 1 failed**.
+Fail только sdist provenance для трёх intended untracked-файлов, read-only
+сверка архива не выявила иных нарушений. **OWNER_VERIFY_REQUIRED**; release
+guard не менялся, staging не выполнялся. CLI smoke отдельно PASS, Ruff и
+`git diff --check` PASS. Полные свидетельства, новые файлы целиком и SHA-256 seal —
+review bundle `DIPLOMA-benign-validation-sprint1`. После review/staging владельцем
+требуется повтор quality barrier.
+Это development verification, не strict certification. Git mutations отсутствуют.
+Stage 12 и Macro 4 остаются IN_PROGRESS; VRC G5 DEFER и запрет Stage B сохранены.
+Следующий gate — owner review полного diff, manifests, таблиц и ограничений;
+staging/commit и решение о последующем исследовании принадлежат владельцу.
 
 ## Карта Macro и зависимости
 
