@@ -126,12 +126,12 @@ AFTER_MVP
 Статус Macros 0–8 Stage 11: DONE / owner accepted
 Последний завершённый Macro: Stage 12 Macro 3 — Audio Analyzer Expansion — Wave 1 (DONE / CLOSED / OWNER ACCEPTED / STRICTLY CERTIFIED — по подтверждению владельца в задании M4-R1)
 Статус Stage 12: IN_PROGRESS
-Текущий инкремент: DIPLOMA BENIGN VALIDATION — Sprint 1 — IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING (2026-10-13)
-Дипломные реализации: PR #70 analyzer expansion, PR #71 ensemble, PR #72 controlled demo evaluation — OWNER ACCEPTED / MERGED; текущий main baseline: bc30188
+Текущий инкремент: DIPLOMA VRC TARGETED RESEARCH — Sprint 1 — IN_PROGRESS / OWNER REVIEW PENDING (2026-10-14)
+Дипломные реализации: PR #70 analyzer expansion, PR #71 ensemble, PR #72 controlled demo evaluation, PR #73 independent benign validation — OWNER ACCEPTED / MERGED; текущий main baseline: c32de18
 Macro 4: Video Analyzer Expansion — Wave 1 — IN_PROGRESS; M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12)
 M4-R2: COMPLETE_144_CELL_MATRIX; 133 VALID / 11 LOCAL_FAIL / 0 GLOBAL_STOP / 0 NOT_EXECUTED; G1 PASS / G2 FAIL / G3 PARTIAL / G4 NOT_EVALUATED_STAGE_A / G5 DEFER
 Stage B: BLOCKED / NOT AUTHORIZED; production: UNCHANGED / NO VRC PROMOTION; дальнейший полный Stage A rerun: NOT PLANNED
-Ближайшее действие: owner review DIPLOMA BENIGN VALIDATION; рекомендация TARGETED_RESEARCH_REQUIRED для VRC, без настройки модели; дальнейшее исследование и калибровка требуют отдельного OWNER GATE
+Ближайшее действие: owner review DIPLOMA VRC TARGETED RESEARCH; production VRC и ансамбль заморожены; последующая реализация или расширение исследования требуют отдельного OWNER GATE
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Состояние Macro 2: DONE / CLOSED; принятые результаты и основания закрытия приведены в §2.2
@@ -2622,7 +2622,8 @@ staging не выполнялся. CLI smoke выполнен отдельно �
 <a id="diploma-benign-validation-sprint1"></a>
 ## Diploma Finish — независимая benign-валидация, Sprint 1, 2026-10-13
 
-**IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING**, задание
+**DONE / OWNER ACCEPTED / MERGED — PR #73**, подтверждено владельцем
+в задании VRC targeted research от 2026-10-14. Исходное задание
 `STAGE12-DIPLOMA-BENIGN-VALIDATION-SPRINT1`; чистый baseline
 `bc301888281fdc6954b70c267c33354c12c1b39f`, ветка
 `feat/stage12-diploma-benign-validation-sprint1`.
@@ -2653,7 +2654,8 @@ Pearson/Spearman undefined; совместных ненулевых responses 0/
 материале требует отдельного исследования масштаба/выбора экстремума;
 численная remediation не обоснована, настройка модели не выполнялась.
 
-Focused tests: **271 passed**, 2 targeted follow-up checks PASS. Единственный
+Исторические проверки до staging/приёмки PR #73: focused tests — **271 passed**,
+2 targeted follow-up checks PASS. Единственный
 `uv run poe check`: pre-commit/mypy PASS; pytest **3094 passed / 17 skipped / 1 failed**.
 Fail только sdist provenance для трёх intended untracked-файлов, read-only
 сверка архива не выявила иных нарушений. **OWNER_VERIFY_REQUIRED**; release
@@ -2663,8 +2665,52 @@ review bundle `DIPLOMA-benign-validation-sprint1`. После review/staging в�
 требуется повтор quality barrier.
 Это development verification, не strict certification. Git mutations отсутствуют.
 Stage 12 и Macro 4 остаются IN_PROGRESS; VRC G5 DEFER и запрет Stage B сохранены.
-Следующий gate — owner review полного diff, manifests, таблиц и ограничений;
-staging/commit и решение о последующем исследовании принадлежат владельцу.
+На завершение исполнения следующим gate был owner review полного diff,
+manifests, таблиц и ограничений; принятие PR #73 подтверждено выше.
+Последующее целевое исследование VRC отдельно разрешено владельцем 2026-10-14.
+
+<a id="diploma-vrc-targeted-research-sprint1"></a>
+## Diploma Finish — VRC targeted research, Sprint 1, 2026-10-14
+
+**IN_PROGRESS / OWNER REVIEW PENDING**, задание
+`STAGE12-DIPLOMA-VRC-TARGETED-RESEARCH-SPRINT1`, чистый baseline
+`c32de18326f020b3bc362dc5eff47042376616cb`, ветка
+`feat/stage12-vrc-targeted-research-sprint1`. PR #70, #71, #72 и #73 —
+**OWNER ACCEPTED / MERGED** по подтверждению владельца.
+
+Разрешены только component-level исследования VRC на замороженных видео,
+matched distant-repeat probes, focused tests и
+[русский отчёт](research/2026-10-14-vrc-targeted-research.md).
+Production `video_repeated_content_correspondence@1.0.0`, профиль
+`VRC-DENSE-DIPLOMA-1` и `diploma_ensemble_v1@0.1.0` не меняются;
+production-ready статус не присваивается. Stage 12 и Macro 4 — **IN_PROGRESS**.
+
+Audio transition по наблюдениям PR #73 требует отдельного targeted sprint;
+ATD/ASC и audio scoring не входят в текущую работу.
+
+Исполнение research завершено: 16 frozen benign-video derivatives / 8 families,
+8 matched reference + 8 distant-repeat probes, 12 старых diagnostic demo-видео.
+Полное production `raw_metrics` воспроизведено для 28 исторических файлов;
+максимальная ошибка current response — 0. Матрица из 5 gates × 10 pooling
+diagnostics заморожена до outcomes; все 50 вариантов измеримы.
+Расположение strongest T0: same-region 15/16, gap ≤0.5 s 15/16.
+Benign median strongest: T0=0.997052, T4=0.993708; T4 ≥0.95 — 13/16.
+Лучший описательный rank T3_GAP_2S__median даёт median=0.976271 и лишь
+3/8 положительных paired deltas. **READY_FOR_PROTOTYPE: 0/50**;
+исследовательская disposition — **VRC_REDESIGN_REQUIRED**.
+Это не принятие production-изменения, не FPR/TPR и не новая FILE_LEVEL_E2E validation.
+
+Focused tests — **103 passed**; независимый перерасчёт pair ledgers подтвердил
+220 sample/gate rows, 400 paired deltas и 50 benign summaries.
+Единственный полный `uv run poe check`: pre-commit/mypy PASS,
+pytest **3118 passed / 17 skipped / 1 failed**, coverage 91%.
+Fail только sdist provenance трёх intended untracked-файлов; read-only сверка
+архива не выявила иных нарушений. **OWNER_VERIFY_REQUIRED**; guard сохранён,
+staging запрещён заданием и не выполнялся. Ruff/focused mypy и CLI smoke PASS.
+Это development verification, не strict certification; после review/staging
+владельцу требуется повтор barrier.
+Owner review выполняется по bundle `DIPLOMA-vrc-targeted-research-sprint1`;
+последующий redesign/implementation требует отдельного OWNER GATE.
 
 ## Карта Macro и зависимости
 
