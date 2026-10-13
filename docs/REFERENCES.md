@@ -57,6 +57,86 @@ repository не добавляются. Deterministic generated positive, negati
 false-positive/challenge и boundary/not-applicable fixtures не являются
 статистической validation dataset и не должны так описываться.
 
+<a id="diploma-benign-validation-sources"></a>
+
+## Дипломная benign-валидация — источники, 2026-10-13
+
+Задание `STAGE12-DIPLOMA-BENIGN-VALIDATION-SPRINT1` разрешает ограниченное
+приобретение внешних аудио/видео для описательной проверки неизменённого
+ансамбля. Это `RESEARCH_REFERENCE`, не production dataset и не forensic
+authenticity ground truth. Каждый source ID ниже — отдельная запись отдельного
+автора; оба производных файла остаются в одном source family и split.
+
+Страницы Commons, их revision IDs, imageinfo/extmetadata API JSON и HTML
+проверены до загрузки и сохранены во внешнем `licenses/`; фактическое время
+доступа в ISO 8601 UTC — в `source-plan.json` и `source-manifest.json`.
+Всего 16 оригиналов, 95 575 335 bytes; оригиналы и производные остаются вне Git.
+
+| Source ID | Название и страница источника | Автор / attribution | Выбранная лицензия |
+| --- | --- | --- | --- |
+| audio-01 | [Ave Maria Italian.ogg](<https://commons.wikimedia.org/wiki/File:Ave_Maria_Italian.ogg>) | OrbiliusMagister | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) |
+| audio-02 | [Blue Danube (Exercise and variations-collections in piano) JMC, Han.ogg](<https://commons.wikimedia.org/wiki/File:Blue_Danube_(Exercise_and_variations-collections_in_piano)_JMC,_Han.ogg>) | Jason M. C., Han | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
+| audio-03 | [Sound of rain.ogg](<https://commons.wikimedia.org/wiki/File:Sound_of_rain.ogg>) | Effib | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) |
+| audio-04 | [Birdsong Bourne Woods 2020-04-27 0722.mp3](<https://commons.wikimedia.org/wiki/File:Birdsong_Bourne_Woods_2020-04-27_0722.mp3>) | Robert EA Harvey | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
+| audio-05 | [Thunder.wav](<https://commons.wikimedia.org/wiki/File:Thunder.wav>) | Subhashish Panigrahi | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
+| audio-06 | [Grandfather Clock Ticking.ogg](<https://commons.wikimedia.org/wiki/File:Grandfather_Clock_Ticking.ogg>) | Jud McCranie | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
+| audio-07 | [Church bells playing in Astoria, Queens, New York City.ogg](<https://commons.wikimedia.org/wiki/File:Church_bells_playing_in_Astoria,_Queens,_New_York_City.ogg>) | Glaneur de sons | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) |
+| audio-08 | [Audio Hörbild Grillenzirpen - nachts um 3 im Föhrenwald Mödling.ogg](<https://commons.wikimedia.org/wiki/File:Audio_H%C3%B6rbild_Grillenzirpen_-_nachts_um_3_im_F%C3%B6hrenwald_M%C3%B6dling.ogg>) | DrTrumpet | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
+| video-01 | [Steam train at station.webm](<https://commons.wikimedia.org/wiki/File:Steam_train_at_station.webm>) | Petar Milošević | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
+| video-02 | [Small waterfall.webm](<https://commons.wikimedia.org/wiki/File:Small_waterfall.webm>) | https://www.youtube.com/user/Editor | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) |
+| video-03 | [Dog walking in the Mission in San Francisco.ogv](<https://commons.wikimedia.org/wiki/File:Dog_walking_in_the_Mission_in_San_Francisco.ogv>) | Sage Ross | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) |
+| video-04 | [Windmill-1070685, Dingle Peninsula, Co. Kerry, Ireland.webm](<https://commons.wikimedia.org/wiki/File:Windmill-1070685,_Dingle_Peninsula,_Co._Kerry,_Ireland.webm>) | Maoileann | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
+| video-05 | [Panorama from the Old Town Hall Tower, Prague (1).ogg](<https://commons.wikimedia.org/wiki/File:Panorama_from_the_Old_Town_Hall_Tower,_Prague_(1).ogg>) | Elekes Andor | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
+| video-06 | [The concept of a static identity is a huge mistake-HD.webm](<https://commons.wikimedia.org/wiki/File:The_concept_of_a_static_identity_is_a_huge_mistake-HD.webm>) | Rahulkepapa | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) |
+| video-07 | [Old VHS tape ending black screen static.webm](<https://commons.wikimedia.org/wiki/File:Old_VHS_tape_ending_black_screen_static.webm>) | Glarph | [CC0](https://creativecommons.org/publicdomain/zero/1.0/) |
+| video-08 | [Big Buck Bunny Trailer 400p.ogv](<https://commons.wikimedia.org/wiki/File:Big_Buck_Bunny_Trailer_400p.ogv>) | (c) copyright 2008, Blender Foundation / www.bigbuckbunny.org | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) |
+
+Commons является поставщиком копий. Для `audio-07` указан исходный Freesound
+и автор Glaneur de sons; `video-02` имеет проверенную Commons запись YouTube
+CC BY 3.0; `video-08` — трейлер Blender Foundation / Big Buck Bunny (2008),
+CC BY 3.0. Для остальных, включая публичное речевое выступление `video-06`,
+Commons указывает own work. Эти сведения не доказывают отсутствие обработки
+до публикации. `video-07` — обычный шум конца VHS, анимация `video-08` выделена
+отдельно от камерных записей; генеративные AI-примеры в корпус не включены.
+
+Использование/изменения: первые 12 секунд; аудио — mono PCM16 16 kHz, затем
+обычное преобразование в 8 kHz; видео — MPEG-4, до 480×270/24 fps, затем
+до 320×180/15 fps с повторным кодированием. У видео удалена аудиодорожка.
+Это обработанные derivatives, а не исходные untouched recordings.
+Детальные команды, direct URLs, размеры и SHA-256 оригиналов и derivatives —
+внешние manifests, `source-provenance.csv` и `sample-manifest.csv`.
+
+Для CC BY сохраняются автор, название, source/license link и уведомление
+об изменениях. Для CC BY-SA производные сохраняют ту же лицензию при
+распространении. CC0 относится к `video-07`; Apache-2.0 проекта не заменяет
+лицензии этих медиа. В этом задании медиа не перераспространяются; endorsement
+авторов не заявляется. Условия: [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/),
+[CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/),
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/),
+[CC0](https://creativecommons.org/publicdomain/zero/1.0/).
+
+| Source ID | SHA-256 загруженного оригинала | Размер, bytes |
+| --- | --- | --- |
+| audio-01 | `4807f09fa3cfb4cff484ea4dfdb636f98dd91d12cabce826f0e4d9d4e5c4e2ea` | 236638 |
+| audio-02 | `82a7fe434fd4df63e7bcf4426915bfd9a4f1e97bc32e03432d1721a387d51f96` | 5236138 |
+| audio-03 | `1cde527e87b77510b532eb60dc5c2d429bf4342f0d9d293f1e7b8c6751a77073` | 431968 |
+| audio-04 | `d7ddcdac1e04b3b0638d6771076699569bef3f5bf49a23daa5c6e2a9910ecc29` | 940416 |
+| audio-05 | `93b679a7707052ade7c65ed91b595b078cb7a667ed3ea53fb238a7fdc1316609` | 6190364 |
+| audio-06 | `d07708ddc4a8d658db1eeb438c9cf2a0804a00e21c2e90e87e0715ceff58de6c` | 304462 |
+| audio-07 | `14ff8f969cfb001d033070b4dc61db59452b87fad584584cbb2ee283e54d55ab` | 1457820 |
+| audio-08 | `4e7eea961b5b30571a3e23a404287224e8ad2fc824d22ee2a1db5b252dbb4387` | 1636391 |
+| video-01 | `ee3021a0cbff77357a5f7e541c92a5d29d25fb29239944d55137cc546c0eae8a` | 16730451 |
+| video-02 | `5284b829ee6d1f52eefece0582a3068c0fb2b3f78c0e05590fd1d4983596a091` | 18429839 |
+| video-03 | `96635bfe9359472a81e9ad376018f9b46a29a06bb375d6a8506c38ab79b58652` | 10899300 |
+| video-04 | `ff0ae0f4b65980c79ab34ccdab717288fa3f51e2088ddbfea4381121b2683921` | 2583149 |
+| video-05 | `8f0715df201367aa82e06ff4e2e8eee2a9c0255f0660f3c2815c356da59f29f1` | 18356869 |
+| video-06 | `7506bc1406673464dcc8d52dea4c9c18d5cdb5d862287894929db6f9ecf28c04` | 4357063 |
+| video-07 | `af718316ef202b9e601d433ceb339916f0df5e275791b67a367a31186df9bb56` | 3424068 |
+| video-08 | `dcbe6f2ea404a52d4b2f6fc91f274874e69be1671a1097eb3dc19f28f7c6e40f` | 4360399 |
+
+Методика и результаты — [отчёт benign-валидации](research/2026-10-13-diploma-benign-validation.md).
+Новых методов, зависимостей или заимствованных реализаций этот реестр не вводит.
+
 <a id="audio-m3r2a"></a>
 
 ## M3-R2A — происхождение подготовленных аудиоисточников
