@@ -126,12 +126,12 @@ AFTER_MVP
 Статус Macros 0–8 Stage 11: DONE / owner accepted
 Последний завершённый Macro: Stage 12 Macro 3 — Audio Analyzer Expansion — Wave 1 (DONE / CLOSED / OWNER ACCEPTED / STRICTLY CERTIFIED — по подтверждению владельца в задании M4-R1)
 Статус Stage 12: IN_PROGRESS
-Текущий инкремент: DIPLOMA VRC TARGETED RESEARCH — Sprint 1 — IN_PROGRESS / OWNER REVIEW PENDING (2026-10-14)
-Дипломные реализации: PR #70 analyzer expansion, PR #71 ensemble, PR #72 controlled demo evaluation, PR #73 independent benign validation — OWNER ACCEPTED / MERGED; текущий main baseline: c32de18
+Текущий инкремент: DIPLOMA VRC REDESIGN RESEARCH — Sprint 1 — IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING (2026-10-15)
+Дипломные реализации: PR #70 analyzer expansion, PR #71 ensemble, PR #72 controlled demo evaluation, PR #73 independent benign validation, PR #74 targeted VRC research — OWNER ACCEPTED / MERGED; текущий main baseline: 17843484
 Macro 4: Video Analyzer Expansion — Wave 1 — IN_PROGRESS; M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12)
 M4-R2: COMPLETE_144_CELL_MATRIX; 133 VALID / 11 LOCAL_FAIL / 0 GLOBAL_STOP / 0 NOT_EXECUTED; G1 PASS / G2 FAIL / G3 PARTIAL / G4 NOT_EVALUATED_STAGE_A / G5 DEFER
 Stage B: BLOCKED / NOT AUTHORIZED; production: UNCHANGED / NO VRC PROMOTION; дальнейший полный Stage A rerun: NOT PLANNED
-Ближайшее действие: owner review DIPLOMA VRC TARGETED RESEARCH; production VRC и ансамбль заморожены; последующая реализация или расширение исследования требуют отдельного OWNER GATE
+Ближайшее действие: owner review DIPLOMA VRC REDESIGN RESEARCH; кандидат D2__I25__K9__R10 прошёл заданные research prototype gates, но имеет ограничения поддержки/локализации; production VRC и ансамбль заморожены, прототип требует отдельного OWNER GATE
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Состояние Macro 2: DONE / CLOSED; принятые результаты и основания закрытия приведены в §2.2
@@ -2672,7 +2672,8 @@ manifests, таблиц и ограничений; принятие PR #73 по�
 <a id="diploma-vrc-targeted-research-sprint1"></a>
 ## Diploma Finish — VRC targeted research, Sprint 1, 2026-10-14
 
-**IN_PROGRESS / OWNER REVIEW PENDING**, задание
+**DONE / OWNER ACCEPTED / MERGED — PR #74**, подтверждено владельцем
+в задании VRC redesign research. Исходное задание
 `STAGE12-DIPLOMA-VRC-TARGETED-RESEARCH-SPRINT1`, чистый baseline
 `c32de18326f020b3bc362dc5eff47042376616cb`, ветка
 `feat/stage12-vrc-targeted-research-sprint1`. PR #70, #71, #72 и #73 —
@@ -2709,8 +2710,73 @@ Fail только sdist provenance трёх intended untracked-файлов; rea
 staging запрещён заданием и не выполнялся. Ruff/focused mypy и CLI smoke PASS.
 Это development verification, не strict certification; после review/staging
 владельцу требуется повтор barrier.
-Owner review выполняется по bundle `DIPLOMA-vrc-targeted-research-sprint1`;
-последующий redesign/implementation требует отдельного OWNER GATE.
+Исторический owner review выполнялся по bundle `DIPLOMA-vrc-targeted-research-sprint1`;
+приёмка PR #74 и `VRC_REDESIGN_REQUIRED` подтверждена владельцем в следующем задании.
+Приведённые проверки относятся к агентской реализации до staging, не текущей
+сертификации baseline. Следующий отдельно разрешённый redesign — ниже;
+production implementation по-прежнему требует отдельного OWNER GATE.
+
+<a id="diploma-vrc-redesign-research-sprint1"></a>
+## Diploma Finish — VRC redesign research, Sprint 1, 2026-10-15
+
+**IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING**, задание
+`STAGE12-DIPLOMA-VRC-REDESIGN-RESEARCH-SPRINT1`, чистый baseline
+`178434843521382fa905bb4d15b95ceb702fb693`, ветка
+`feat/stage12-vrc-redesign-research-sprint1`. PR #70, #71, #72, #73 и #74 —
+**OWNER ACCEPTED / MERGED** по подтверждению владельца.
+
+Research-only harness `scripts/diploma_vrc_redesign_research.py` переиспользует
+принятый dense producer и frozen inputs: 16 benign-видео / 8 source families,
+8 matched reference + 8 distant-repeat derivatives и 12 demo-видео.
+Новых загрузок, медиа в Git, dependencies и public/config schemas нет.
+Полные production raw_metrics воспроизведены для 44/44 файлов; максимальная
+ошибка response — 0; повторная pixel/PTS QA всех 8 copied episodes совпала.
+
+Матрица 4 descriptors × 2 information policies × 3 run lengths × 2 relative
+scores + 2 controls = 50 entries закреплена до outcomes. Selection использовал
+только 5 observation families: 41/48 redesigned candidates прошли screen.
+Выбран **D2__I25__K9__R10**, frozen до любых новых holdout outcomes.
+На 3 holdout families вычислены только этот кандидат и production control;
+переотбора и изменений формулы не было. Все 10 заданных prototype gates PASS:
+combined benign median=0.037240, ≥0.75 — 0/16, repeat median=1,
+paired positive=8/8, paired median Δ=0.966883.
+
+Исследовательская disposition — **VRC2_METHOD_CANDIDATE_READY_FOR_PROTOTYPE**.
+Это не production-ready метод и не принятие production-изменения.
+Существенные ограничения сохранены: выбранный best run полностью внутри
+известной копии только у 3/8 семейств (median допускает несовпадающие группы);
+на demo 8/12 случаев имеют INSUFFICIENT_RUN_SUPPORT, включая distant repeat
+и loop, ещё 1/12 static — INSUFFICIENT_LOW_INFORMATION. K9/I25 чувствителен
+к cadence/доступной последовательной поддержке. Null не заменялся нулём.
+
+Методика, полный observation ranking, holdout, family-level результаты,
+demo и ограничения — [русский отчёт](research/2026-10-14-vrc-redesign-research.md).
+Имя отчёта сохранено по заданию; фактическое выполнение — 2026-10-15.
+Новые результаты — COMPONENT_LEVEL_RESEARCH, не FILE_LEVEL_E2E, FPR/TPR,
+authenticity ground truth, probability или ensemble calibration.
+1048 candidate/sample rows прошли точный численный replay; независимый
+перерасчёт populations/scores и порядка фаз подтвердил результат.
+
+Итоговые focused tests — 119 passed; Ruff, format и focused mypy PASS.
+Единственный `uv run poe check`: pre-commit/mypy PASS; pytest — 3171 passed,
+17 skipped, 1 failed, coverage 91%. Итог — OWNER_VERIFY_REQUIRED: единственный
+fail связан с sdist provenance трёх intended untracked-файлов. Read-only проверка
+фактического архива подтвердила полный набор 236 tracked файлов с точными bytes
+и отсутствие иных лишних/пропущенных/изменённых members. Guard не ослаблен;
+staging запрещён и не выполнялся. CLI smoke и `git diff --check` PASS.
+Полные проверки и diff находятся во внешнем review bundle
+`DIPLOMA-vrc-redesign-research-sprint1`; после review/staging владельцу нужен
+повтор barrier. Это development verification, не strict certification;
+owner acceptance ещё не получен.
+Production VRC, VRC-DENSE-DIPLOMA-1, maturity EXPERIMENTAL_WEAK и
+`diploma_ensemble_v1@0.1.0` остаются неизменными. VRC G5 DEFER и запрет исходного
+Stage B сохранены; Stage 12 и Macro 4 — IN_PROGRESS.
+
+Следующий gate — owner review, затем отдельное разрешение на прототип с явными
+границами применимости, insufficiency и локализации. Пересмотр K/I25 требует
+нового объявленного исследования, а не настройки по открытому holdout.
+Audio transition остаётся отдельным targeted sprint; ATD/ASC/ARC/ABN и
+audio ensemble behavior не меняются. Git mutations не выполнялись.
 
 ## Карта Macro и зависимости
 
