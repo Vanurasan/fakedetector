@@ -1950,11 +1950,21 @@ process boundary, а не создаёт отдельную процессную
 
 Runtime использует закрытый каталог встроенных анализаторов, определённый в
 `PROJECT.md` §6.10: CORE и явно разрешённый дипломный experimental tier.
-Рабочий процесс разрешает только ключи этого каталога;
+Рабочий процесс разрешает ключи этого каталога и единственную явно разрешённую
+worker-only запись прототипа VRC2 из `PROJECT.md` §6.10;
 регистрация, типизированные настройки, требования предобработки и проверка
 результатов согласуются с его метаданными. Fake-анализаторы из `tests/support`
 не входят в production-каталог или wheel. Частный тестовый resolver требует
 явного внедрения в тестовую сборку; конфигурация его не включает.
+
+Worker-only прототип использует существующие `AnalyzerRequest` и `AnalyzerResult`,
+private transport, проверки размера/идентичности и timeout/reap. Его ID
+`video_repeated_content_correspondence_v2_prototype` не разрешается runtime
+resolver и отсутствует в runtime registrations. Результат — измерительный:
+`score=null`, `score_name=null`, пустой `candidate_findings`; диагностические
+insufficiency states находятся в `raw_metrics`, не расширяют enum статусов
+или public/config schema. Missing/corrupt dense evidence сохраняет существующую
+техническую ошибку, неподходящий media/geometry — неприменимость.
 
 Внутренняя `_WorkerAnalyzerDefinition.maturity` различает `CORE`, `EXPERIMENTAL`
 и `EXPERIMENTAL_WEAK`. `_built_in_analyzer_registrations()` и CORE resolver

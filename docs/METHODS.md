@@ -51,6 +51,20 @@
 Изменение принятого измерения, порогов или семантики требует явного решения
 владельца и обновления этой спецификации в том же принимаемом изменении.
 
+## Отдельный допуск VRC2 worker-only prototype — PROTOTYPE / NOT ACCEPTED
+
+Заданием `STAGE12-DIPLOMA-VRC2-PROTOTYPE-APPLICABILITY-SPRINT1` владелец разрешил
+реализацию принятого research-кандидата PR #75 **D2__I25__K9__R10** только как
+изолированного Analyzer-compatible прототипа. ID —
+`video_repeated_content_correspondence_v2_prototype@0.1.0`, профиль —
+`VRC2-D2-I25-K9-R10-PROTOTYPE-1`. Точная замороженная формула и её ограничения —
+[отчёт PR #75, §§5–8](research/2026-10-14-vrc-redesign-research.md#5-d1d4-descriptors).
+Изменение D2/I25/K9/R10, epsilon, gap, rounding и traversal не разрешено;
+настройки, fallback, Findings и ensemble contribution отсутствуют.
+Это **NOT ACCEPTED как production forensic method**; VRC1 и исторический G5 DEFER
+не изменены. Архитектурная изоляция принадлежит `PROJECT.md` §6.10,
+статус проверки и последующий owner gate — `ROADMAP.md`.
+
 ## Шаблон спецификации метода
 
 Шаблон — структура документа, не новые runtime-поля или конфигурация.
