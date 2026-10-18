@@ -50,6 +50,9 @@ from fakedetector.analyzers._video_frames import (
     VideoSampledFrameQualityAnalyzer,
     VideoSampledFrameQualitySettings,
 )
+from fakedetector.analyzers._video_vrc2_prototype import (
+    VideoRepeatedContentCorrespondenceV2PrototypeAnalyzer,
+)
 from fakedetector.domain import MediaType
 from fakedetector.preprocessing._requirements import ForensicCapability, PreprocessingRequirements
 
@@ -245,7 +248,19 @@ _RUNTIME_ANALYZER_DEFINITIONS = (
 )
 
 _WORKER_DEFINITIONS = MappingProxyType(
-    {definition.worker_key: definition for definition in _RUNTIME_ANALYZER_DEFINITIONS}
+    {
+        **{definition.worker_key: definition for definition in _RUNTIME_ANALYZER_DEFINITIONS},
+        # Explicit research worker entry; never part of configurable runtime registrations.
+        "prototype.video_repeated_content_correspondence_v2.v0": _definition(
+            "prototype.video_repeated_content_correspondence_v2.v0",
+            VideoRepeatedContentCorrespondenceV2PrototypeAnalyzer,
+            settings_model=_ExperimentalSettings,
+            preprocessing_requirements=PreprocessingRequirements(
+                forensic=frozenset({ForensicCapability.DENSE_VIDEO}),
+            ),
+            maturity=_AnalyzerMaturity.EXPERIMENTAL_WEAK,
+        ),
+    }
 )
 _BUILT_IN_DEFINITIONS_BY_ID = MappingProxyType(
     {definition.analyzer_id: definition for definition in _BUILT_IN_ANALYZER_DEFINITIONS}

@@ -126,12 +126,12 @@ AFTER_MVP
 Статус Macros 0–8 Stage 11: DONE / owner accepted
 Последний завершённый Macro: Stage 12 Macro 3 — Audio Analyzer Expansion — Wave 1 (DONE / CLOSED / OWNER ACCEPTED / STRICTLY CERTIFIED — по подтверждению владельца в задании M4-R1)
 Статус Stage 12: IN_PROGRESS
-Текущий инкремент: DIPLOMA VRC REDESIGN RESEARCH — Sprint 1 — IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING (2026-10-15)
-Дипломные реализации: PR #70 analyzer expansion, PR #71 ensemble, PR #72 controlled demo evaluation, PR #73 independent benign validation, PR #74 targeted VRC research — OWNER ACCEPTED / MERGED; текущий main baseline: 17843484
+Текущий инкремент: DIPLOMA VRC2 PROTOTYPE/APPLICABILITY — Sprint 1 — IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING (2026-10-18)
+Дипломные реализации: PR #70 analyzer expansion, PR #71 ensemble, PR #72 controlled demo evaluation, PR #73 independent benign validation, PR #74 targeted VRC research, PR #75 VRC redesign research — OWNER ACCEPTED / MERGED; текущий main baseline: 4e564dc8
 Macro 4: Video Analyzer Expansion — Wave 1 — IN_PROGRESS; M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12)
 M4-R2: COMPLETE_144_CELL_MATRIX; 133 VALID / 11 LOCAL_FAIL / 0 GLOBAL_STOP / 0 NOT_EXECUTED; G1 PASS / G2 FAIL / G3 PARTIAL / G4 NOT_EVALUATED_STAGE_A / G5 DEFER
 Stage B: BLOCKED / NOT AUTHORIZED; production: UNCHANGED / NO VRC PROMOTION; дальнейший полный Stage A rerun: NOT PLANNED
-Ближайшее действие: owner review DIPLOMA VRC REDESIGN RESEARCH; кандидат D2__I25__K9__R10 прошёл заданные research prototype gates, но имеет ограничения поддержки/локализации; production VRC и ансамбль заморожены, прототип требует отдельного OWNER GATE
+Ближайшее действие: owner review VRC2 prototype/applicability; disposition VRC2_PROTOTYPE_APPLICABILITY_LIMITED, P5 FAIL (C12 positive 5/8 вместо ≥7/8); D2__I25__K9__R10, production VRC и ансамбль заморожены; дальнейшая работа требует отдельного OWNER GATE
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Состояние Macro 2: DONE / CLOSED; принятые результаты и основания закрытия приведены в §2.2
@@ -2719,7 +2719,8 @@ production implementation по-прежнему требует отдельно�
 <a id="diploma-vrc-redesign-research-sprint1"></a>
 ## Diploma Finish — VRC redesign research, Sprint 1, 2026-10-15
 
-**IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING**, задание
+**DONE / OWNER ACCEPTED / MERGED (PR #75)** по подтверждению владельца в задании
+`STAGE12-DIPLOMA-VRC2-PROTOTYPE-APPLICABILITY-SPRINT1`. Исходное задание
 `STAGE12-DIPLOMA-VRC-REDESIGN-RESEARCH-SPRINT1`, чистый baseline
 `178434843521382fa905bb4d15b95ceb702fb693`, ветка
 `feat/stage12-vrc-redesign-research-sprint1`. PR #70, #71, #72, #73 и #74 —
@@ -2767,16 +2768,71 @@ staging запрещён и не выполнялся. CLI smoke и `git diff --
 Полные проверки и diff находятся во внешнем review bundle
 `DIPLOMA-vrc-redesign-research-sprint1`; после review/staging владельцу нужен
 повтор barrier. Это development verification, не strict certification;
-owner acceptance ещё не получен.
+на момент исходного отчёта owner acceptance ещё не был получен; последующая
+приёмка PR #75 подтверждена владельцем в текущем задании.
 Production VRC, VRC-DENSE-DIPLOMA-1, maturity EXPERIMENTAL_WEAK и
 `diploma_ensemble_v1@0.1.0` остаются неизменными. VRC G5 DEFER и запрет исходного
 Stage B сохранены; Stage 12 и Macro 4 — IN_PROGRESS.
 
-Следующий gate — owner review, затем отдельное разрешение на прототип с явными
-границами применимости, insufficiency и локализации. Пересмотр K/I25 требует
+Следующее отдельное разрешение на worker-only прототип с явными границами
+применимости, insufficiency и локализации дано владельцем в текущем задании.
+Пересмотр K/I25 требует
 нового объявленного исследования, а не настройки по открытому holdout.
 Audio transition остаётся отдельным targeted sprint; ATD/ASC/ARC/ABN и
 audio ensemble behavior не меняются. Git mutations не выполнялись.
+
+<a id="diploma-vrc2-prototype-applicability-sprint1"></a>
+## Diploma Finish — VRC2 prototype/applicability, Sprint 1, 2026-10-18
+
+**IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING**, задание
+`STAGE12-DIPLOMA-VRC2-PROTOTYPE-APPLICABILITY-SPRINT1`, baseline
+`4e564dc8d0fa20df196f7cb1a1e63224ac4fcf83`, ветка
+`feat/stage12-vrc2-prototype-applicability-sprint1`. PR #70–75 —
+**OWNER ACCEPTED / MERGED** по подтверждению владельца.
+
+Реализован Analyzer-compatible прототип **D2__I25__K9__R10** через отдельный
+worker-only key. Он не входит в 14 обычных runtime registrations, не выбирается
+config и не участвует в ансамбле. Public/config schemas, зависимости, VRC1,
+веса, family/capacity, normalizer и thresholds не менялись. Разрешённый private
+worker-only допуск отражён в PROJECT/CONTRACTS; METHODS помечает его как
+PROTOTYPE / NOT ACCEPTED для production.
+
+Восстановленные accepted corpora проверены по hashes. Primary parity — **32/32**,
+state parity — **32/32**, максимальная численная ошибка — **0**; VRC1 raw_metrics
+также совпали для 32/32. Worker serialization/replay/error/timeout/cleanup gates
+пройдены. Замороженная до outcomes матрица завершена: **128 paired cells**,
+**256 real worker calls**, 8 семейств. Численные результаты, девять constituents,
+localization, signs/gates и hashes 264 конечных/промежуточных media независимо
+проверены. Медианный worker wall≈1.024 s, max≈1.149 s; timeout/cleanup regressions
+не наблюдались. Existing worker не обеспечивает hard RSS quota; строгая
+production resource certification не заявляется.
+
+Disposition — **VRC2_PROTOTYPE_APPLICABILITY_LIMITED**. P1–P4 и P6–P10 PASS;
+**P5 FAIL**: C12 имеет лишь 5/8 положительных измеримых пар вместо ≥7/8.
+C24 positive 8/8; C8 1/8; C6/C4 0/8. N0/N1 positive 8/8, N2 7/8,
+N3 8/8, N4 5/8, N5 8/8. Короткие L025/L050 дают 7/8 и 6/8 positive,
+но это не оценка точности обнаружения или локализации. ANY/MAJORITY overlap —
+99/128, fully contained — 32/128. Demo parity **12/12**: MEASURED 3,
+RUN_SUPPORT 8, LOW_INFORMATION 1; visibility limitation video-03-repeat сохранено.
+
+Метод не настраивался по outcomes, fallback и новые пороги не вводились.
+Это COMPONENT/WORKER_LEVEL evidence, не production-ready метод, не FPR/TPR,
+probability или authenticity claim. Полная методика, таблицы и ограничения —
+[русский отчёт](research/2026-10-15-vrc2-prototype-applicability.md).
+Focused tests — **163 passed**; Ruff/format и focused mypy PASS. Единственный
+`uv run poe check`: pre-commit/mypy PASS; **3218 passed, 17 skipped, 1 failed**,
+coverage 91%. Итог — **OWNER_VERIFY_REQUIRED**: sdist provenance guard отверг
+intended untracked report. Read-only inventory фактического архива подтвердил
+239 tracked members с точными bytes и ровно пять intended untracked-файлов;
+иных extra/missing/mismatched members нет. Guard сохранён, staging не выполнялся;
+после review/staging владельцу нужен повтор barrier. CLI smoke и
+`git diff --check` PASS. Это development verification, не strict certification.
+Полный diff, все новые файлы и evidence находятся в review bundle
+`DIPLOMA-vrc2-prototype-applicability-sprint1` с SHA-256/size seal.
+Следующий gate — owner review PASS / REMEDIATE; изменение метода/применимости,
+broader validation и runtime/ensemble integration требуют отдельного задания.
+Stage 12 и Macro 4 остаются IN_PROGRESS; VRC G5 DEFER и запрет исходного
+Stage B сохранены. Git mutations не выполнялись.
 
 ## Карта Macro и зависимости
 
