@@ -1983,11 +1983,21 @@ runtime resolver включают также закрытый experimental на�
 
 ### 8.2. Логический интерфейс
 
+Пример описывает существующий внутренний логический контракт `Analyzer`
+из `src/fakedetector/analyzers/_models.py`, а не новый публичный API.
+Уточнение отражает уже реализованный Protocol и не меняет требования к
+анализаторам, публичные схемы, семантику регистрации или закрытый каталог.
+
 ```python
+from typing import ClassVar, Protocol
+
+
 class Analyzer(Protocol):
-    analyzer_id: str
-    analyzer_version: str
-    media_type: MediaType
+    analyzer_id: ClassVar[str]
+    analyzer_name: ClassVar[str]
+    analyzer_version: ClassVar[str]
+    group: ClassVar[str]
+    supported_media_types: ClassVar[frozenset[MediaType]]
 
     def check_applicability(
         self,

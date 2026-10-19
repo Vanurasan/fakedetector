@@ -341,6 +341,21 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-10-19
+
+- По заданию `STAGE12-DOC-CODE-REALITY-RECONCILIATION-01` сверены текущая сводка
+  и навигация по реализации на baseline `7da9cd1b31d3e88a2cc3d93ae7de77700858e3b4`.
+  Добавлена карта исходников в PROJECT; уточнены активные профили, границы
+  исторической сертификации и различие TTL workspace cleanup и result recovery.
+  Код, конфигурация, методы, схемы и пороги не изменены.
+- Отражён уже слитый PR #76 с изолированным worker-only VRC2 после research
+  PR #75; принятый scope и ограничения находятся в
+  [ROADMAP](ROADMAP.md#diploma-vrc2-prototype-applicability-sprint1).
+  Это не production promotion и не новая сертификация.
+- В ROADMAP зафиксирована пауза новой функциональной разработки по решению
+  владельца до документационной сверки и независимого архитектурного review.
+  Stage 12 остаётся IN_PROGRESS; будущие Macros и Stage 13+ не закрыты.
+
 ### 2026-10-13
 
 - По owner authorization `STAGE12-DIPLOMA-ENSEMBLE-SPRINT1` добавлена отдельная

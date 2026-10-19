@@ -126,12 +126,14 @@ AFTER_MVP
 Статус Macros 0–8 Stage 11: DONE / owner accepted
 Последний завершённый Macro: Stage 12 Macro 3 — Audio Analyzer Expansion — Wave 1 (DONE / CLOSED / OWNER ACCEPTED / STRICTLY CERTIFIED — по подтверждению владельца в задании M4-R1)
 Статус Stage 12: IN_PROGRESS
-Текущий инкремент: DIPLOMA VRC2 PROTOTYPE/APPLICABILITY — Sprint 1 — IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING (2026-10-18)
-Дипломные реализации: PR #70 analyzer expansion, PR #71 ensemble, PR #72 controlled demo evaluation, PR #73 independent benign validation, PR #74 targeted VRC research, PR #75 VRC redesign research — OWNER ACCEPTED / MERGED; текущий main baseline: 4e564dc8
+Последний завершённый инкремент: DIPLOMA VRC2 PROTOTYPE/APPLICABILITY — Sprint 1 — DONE / OWNER ACCEPTED / MERGED (PR #76)
+Дипломные реализации и исследования: PR #70 analyzer expansion, PR #71 ensemble, PR #72 controlled demo evaluation, PR #73 independent benign validation, PR #74 targeted VRC research, PR #75 VRC redesign research, PR #76 VRC2 prototype/applicability — OWNER ACCEPTED / MERGED; baseline сверки: 7da9cd1b31d3e88a2cc3d93ae7de77700858e3b4
+Текущая работа: STAGE12-DOC-CODE-REALITY-RECONCILIATION-01 — документационная сверка и read-only аудит кода; OWNER REVIEW PENDING
+Решение владельца от 2026-10-19: новая функциональная разработка приостановлена до сверки документации и независимого архитектурного review; новый feature sprint не разрешён
 Macro 4: Video Analyzer Expansion — Wave 1 — IN_PROGRESS; M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12)
 M4-R2: COMPLETE_144_CELL_MATRIX; 133 VALID / 11 LOCAL_FAIL / 0 GLOBAL_STOP / 0 NOT_EXECUTED; G1 PASS / G2 FAIL / G3 PARTIAL / G4 NOT_EVALUATED_STAGE_A / G5 DEFER
 Stage B: BLOCKED / NOT AUTHORIZED; production: UNCHANGED / NO VRC PROMOTION; дальнейший полный Stage A rerun: NOT PLANNED
-Ближайшее действие: owner review VRC2 prototype/applicability; disposition VRC2_PROTOTYPE_APPLICABILITY_LIMITED, P5 FAIL (C12 positive 5/8 вместо ≥7/8); D2__I25__K9__R10, production VRC и ансамбль заморожены; дальнейшая работа требует отдельного OWNER GATE
+Ближайшее действие: owner review документационной сверки и затем независимый архитектурный review; VRC2_PROTOTYPE_APPLICABILITY_LIMITED и P5 FAIL сохранены; новая реализация или исследование требуют отдельного OWNER GATE
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Состояние Macro 2: DONE / CLOSED; принятые результаты и основания закрытия приведены в §2.2
@@ -155,6 +157,12 @@ M3-R2B: DONE / OWNER ACCEPTED RESEARCH RESULT (2026-09-26); историческ
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
 Документационная база: сформирована
 ```
+
+Пауза относится к активной реализации, не закрывает Stage 12 и не отменяет
+Macros 5–10, M2H-D01 в Macro 6, будущие WebUI/RU/EN, корпусную приёмку,
+release activities и Stage 13+ ML. Карта фактической реализации —
+[PROJECT §6.19](PROJECT.md#implementation-map); контракты и исследовательские
+gates сохраняют прежних владельцев документов.
 
 ### 2.1. Выполненная подготовка
 
@@ -2769,22 +2777,28 @@ staging запрещён и не выполнялся. CLI smoke и `git diff --
 `DIPLOMA-vrc-redesign-research-sprint1`; после review/staging владельцу нужен
 повтор barrier. Это development verification, не strict certification;
 на момент исходного отчёта owner acceptance ещё не был получен; последующая
-приёмка PR #75 подтверждена владельцем в текущем задании.
+приёмка PR #75 подтверждена владельцем в задании VRC2 prototype/applicability.
 Production VRC, VRC-DENSE-DIPLOMA-1, maturity EXPERIMENTAL_WEAK и
 `diploma_ensemble_v1@0.1.0` остаются неизменными. VRC G5 DEFER и запрет исходного
 Stage B сохранены; Stage 12 и Macro 4 — IN_PROGRESS.
 
-Следующее отдельное разрешение на worker-only прототип с явными границами
-применимости, insufficiency и локализации дано владельцем в текущем задании.
+Последующее отдельное разрешение на worker-only прототип с явными границами
+применимости, insufficiency и локализации было дано владельцем в задании
+VRC2 prototype/applicability; его результат описан ниже.
 Пересмотр K/I25 требует
 нового объявленного исследования, а не настройки по открытому holdout.
-Audio transition остаётся отдельным targeted sprint; ATD/ASC/ARC/ABN и
-audio ensemble behavior не меняются. Git mutations не выполнялись.
+Audio transition был выделен как отдельное направление; текущая пауза не
+разрешает targeted sprint. ATD/ASC/ARC/ABN и audio ensemble behavior не менялись.
+Git mutations агентом не выполнялись.
 
 <a id="diploma-vrc2-prototype-applicability-sprint1"></a>
 ## Diploma Finish — VRC2 prototype/applicability, Sprint 1, 2026-10-18
 
-**IN_PROGRESS / IMPLEMENTED / OWNER REVIEW PENDING**, задание
+**DONE / OWNER ACCEPTED / MERGED (PR #76)**. Приёмка ограниченного результата
+подтверждена владельцем в задании документационной сверки от 2026-10-19;
+локальная история Git подтверждает merge commit
+`7da9cd1b31d3e88a2cc3d93ae7de77700858e3b4` и implementation commit `2eee1f3`.
+Исходное задание —
 `STAGE12-DIPLOMA-VRC2-PROTOTYPE-APPLICABILITY-SPRINT1`, baseline
 `4e564dc8d0fa20df196f7cb1a1e63224ac4fcf83`, ветка
 `feat/stage12-vrc2-prototype-applicability-sprint1`. PR #70–75 —
@@ -2809,7 +2823,8 @@ production resource certification не заявляется.
 
 Disposition — **VRC2_PROTOTYPE_APPLICABILITY_LIMITED**. P1–P4 и P6–P10 PASS;
 **P5 FAIL**: C12 имеет лишь 5/8 положительных измеримых пар вместо ≥7/8.
-C24 positive 8/8; C8 1/8; C6/C4 0/8. N0/N1 positive 8/8, N2 7/8,
+C12: reference measurable 6/8 и repeat measurable 6/8, но полностью измеримых
+положительных пар 5/8. C24 positive 8/8; C8 1/8; C6/C4 0/8. N0/N1 positive 8/8, N2 7/8,
 N3 8/8, N4 5/8, N5 8/8. Короткие L025/L050 дают 7/8 и 6/8 positive,
 но это не оценка точности обнаружения или локализации. ANY/MAJORITY overlap —
 99/128, fully contained — 32/128. Demo parity **12/12**: MEASURED 3,
@@ -2819,18 +2834,29 @@ RUN_SUPPORT 8, LOW_INFORMATION 1; visibility limitation video-03-repeat сохр
 Это COMPONENT/WORKER_LEVEL evidence, не production-ready метод, не FPR/TPR,
 probability или authenticity claim. Полная методика, таблицы и ограничения —
 [русский отчёт](research/2026-10-15-vrc2-prototype-applicability.md).
-Focused tests — **163 passed**; Ruff/format и focused mypy PASS. Единственный
+Focused tests — **163 passed**; Ruff/format и focused mypy PASS. Агентский запуск до staging
 `uv run poe check`: pre-commit/mypy PASS; **3218 passed, 17 skipped, 1 failed**,
-coverage 91%. Итог — **OWNER_VERIFY_REQUIRED**: sdist provenance guard отверг
+coverage 91%. Исторический итог до staging — **OWNER_VERIFY_REQUIRED**: sdist provenance guard отверг
 intended untracked report. Read-only inventory фактического архива подтвердил
 239 tracked members с точными bytes и ровно пять intended untracked-файлов;
-иных extra/missing/mismatched members нет. Guard сохранён, staging не выполнялся;
-после review/staging владельцу нужен повтор barrier. CLI smoke и
+иных extra/missing/mismatched members нет. Guard сохранён, агент staging не выполнял;
+исходный отчёт требовал повтор barrier после owner review/staging. CLI smoke и
 `git diff --check` PASS. Это development verification, не strict certification.
 Полный diff, все новые файлы и evidence находятся в review bundle
 `DIPLOMA-vrc2-prototype-applicability-sprint1` с SHA-256/size seal.
-Следующий gate — owner review PASS / REMEDIATE; изменение метода/применимости,
-broader validation и runtime/ensemble integration требуют отдельного задания.
+Последующая приёмка и merge закрывают review этого ограниченного инкремента,
+но не превращают приведённый pre-staging barrier в PASS. После staging владелец
+предоставил в commit gate успешный локальный quality barrier: **3219 passed,
+17 skipped, coverage 91%**, CLI smoke — **PASS**. Этот console result использован
+владельцем для разрешения commit `2eee1f3b`; источник подтверждения — сообщение
+владельца, отдельный persistent verification receipt или полный лог не заявляется.
+Затем PR #76 слит в main как `7da9cd1b31d3e88a2cc3d93ae7de77700858e3b4`.
+Локальный post-staging barrier не является strict installed-wheel certification:
+для нового merge SHA она остаётся **UNVERIFIED / NOT CLAIMED**. Агент не повторял
+тесты в docs-only сверке или remediation R1.
+Текущий gate — owner review документационной сверки и независимый архитектурный
+review. Изменение метода/применимости, broader validation и runtime/ensemble
+integration требуют отдельного задания после решения владельца о продолжении.
 Stage 12 и Macro 4 остаются IN_PROGRESS; VRC G5 DEFER и запрет исходного
 Stage B сохранены. Git mutations не выполнялись.
 
