@@ -12,6 +12,11 @@ Macros 0–8 Stage 11 — `DONE / owner accepted`.
 установленного артефакта — `PASS`; замечаний, требующих исправления, нет,
 гарантии MVP A–R сохранены. Владелец открыл Stage 12 — Analyzer Expansion,
 Licensing & Product Validation: `IN_PROGRESS`.
+Указанный `PASS` относится к закрытию Stage 11 и не сертифицирует последующие
+Stage 12 SHA. По решению владельца от 2026-10-19 новая функциональная разработка
+приостановлена до сверки документации и независимого архитектурного review;
+Stage 12 остаётся `IN_PROGRESS`. Принятый baseline включает PR #75 и #76;
+текущая задача ограничена документацией и read-only аудитом кода.
 Текущий статус разработки, подробные основания закрытия предыдущих этапов
 и принятая политика Graphify `REBUILD_POLICY` —
 в [ROADMAP](docs/ROADMAP.md).
@@ -102,6 +107,11 @@ storage сохранённые terminal results доступны по прежн
 
 ## Что проверяет Profile B
 
+Стандартный [config.example.yaml](config/config.example.yaml) включает следующие
+четыре анализатора. CORE-каталог содержит пять: дополнительный
+`image_jpeg_double_quantization@1.0.0` доступен для явного включения и уже включён
+в дипломный профиль.
+
 | Media | Analyzer |
 |---|---|
 | image | `image_metadata_consistency@1.0.0` |
@@ -138,6 +148,12 @@ assessment объединяет доступные отклики в **свод�
 [PROJECT §10.8](docs/PROJECT.md#diploma-ensemble). Применимость,
 ограниченное покрытие и известные confounds — в
 [METHODS](docs/METHODS.md#diploma-experimental).
+Отдельный VRC2 `video_repeated_content_correspondence_v2_prototype@0.1.0`
+не входит в эти 14 runtime IDs: он доступен только исследовательскому worker,
+не выбирается обычной конфигурацией и не участвует в ансамбле. Принятый результат
+PR #76 — `VRC2_PROTOTYPE_APPLICABILITY_LIMITED`, не production promotion;
+результаты и ограничения — в
+[ROADMAP](docs/ROADMAP.md#diploma-vrc2-prototype-applicability-sprint1).
 Стандартный config и исторический Profile B не изменены. Штатные ресурсные
 лимиты сохраняются: например, длинный stereo audio может превысить общий
 бюджет precision/STFT artifacts и завершиться preprocessing error.
@@ -156,6 +172,13 @@ OS sandbox, hard CPU/RAM quotas, rate limiting и TLS не входят в га�
 
 ```powershell
 uv lock --check
+uv run poe check
+```
+
+`poe check` последовательно выполняет pre-commit, mypy, pytest и CLI smoke.
+Отдельные диагностические команды:
+
+```powershell
 uv run ruff check .
 uv run mypy src
 uv run pytest
@@ -171,6 +194,10 @@ uv run fakedetector --help
 [ROADMAP](docs/ROADMAP.md) — план и статус.
 [CHANGELOG](docs/CHANGELOG.md) хранит историю;
 [research](docs/research/README.md) — исследовательские свидетельства.
+Начало чтения кода: [PROJECT §6.19 — карта реализации](docs/PROJECT.md#implementation-map),
+затем [жизненный цикл §7](docs/PROJECT.md#7-канонический-жизненный-цикл-анализа).
+Планы и непройденные gates остаются в ROADMAP; наличие прототипа или capability
+предобработки само по себе не означает наличие принятого метода.
 
 ## Лицензия
 

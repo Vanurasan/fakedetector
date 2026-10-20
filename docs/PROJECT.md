@@ -941,6 +941,41 @@ Stage 8. Единственный `ResultFinalizationService` принимает
 - формировать безопасное сообщение пользователю;
 - сохранять диагностические сведения без секретов и содержимого файла.
 
+<a id="implementation-map"></a>
+### 6.19. Навигация по фактической реализации
+
+Карта связывает компоненты выше с исходниками. Она не вводит второй набор
+контрактов: последовательность и владение определены в §7, данные — в
+`CONTRACTS.md`, методология — в `METHODS.md`, актуальные статусы — в `ROADMAP.md`.
+Пути ниже относительны к корню репозитория; названия Stage в существующих
+идентификаторах отражают историю реализации, а не отдельные runtime-сервисы.
+
+| Участок | Реализация и точки входа |
+|---|---|
+| CLI и запуск | [main.py](../src/fakedetector/main.py): `main()` → `load_config()` → `ensure_runtime_directories()` → logging → `create_app()` → Uvicorn; console script задан в [pyproject.toml](../pyproject.toml) |
+| Конфигурация и доступ | [config/loader.py](../src/fakedetector/config/loader.py), [config/models.py](../src/fakedetector/config/models.py), [config/_snapshot.py](../src/fakedetector/config/_snapshot.py), [auth.py](../src/fakedetector/auth.py); YAML, `FAKEDETECTOR_*`, validation, immutable snapshot и credentials из environment |
+| Композиция и lifespan | [app.py](../src/fakedetector/app.py): `create_app()`; [_runtime.py](../src/fakedetector/_runtime.py): `_build_production_runtime()` собирает общие сервисы; lifespan запускает и останавливает `BoundedLocalScheduler` |
+| Внешние адаптеры | [api.py](../src/fakedetector/api.py), [webui.py](../src/fakedetector/webui.py), [_http_upload.py](../src/fakedetector/_http_upload.py); оба канала вызывают [application.py](../src/fakedetector/application.py): `AnalysisApplicationService.submit/get_status/get_result` |
+| Приём и validation | [intake/service.py](../src/fakedetector/intake/service.py): `ControlledIntakeService`; [temporary_input.py](../src/fakedetector/intake/temporary_input.py): `LocalTemporaryInputOwner`; [validation.py](../src/fakedetector/intake/validation.py): `FileValidator`; [intake/lifecycle.py](../src/fakedetector/intake/lifecycle.py): `FileIntakeService.process()` |
+| Handoff и очередь | [lifecycle/receiver.py](../src/fakedetector/lifecycle/receiver.py): `Stage4TaskReceiver.accept()`; [execution.py](../src/fakedetector/lifecycle/execution.py): `TaskRegistry`, `MediaRouter`; [scheduler.py](../src/fakedetector/lifecycle/scheduler.py): `BoundedLocalScheduler` |
+| Выполнение задачи | [lifecycle/_analysis_execution.py](../src/fakedetector/lifecycle/_analysis_execution.py): `AnalysisExecutionService.execute()` связывает preprocessing, orchestration, findings и assessment под общим deadline |
+| Представления и бюджеты | [preprocessing/_requirements.py](../src/fakedetector/preprocessing/_requirements.py), [_models.py](../src/fakedetector/preprocessing/_models.py), [_service.py](../src/fakedetector/preprocessing/_service.py): `PreprocessingDispatcher`; [_media_tools.py](../src/fakedetector/preprocessing/_media_tools.py); [_generated_artifact_budget.py](../src/fakedetector/_generated_artifact_budget.py) |
+| Каталог и план | [analyzers/_catalog.py](../src/fakedetector/analyzers/_catalog.py): CORE, experimental и отдельный worker-only VRC2; [_registry.py](../src/fakedetector/analyzers/_registry.py): `AnalyzerRegistry.active_plan/preprocessing_requirements` |
+| Анализатор и worker | [analyzers/_models.py](../src/fakedetector/analyzers/_models.py): `Analyzer`, `AnalyzerRequest`; [_orchestrator.py](../src/fakedetector/analyzers/_orchestrator.py): `AnalyzerOrchestrator`; [_transport.py](../src/fakedetector/analyzers/_transport.py), [_worker.py](../src/fakedetector/analyzers/_worker.py): `_SpawnedWorkerRunner`; [core/_bounded_process.py](../src/fakedetector/core/_bounded_process.py) обслуживает внешние media processes |
+| Признаки, полнота, риск, рекомендации | [lifecycle/_finding_formation.py](../src/fakedetector/lifecycle/_finding_formation.py): `FindingFormationService`; [_assessment.py](../src/fakedetector/lifecycle/_assessment.py): `AnalysisAssessmentService`, `CompletenessAssessmentService`, `RiskAssessmentService`, `RecommendationService` |
+| Модели и terminal result | [domain/enums.py](../src/fakedetector/domain/enums.py), [domain/models.py](../src/fakedetector/domain/models.py); [result_finalization.py](../src/fakedetector/result_finalization.py): `AnalysisResultAssembler`, `ResultFinalizationService`; [repositories/result_repository.py](../src/fakedetector/repositories/result_repository.py): `JsonFileResultRepository` |
+| Очистка и recovery | [lifecycle/artifacts.py](../src/fakedetector/lifecycle/artifacts.py): `WorkspaceArtifactRegistry`; [cleanup.py](../src/fakedetector/lifecycle/cleanup.py): `WorkspaceCleanup`, `WorkspaceJanitor`; terminal settlement принадлежит `Stage4TaskProcessor` в receiver, live state — `TaskRegistry` |
+| Проверка и поставка | [tests/](../tests/), [scripts/verify_release.py](../scripts/verify_release.py), [verify_release_package.py](../scripts/verify_release_package.py), [release_tooling/](../scripts/release_tooling/); quality barrier — §17, installed-artifact evidence — §16.2.1 |
+
+Для сквозного чтения: [test_diploma_runtime.py](../tests/test_diploma_runtime.py)
+показывает реальные preprocessing/workers, API/WebUI, persistence и cleanup;
+[test_stage8_end_to_end.py](../tests/test_stage8_end_to_end.py) — общность каналов
+и restart; [test_analysis_execution.py](../tests/test_analysis_execution.py) —
+публикацию промежуточных фактов, deadline и safety barriers.
+Исследовательские scripts и отчёты находятся вне production pipeline;
+VRC2 проверяется отдельно в
+[test_video_vrc2_prototype.py](../tests/test_video_vrc2_prototype.py).
+
 ---
 
 ## 7. Канонический жизненный цикл анализа

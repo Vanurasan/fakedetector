@@ -5,6 +5,11 @@ wheel на гарантируемой платформе: **Windows 11 x64, Pyth
 Исходный checkout, IDE, editable install и dev/pytest-зависимости получателю не
 нужны.
 
+Руководство относится к стандартному `config.example.yaml` и его четырём
+включённым анализаторам. Дипломный профиль из checkout и изолированные прототипы
+описаны отдельно в [README](../README.md#дипломный-experimental-профиль);
+они не добавляются в состав release kit этим руководством.
+
 FakeDetector формирует технические признаки и объяснимую риск-оценку. Он не
 подтверждает подлинность, не доказывает подделку и не заменяет экспертную
 криминалистику, антивирус или антифишинговую систему.
@@ -304,7 +309,13 @@ result читается из result repository после restart.
 
 Незавершённые задачи не восстанавливаются после restart; их ID без сохранённого
 JSON станет неизвестным (`404`). Автоматического persistence retry, истории,
-retention cleanup и crash-residue recovery в MVP нет. После проверки
+retention cleanup и автоматического восстановления/удаления `.result-*.tmp`
+в result directory в MVP нет. При этом безопасные просроченные workspace и
+quarantine обслуживаются best-effort TTL sweeps при старте scheduler, после
+терминальной обработки и при graceful shutdown; это не восстановление задач.
+Точная политика и ручная процедура для result residue —
+[CONTRACTS §3.5](CONTRACTS.md#35-cleanup-recovery-и-deterministic-sweep) и
+[§15.4](CONTRACTS.md#154-требования). После проверки
 восстановленного результата снова остановите сервер `Ctrl+C`.
 
 ## 10. Безопасность и deployment boundaries
