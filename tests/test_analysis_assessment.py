@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import math
+import sys
 from collections.abc import Sequence
+from functools import partial
+from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -829,7 +833,9 @@ def test_ensemble_closed_policy_matches_catalog_maturity_and_four_families():
 
     assert len(_ENSEMBLE_SPECS) == 14
     assert len(_ENSEMBLE_FAMILIES) == 12
-    assert set(_ENSEMBLE_SPECS) == {r.analyzer_id for r in _runtime_analyzer_registrations()}
+    assert set(_ENSEMBLE_SPECS) | {"audio_aasist_l_measurement"} == {
+        r.analyzer_id for r in _runtime_analyzer_registrations()
+    }
     for media in MediaType:
         assert sum(family.media_type is media for family in _ENSEMBLE_FAMILIES) == 4
     weights = {"CORE": 1, "EXPERIMENTAL": 0.65, "EXPERIMENTAL_WEAK": 0.35}
@@ -838,6 +844,144 @@ def test_ensemble_closed_policy_matches_catalog_maturity_and_four_families():
         assert definition.supported_media_types == {media}
         assert definition.analyzer_version == "1.0.0"
         assert spec.weight == weights[definition.maturity]
+
+
+def _aasist_result(status=AnalyzerStatus.COMPLETED):
+    return _result("audio_aasist_l_measurement", status, group="audio").model_copy(
+        update={
+            "media_type": MediaType.AUDIO,
+            "raw_metrics": {"raw_logits": [-1e30, 1e30], "speech_presence": "unverified"},
+        }
+    )
+
+
+@pytest.fixture(scope="module")
+def historical_assessment():
+    with pytest.MonkeyPatch.context() as imports:
+        imports.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+        from scripts import diploma_demo_evaluation as demo
+
+    source = (demo.ROOT / "src/fakedetector/lifecycle/_assessment.py").read_text("utf-8")
+    frozen = source.replace(demo._AASIST_ID_GUARD, demo._HISTORICAL_ID_GUARD, 1)
+    # Only execute first-party source that reproduces the immutable historical hash.
+    assert demo._digest(frozen.encode()) == (
+        "0b022e995316fecde23b7afbbeb2f32bb836e7bc973fdd3d0ed86c6fc06a2a1b"
+    )
+    module = ModuleType("fakedetector.lifecycle._frozen_assessment_test")
+    sys.modules[module.__name__] = module
+    try:
+        exec(compile(frozen, "<SHA-verified historical assessment>", "exec"), module.__dict__)
+        yield module
+    finally:
+        sys.modules.pop(module.__name__)
+
+
+def test_current_policy_structure_matches_sha_verified_historical_policy(historical_assessment):
+    def normalizer_identity(normalizer):
+        if isinstance(normalizer, partial):
+            return normalizer.func.__name__, normalizer.args, normalizer.keywords
+        return normalizer.__name__ if normalizer else None
+
+    def structure(families):
+        return [
+            (
+                family.key,
+                family.media_type,
+                [
+                    (s.analyzer_id, s.weight, s.profile, normalizer_identity(s.normalizer))
+                    for s in family.members
+                ],
+            )
+            for family in families
+        ]
+
+    assert structure(_ENSEMBLE_FAMILIES) == structure(historical_assessment._ENSEMBLE_FAMILIES)
+    assert len(_ENSEMBLE_FAMILIES) == 12 and len(_ENSEMBLE_SPECS) == 14
+    for media in MediaType:
+        assert _media_capacity(media) == historical_assessment._media_capacity(media)
+    for score in (0, 25, 25.000001, 55, 55.000001, 100):
+        assert RiskAssessmentService(_ensemble_config())._score_level(score) == (
+            historical_assessment.RiskAssessmentService(_ensemble_config())._score_level(score)
+        )
+
+
+@pytest.mark.parametrize("value", [None, 0, 0.2, 0.5, 0.7, 1])
+@pytest.mark.parametrize("status", list(AnalyzerStatus))
+def test_original_fourteen_numerically_match_frozen_implementation(
+    historical_assessment, value, status
+):
+    historical_specs = {
+        spec.analyzer_id: spec
+        for family in historical_assessment._ENSEMBLE_FAMILIES
+        for spec in family.members
+    }
+    for media in MediaType:
+        results = [
+            _ensemble_result(analyzer_id, value, status)
+            for analyzer_id, (kind, _) in _ENSEMBLE_SPECS.items()
+            if kind is media
+        ]
+        findings = tuple(
+            _finding(r.analyzer_id, source_analyzer_id=r.analyzer_id)
+            for r in results
+            if value
+            and status is AnalyzerStatus.COMPLETED
+            and not _ENSEMBLE_SPECS[r.analyzer_id][1].normalizer
+        )
+        for result in results:
+            spec = _ENSEMBLE_SPECS[result.analyzer_id][1]
+            assert _ensemble_response(
+                spec, result, findings
+            ) == historical_assessment._ensemble_response(
+                historical_specs[result.analyzer_id], result, findings
+            )
+        completeness = _completeness(results)
+        expected = historical_assessment.RiskAssessmentService(_ensemble_config()).assess(
+            completeness, results, findings
+        )
+        assert _ensemble_risk(results, findings) == expected
+
+
+@pytest.mark.parametrize("status", list(AnalyzerStatus))
+def test_all_fourteen_original_results_and_aasist_preserve_numerical_risk(status):
+    # A report has exactly one media type. Exercise all 14 canonical sources in
+    # their three existing per-media plans; mixed-media reports remain forbidden.
+    originals = [_ensemble_result(analyzer_id, 0.7) for analyzer_id in _ENSEMBLE_SPECS]
+    for media in MediaType:
+        results = [r for r in originals if r.media_type is media]
+        findings = [
+            _finding(r.analyzer_id, source_analyzer_id=r.analyzer_id)
+            for r in results
+            if not _ENSEMBLE_SPECS[r.analyzer_id][1].normalizer
+        ]
+        before = _ensemble_risk(results, findings)
+        active = [*results, _aasist_result(status)] if media is MediaType.AUDIO else results
+        after = _ensemble_risk(active, findings)
+        assert after.score == before.score
+        assert after.final_level == before.final_level
+        assert (
+            _media_capacity(media)
+            == {MediaType.AUDIO: 2.8125, MediaType.IMAGE: 3.4375, MediaType.VIDEO: 2.05}[media]
+        )
+        if media is MediaType.AUDIO:
+            completeness = _completeness(active)
+            assert completeness.planned_analyzers == len(results) + 1
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"analyzer_version": "2.0.0"},
+        {"group": "other"},
+        {"score": 1},
+        {"score_name": "ml"},
+        {"candidate_findings": [{"type": "fake"}]},
+        {"analyzer_id": "audio_unknown_ml"},
+    ],
+)
+def test_aasist_pass_through_does_not_open_scoring_or_unknown_ids(change):
+    with pytest.raises(AnalysisAssessmentError):
+        _ensemble_risk([_aasist_result().model_copy(update=change)])
 
 
 @pytest.mark.parametrize("analyzer_id", _ENSEMBLE_SPECS)

@@ -341,6 +341,28 @@ YYYY-MM-DD
 
 ## [Unreleased]
 
+### 2026-10-23
+
+- **[QUALITY] Версионирована точная совместимость исторических исследовательских проверок**
+  (`STAGE13-ML-AASIST-L-QG-CLOSURE-01`; owner review pending): исходный assessment
+  fingerprint сохранён, additive AASIST-L блок проверяется обратной проекцией
+  к полному историческому SHA, текущий SHA реализации отражается отдельно.
+  Закрытая VRC2 isolation допускает только соответствующий каталог 14 или 15 IDs,
+  сохраняя пять CORE и исключая AASIST-L/VRC2 из scoring. Исторические исследовательские
+  результаты, код runtime/scoring и sdist provenance guard этой коррекцией не меняются.
+
+### 2026-10-22
+
+- **[ANALYZERS] Реализован отдельный разрешённый Stage 13 AASIST-L measurement-only
+  scope** (`STAGE13-ML-AASIST-L-IMPLEMENTATION-01`; owner review pending).
+  Добавлен один opt-in `EXPERIMENTAL` анализатор через прежний worker, без Findings
+  и score; default enabled lists сохранены. Pinned offline bytes и optional
+  `onnxruntime==1.31.0` обеспечивают CPU inference без PyTorch/GPU/downloader.
+  Ансамбль явно пропускает только этот non-scoring ID, учитывая его в полноте;
+  numerical scoring policy и denominator не меняются. Forensic validity,
+  probability и production promotion не заявляются. Model handoff отделён от
+  стандартного release kit; новая strict certification требует clean committed SHA.
+
 ### 2026-10-19
 
 - По заданию `STAGE12-DOC-CODE-REALITY-RECONCILIATION-01` сверены текущая сводка

@@ -820,6 +820,13 @@ production-метода или разрешения дальнейшей инт�
 
 Точные модели данных и статусы определяются в `CONTRACTS.md`.
 
+Задание `STAGE13-ML-AASIST-L-IMPLEMENTATION-01` отдельно разрешило 15-й
+конфигурируемый internal analyzer `audio_aasist_l_measurement@1.0.0`,
+`EXPERIMENTAL`, AUDIO, measurement-only. Он использует тот же worker и
+существующий PCM16 WAV; default enabled lists не меняются. Профиль метода —
+`METHODS.md`, происхождение — `REFERENCES.md`, настройка — analyzer-owned
+`model_path` без расширения global schema.
+
 ### 6.11. Модуль формирования признаков
 
 Ответственность:
@@ -1427,6 +1434,21 @@ worker-реализации; соответствие maturity каталогу 
 Таблица 14 источников и точные преобразования принадлежат
 [METHODS, нормализация ансамбля](METHODS.md#diploma-ensemble-normalization).
 
+Отдельный точный ID `audio_aasist_l_measurement@1.0.0` разрешён как non-scoring
+measurement-only pass-through: результат сохраняется и участвует в полноте
+активного плана, но его logits не читаются scoring families. Канонические
+14 scoring sources, denominator, веса и thresholds прежние; произвольные
+неизвестные IDs по-прежнему отклоняются.
+
+Исследовательский harness сохраняет прежний LF SHA-256 всего исходника assessment
+как идентичность замороженной policy. Совместимость `aasist-l-measurement-only@1.0.0`
+допускает только точный additive non-scoring ID-блок: его обратная замена должна
+восстановить полный исторический SHA, включая все прежние scoring sources и код.
+Текущий SHA реализации, исторический SHA и версия совместимости записываются
+раздельно; исторические freeze/results не переписываются. Структурная и численная
+эквивалентность для исходных 14 проверяется против SHA-проверенной исторической
+реализации. Другие изменения исходника не получают этот допуск.
+
 Начальные **эвристические коэффициенты влияния**: CORE `1.00`, EXPERIMENTAL
 `0.65`, EXPERIMENTAL_WEAK `0.35`; исключений нет. Это не confidence и не
 вероятности. Для каждого пригодного отклика `r_i∈[0,1]` применяется
@@ -2005,7 +2027,7 @@ native Windows junction coverage выполнено.
 | Изображения | Pillow, OpenCV, NumPy | FIXED как базовый набор |
 | Аудио | FFmpeg/ffprobe, стандартные модули `wave` и `array` | FIXED для текущего MVP |
 | Видео | FFmpeg/ffprobe, Pillow для выбранных кадров | FIXED для текущего MVP |
-| ML | возможный PyTorch в Stage 13+ | CONDITIONAL; вне Stage 12 |
+| ML | optional ONNX Runtime CPU 1.31.0 для одного AASIST-L measurement | отдельный Stage 13 scope; без PyTorch/GPU |
 | Очередь | внутренний механизм приложения | FIXED |
 | Тестирование | pytest, pytest-cov | FIXED |
 | API-тестирование | HTTPX2 | FIXED |
@@ -2107,8 +2129,12 @@ FFmpeg
 
 ### 16.4. ML-модели
 
-Этот раздел задаёт условия возможного будущего подключения в Stage 13+,
-а не разрешение на ML-реализацию в Stage 12. Выбор моделей остаётся `OPEN`.
+Отдельное разрешение `STAGE13-ML-AASIST-L-IMPLEMENTATION-01` от 2026-10-22
+ограничено AASIST-L measurement-only и optional extra `aasist-l` с
+`onnxruntime==1.31.0`. Модель offline/pinned, одна session на worker invocation,
+CPUExecutionProvider, intra/inter=1, sequential execution; imports/session
+создаются только при исполнении. Это не универсальный model manager или
+разрешение ML-реализации в Stage 12; остальные модели остаются `OPEN`.
 
 Каждая ML-модель подключается как отдельный анализатор.
 
@@ -2120,14 +2146,17 @@ FFmpeg
 - имеют зафиксированный источник;
 - имеют сведения о лицензии;
 - хранятся отдельно;
-- не загружаются автоматически без явной настройки.
+- не скачиваются при обработке; локальный asset размещается администратором.
 
-Поддерживаемые устройства:
+Устройства возможных будущих профилей:
 
 - CPU;
 - CUDA при наличии совместимого GPU.
 
-Точные версии PyTorch, CUDA и требования к памяти определяются после выбора моделей и проверки оборудования.
+Текущий AASIST-L допускает только CPU без PyTorch/CUDA; технические bounds
+принадлежат METHODS. Hard memory quota не вводится. Offline model handoff
+передаётся отдельно от прежнего release kit; installed verification из dirty
+source tree остаётся development verification, не strict certification.
 
 ### 16.5. Очередь и параллельность
 

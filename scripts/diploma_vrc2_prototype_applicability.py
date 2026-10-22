@@ -14,6 +14,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from fakedetector.analyzers._catalog import (
+    _AnalyzerMaturity,
     _built_in_analyzer_registrations,
     _resolve_runtime_analyzer_definition,
     _resolve_worker_definition,
@@ -27,7 +28,7 @@ from fakedetector.analyzers._video_vrc2_prototype import (
     VideoRepeatedContentCorrespondenceV2PrototypeAnalyzer,
 )
 from fakedetector.analyzers._worker import _SpawnedWorkerRunner, _WorkerRunKind
-from fakedetector.domain import AnalyzerResult, AnalyzerStatus
+from fakedetector.domain import AnalyzerResult, AnalyzerStatus, MediaType
 from scripts import diploma_benign_validation as benign
 from scripts import diploma_demo_evaluation as demo
 from scripts import diploma_vrc_redesign_research as research
@@ -71,17 +72,36 @@ def runtime_isolation() -> dict[str, Any]:
         "audio_background_noise_consistency",
     }
     actual = {r.analyzer_id for r in _runtime_analyzer_registrations()}
+    policy = demo._policy()
+    additive = policy["assessment_implementation"]["compatibility"] == demo._AASIST_COMPATIBILITY
+    measurement_id = "audio_aasist_l_measurement"
+    expected = core | experimental | ({measurement_id} if additive else set())
+    measurement = _resolve_runtime_analyzer_definition(measurement_id)
+    scoring = {m["analyzer_id"] for f in policy["families"] for m in f["members"]}
     definition = _resolve_worker_definition(KEY)
     valid = (
-        actual == core | experimental
+        actual == expected
         and {r.analyzer_id for r in _built_in_analyzer_registrations()} == core
         and _resolve_runtime_analyzer_definition(ANALYZER.analyzer_id) is None
         and definition is not None
         and definition.factory is type(ANALYZER)
         and all(
-            m["analyzer_id"] != ANALYZER.analyzer_id
-            for f in demo._policy()["families"]
-            for m in f["members"]
+            (entry := _resolve_runtime_analyzer_definition(analyzer_id)) is not None
+            and entry.maturity is _AnalyzerMaturity.CORE
+            for analyzer_id in core
+        )
+        and scoring == core | experimental
+        and (
+            not additive
+            or (
+                measurement is not None
+                and measurement.analyzer_version == "1.0.0"
+                and measurement.maturity is _AnalyzerMaturity.EXPERIMENTAL
+                and measurement.group == "audio"
+                and measurement.supported_media_types == frozenset({MediaType.AUDIO})
+                and not measurement.candidate_finding_types
+                and measurement.max_candidate_findings == 0
+            )
         )
     )
     if not valid:
@@ -92,6 +112,7 @@ def runtime_isolation() -> dict[str, Any]:
         "core_ids": sorted(core),
         "prototype_worker_key": KEY,
         "normal_runtime_resolves_prototype": False,
+        "assessment_implementation": policy["assessment_implementation"],
     }
 
 

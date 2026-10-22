@@ -16,7 +16,9 @@ Licensing & Product Validation: `IN_PROGRESS`.
 Stage 12 SHA. По решению владельца от 2026-10-19 новая функциональная разработка
 приостановлена до сверки документации и независимого архитектурного review;
 Stage 12 остаётся `IN_PROGRESS`. Принятый baseline включает PR #75 и #76;
-текущая задача ограничена документацией и read-only аудитом кода.
+Задание `STAGE13-ML-AASIST-L-IMPLEMENTATION-01` от 2026-10-22 отдельно разрешило
+один experimental measurement-only AASIST-L; остальные направления этой паузой
+не открываются. Реализация sprint ожидает независимого owner review.
 Текущий статус разработки, подробные основания закрытия предыдущих этапов
 и принятая политика Graphify `REBUILD_POLICY` —
 в [ROADMAP](docs/ROADMAP.md).
@@ -105,6 +107,67 @@ storage сохранённые terminal results доступны по прежн
 Полный пошаговый Windows/FFmpeg/install/demo/API/restart/troubleshooting guide:
 [MVP_HANDOFF](docs/MVP_HANDOFF.md).
 
+## Opt-in AASIST-L: только необработанное измерение
+
+`audio_aasist_l_measurement@1.0.0` — 15-й конфигурируемый анализатор,
+`EXPERIMENTAL`. Стандартный и дипломный enabled lists не меняются.
+Для checkout: `uv sync --locked --extra aasist-l`. Для установленного wheel
+release producer экспортирует отдельные constraints из того же lock:
+
+```powershell
+uv export --locked --no-dev --extra aasist-l --no-emit-project --no-hashes `
+  --output-file runtime-aasist-l.txt
+uv pip install --python .\.venv\Scripts\python.exe --constraint .\runtime-aasist-l.txt `
+  ".\fakedetector-0.1.0-py3-none-any.whl[aasist-l]"
+```
+
+Передайте отдельно `model-asset/aasist-l.onnx`, `model-manifest.json`, MIT
+`LICENSE`, `UPSTREAM_NOTICE`, ORT `LICENSE/ThirdPartyNotices` и экспортированные
+constraints. Точный [pin и происхождение](docs/REFERENCES.md#aasist-l),
+[профиль и ограничения](docs/METHODS.md#aasist-l-measurement).
+Artifact: HF revision `357e022c44a1aa926097e18c1457bde3873ed8bf`, 766114 bytes,
+SHA-256 `f43f0a638b52846f5d0e630c0a738d10e9306325945127c6f8662d559585f218`.
+Модель можно взять из принятого feasibility ZIP; при отдельном приобретении
+используется только pinned artifact URL из REFERENCES. В runtime загрузки из сети нет.
+
+Администратор размещает файл в отдельном локальном каталоге с доступом на запись
+только доверенным операторам, вне checkout, package и task/runtime storage.
+Абсолютный `model_path` задаётся в существующей карте analyzer settings:
+
+```yaml
+analyzers:
+  audio:
+    enabled: [audio_pcm_quality, audio_aasist_l_measurement]
+  settings:
+    audio_aasist_l_measurement:
+      model_path: 'C:\FakeDetector-Models\AASIST-L\aasist-l.onnx'
+result:
+  include_raw_metrics: true
+```
+
+Это фрагмент для слияния с полной конфигурацией, не замена всего YAML.
+Реализация проверяет ordinary regular file, все parents без reparse/symlink,
+одиночный hardlink, размер, полный SHA и descriptor identity; native loader
+получает те же проверенные bytes. Политика ACL каталога остаётся обязанностью
+администратора. Missing/corrupt model и optional-runtime/load/inference failure
+дают безопасный ERROR. Disabled метод не требует ORT или model asset.
+
+Принимаются только исходные mono/16000 Hz и штатный PCM16 WAV. Измеряется первый
+префикс до 64600 отсчётов; короткий допустимый префикс повторяется, что не добавляет
+наблюдений. Пустой, технически слишком короткий или цифрово беззвучный префикс
+даёт `insufficient_evidence` без logits. Speech presence всегда `unverified`.
+Отклик out-of-domain/uncalibrated: forensic validity и вероятность подделки
+не установлены. Нет Findings, score, probability или влияния logits на ансамбль.
+Выполнение учитывается только в фактической полноте активного плана.
+
+ORT CPU имеет intra/inter threads=1; лимита RAM средствами ОС нет. Для
+ограничения BLAS resources задайте `$env:OPENBLAS_NUM_THREADS = '1'` **до запуска
+Python**; один ORT thread сам по себе не ограничивает другие native библиотеки.
+Стандартный release kit модель/ML wheelhouse автоматически не включает.
+Для полностью offline установки заранее подготовьте совместимые wheels всей
+locked closure и используйте `uv pip install --no-index --find-links <wheelhouse>`
+с теми же constraints; перенос только ONNX-файла недостаточен.
+
 ## Что проверяет Profile B
 
 Стандартный [config.example.yaml](config/config.example.yaml) включает следующие
@@ -149,7 +212,7 @@ assessment объединяет доступные отклики в **свод�
 ограниченное покрытие и известные confounds — в
 [METHODS](docs/METHODS.md#diploma-experimental).
 Отдельный VRC2 `video_repeated_content_correspondence_v2_prototype@0.1.0`
-не входит в эти 14 runtime IDs: он доступен только исследовательскому worker,
+не входит в конфигурируемый runtime-каталог: он доступен только исследовательскому worker,
 не выбирается обычной конфигурацией и не участвует в ансамбле. Принятый результат
 PR #76 — `VRC2_PROTOTYPE_APPLICABILITY_LIMITED`, не production promotion;
 результаты и ограничения — в

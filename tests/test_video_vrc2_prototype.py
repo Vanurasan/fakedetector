@@ -308,8 +308,8 @@ def test_closed_runtime_default_and_ensemble_isolation():
         "video_sampled_frame_quality",
     }
     runtime = _runtime_analyzer_registrations()
-    assert len(runtime) == 14 and runtime[:5] == core
-    assert len(_EXPERIMENTAL_ANALYZER_DEFINITIONS) == 9
+    assert len(runtime) == 15 and runtime[:5] == core
+    assert len(_EXPERIMENTAL_ANALYZER_DEFINITIONS) == 10
     assert ANALYZER.analyzer_id not in {r.analyzer_id for r in runtime}
     assert ANALYZER.analyzer_id not in {
         m.analyzer_id for f in _ENSEMBLE_FAMILIES for m in f.members

@@ -22,6 +22,9 @@ dependencies = [
 [project.scripts]
 fakedetector = "fakedetector.main:main"
 
+[project.optional-dependencies]
+aasist-l = ["onnxruntime==1.31.0"]
+
 [dependency-groups]
 dev = [
     "httpx2>=0.28.0",
