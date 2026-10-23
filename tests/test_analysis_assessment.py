@@ -723,6 +723,15 @@ def test_recommendation_matrix(
     assert recommendation.additional_actions == additional
     assert recommendation.requires_manual_review is manual
     assert recommendation.text
+    assert recommendation == RecommendationService().recommend(
+        _declared_completeness(status), _declared_risk(level)
+    )
+    if status is CompletenessStatus.COMPLETE and level is RiskLevel.LOW:
+        assert recommendation.text == (
+            "По результатам выполненных проверок система не рекомендует дополнительных действий. "
+            "Низкий уровень технического риска относится только к проверенным признакам "
+            "и не подтверждает подлинность или безопасность файла."
+        )
 
 
 def test_explanations_are_deterministic_and_avoid_forensic_verdicts() -> None:
@@ -863,6 +872,7 @@ def historical_assessment():
 
     source = (demo.ROOT / "src/fakedetector/lifecycle/_assessment.py").read_text("utf-8")
     frozen = source.replace(demo._AASIST_ID_GUARD, demo._HISTORICAL_ID_GUARD, 1)
+    frozen = frozen.replace(demo._F01_LOW_TEXT, demo._HISTORICAL_LOW_TEXT, 1)
     # Only execute first-party source that reproduces the immutable historical hash.
     assert demo._digest(frozen.encode()) == (
         "0b022e995316fecde23b7afbbeb2f32bb836e7bc973fdd3d0ed86c6fc06a2a1b"

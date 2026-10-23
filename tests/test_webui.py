@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import itertools
 from base64 import b64encode
 from pathlib import Path
@@ -11,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from stage8_helpers import (
     StubApplicationService,
+    make_completed_result,
     make_config,
     make_error,
     make_rejected_result,
@@ -30,7 +32,7 @@ from fakedetector.application import (
 )
 from fakedetector.auth import WebUIBasicAuthenticator
 from fakedetector.config.models import AppConfig
-from fakedetector.domain import AnalysisStatus, ProcessingStage
+from fakedetector.domain import AnalysisResult, AnalysisStatus, ProcessingStage
 from fakedetector.webui import install_webui, is_same_origin
 
 AUTH = ("analyst", "stage8-password")
@@ -665,6 +667,117 @@ def test_result_page_handles_nullable_stage3_result_fields(tmp_path: Path) -> No
     assert response.status_code == 200
     assert "Оценка отсутствует" in response.text
     assert "unsupported_extension" in response.text
+
+
+@pytest.mark.parametrize("completeness", ["complete", "partial", "insufficient"])
+def test_result_summary_explains_limits_and_escapes_canonical_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, completeness: str
+) -> None:
+    from fakedetector.lifecycle._assessment import AnalysisAssessmentService
+
+    service = StubApplicationService()
+    payload = service.result.model_dump(mode="json")
+    incomplete = completeness != "complete"
+    payload["status"] = "partial" if incomplete else "completed"
+    payload["completeness"].update(
+        status=completeness,
+        planned_analyzers=3 if completeness == "insufficient" else 2,
+        applicable_analyzers=3 if completeness == "insufficient" else 2,
+        completed_analyzers=1 if incomplete else 2,
+        failed_analyzers=2 if completeness == "insufficient" else int(incomplete),
+        coverage_ratio=1 / 3 if completeness == "insufficient" else 0.5 if incomplete else 1,
+    )
+    unsafe = '<script>alert("result")</script>'
+    payload["completeness"]["explanation"] = unsafe
+    payload["risk_assessment"].update(summary=unsafe, explanation=unsafe, limitations=[unsafe])
+    payload["recommendation"]["text"] = unsafe
+    if completeness == "insufficient":
+        payload["risk_assessment"].update(score=None, score_based_level=None, final_level=None)
+    service.result = AnalysisResult.model_validate(payload)
+    before = service.result.model_dump(mode="json")
+
+    def unexpected_assessment(*args, **kwargs):
+        pytest.fail("WebUI must render the authoritative assessment without recalculation")
+
+    monkeypatch.setattr(AnalysisAssessmentService, "assess", unexpected_assessment)
+    response = _client(tmp_path, service).get("/analyses/analysis-001/result", auth=AUTH)
+    assert response.status_code == 200
+    explanation = response.text.split('aria-label="Как понимать полноту и риск">', 1)[1]
+    explanation = explanation.split("</div>", 1)[0]
+    assert "<details" not in explanation
+    assert "выполнение применимых анализаторов настроенного плана" in explanation
+    assert "не означает проверку всех способов манипуляции" in explanation
+    assert "не гарантирует достаточность криминалистических свидетельств" in explanation
+    assert "LOW или score=0 не подтверждают подлинность или безопасность файла" in explanation
+    assert "Отсутствующие, недостаточные или недоступные свидетельства" in explanation
+    assert "не означают отрицательный результат проверки на манипуляцию" in explanation
+    assert response.text.index(explanation) < response.text.index("<h2>Сводная оценка</h2>")
+    assert unsafe not in response.text
+    assert response.text.count("&lt;script&gt;alert(&#34;result&#34;)&lt;/script&gt;") == 5
+    assert service.result.model_dump(mode="json") == before
+    if completeness == "insufficient":
+        assert "Оценка отсутствует" in response.text
+
+
+@pytest.mark.parametrize("include_raw_metrics", [False, True])
+@pytest.mark.parametrize("model_id", ["score_model_v1", "diploma_ensemble_v1"])
+def test_aasist_only_silence_preserves_result_and_shows_limits(
+    tmp_path: Path, include_raw_metrics: bool, model_id: str
+) -> None:
+    import numpy as np
+    from test_audio_aasist_l import ANALYZER, _request
+    from test_preprocessing import _audio_descriptor
+
+    from fakedetector.config.models import RiskAssessmentConfig
+    from fakedetector.lifecycle._assessment import AnalysisAssessmentService
+
+    analyzer = ANALYZER.analyze(_request(tmp_path, np.zeros(8000, dtype="<i2")))
+    assert analyzer.status.value == "completed"
+    assert analyzer.raw_metrics["state"] == "insufficient_evidence"
+    assert analyzer.raw_metrics["insufficiency_reason"] == "digital_silence"
+    assert analyzer.raw_metrics["raw_logits"] is None
+    assert analyzer.score is analyzer.score_name is None
+    assert analyzer.candidate_findings == []
+    completeness, risk, recommendation = AnalysisAssessmentService(
+        RiskAssessmentConfig(model_id=model_id)
+    ).assess([analyzer.analyzer_id], [analyzer], [])
+    assert completeness.status.value == "complete"
+    assert completeness.planned_analyzers == completeness.completed_analyzers == 1
+    assert completeness.coverage_ratio == 1
+    assert risk.score == 0 and risk.final_level.value == "low"
+    assert risk.probability is risk.probability_method is None
+    assert recommendation.primary_action == "no_additional_action"
+    assert recommendation.additional_actions == []
+    assert recommendation.requires_manual_review is False
+    payload = make_completed_result().model_dump(mode="json")
+    payload.update(
+        file=_audio_descriptor(duration_seconds=0.5, sample_rate_hz=16000, channels=1).model_dump(
+            mode="json"
+        ),
+        analyzers=[analyzer.model_dump(mode="json")],
+        completeness=completeness.model_dump(mode="json"),
+        risk_assessment=risk.model_dump(mode="json"),
+        recommendation=recommendation.model_dump(mode="json"),
+    )
+    if not include_raw_metrics:
+        payload["analyzers"][0]["raw_metrics"] = {}
+    service = StubApplicationService()
+    service.result = AnalysisResult.model_validate(payload)
+    before = service.result.model_dump(mode="json")
+    response = _client(tmp_path, service).get("/analyses/analysis-001/result", auth=AUTH)
+    assert response.status_code == 200
+    assert "<dt>Полнота</dt><dd>complete</dd>" in response.text
+    assert "<dt>Итоговый риск</dt><dd>low</dd>" in response.text
+    assert "LOW или score=0 не подтверждают подлинность или безопасность файла" in response.text
+    assert "не гарантирует достаточность криминалистических свидетельств" in response.text
+    assert "insufficient evidence" in response.text
+    assert recommendation.text in response.text
+    assert "Дополнительные действия не требуются" not in response.text
+    if model_id == "diploma_ensemble_v1":
+        assert "Семейства не считаются статистически независимыми" in response.text
+        assert "Обычная обработка" in response.text
+        assert "media_capacity=2.8125" in html.unescape(response.text)
+    assert service.result.model_dump(mode="json") == before
 
 
 def test_result_pending_is_consistent_202_status_page(tmp_path: Path) -> None:

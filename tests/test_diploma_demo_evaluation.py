@@ -51,7 +51,9 @@ def test_frozen_membership_split_roles_and_policy():
     assert policy["family_factors"] == [1, 0.25, 0.1, 0]
     assert policy["assessment_sha256_lf"] == demo.ASSESSMENT_SHA256
     implementation = policy["assessment_implementation"]
-    assert implementation["compatibility"] == "aasist-l-measurement-only@1.0.0"
+    assert implementation["compatibility"] == (
+        "aasist-l-measurement-only@1.0.0+complete-low-wording@1.0.0"
+    )
     assert (
         implementation["historical_sha256_lf"]
         == implementation["scoring_projection_sha256_lf"]
@@ -69,6 +71,7 @@ def test_frozen_membership_split_roles_and_policy():
 def test_historical_and_exact_additive_assessment_have_distinct_identity():
     source = (demo.ROOT / "src/fakedetector/lifecycle/_assessment.py").read_text("utf-8")
     historical = source.replace(demo._AASIST_ID_GUARD, demo._HISTORICAL_ID_GUARD, 1)
+    historical = historical.replace(demo._F01_LOW_TEXT, demo._HISTORICAL_LOW_TEXT, 1)
     identity = demo._assessment_implementation(historical)
     assert identity == {
         "compatibility": "historical-frozen",
@@ -76,7 +79,57 @@ def test_historical_and_exact_additive_assessment_have_distinct_identity():
         "historical_sha256_lf": demo.ASSESSMENT_SHA256,
         "scoring_projection_sha256_lf": demo.ASSESSMENT_SHA256,
     }
-    assert demo._assessment_implementation(source)["compatibility"] == demo._AASIST_COMPATIBILITY
+    assert (
+        demo._assessment_implementation(source)["compatibility"] == demo._AASIST_F01_COMPATIBILITY
+    )
+
+
+@pytest.mark.parametrize("aasist", [False, True])
+@pytest.mark.parametrize("wording", [False, True])
+def test_exact_authorized_assessment_projections_preserve_historical_sha(aasist, wording):
+    source = (demo.ROOT / "src/fakedetector/lifecycle/_assessment.py").read_text("utf-8")
+    if not aasist:
+        source = source.replace(demo._AASIST_ID_GUARD, demo._HISTORICAL_ID_GUARD, 1)
+    if not wording:
+        source = source.replace(demo._F01_LOW_TEXT, demo._HISTORICAL_LOW_TEXT, 1)
+    identity = demo._assessment_implementation(source)
+    assert (
+        identity["compatibility"]
+        == {
+            (False, False): "historical-frozen",
+            (True, False): "aasist-l-measurement-only@1.0.0",
+            (False, True): "complete-low-wording@1.0.0",
+            (True, True): "aasist-l-measurement-only@1.0.0+complete-low-wording@1.0.0",
+        }[aasist, wording]
+    )
+    assert identity["current_sha256_lf"] == hashlib.sha256(source.encode()).hexdigest()
+    assert (
+        identity["historical_sha256_lf"]
+        == identity["scoring_projection_sha256_lf"]
+        == ("0b022e995316fecde23b7afbbeb2f32bb836e7bc973fdd3d0ed86c6fc06a2a1b")
+    )
+
+
+@pytest.mark.parametrize("aasist", [False, True])
+@pytest.mark.parametrize("change", ["tampered", "duplicate", "old_and_new", "other_branch"])
+def test_wording_projection_rejects_any_nonexact_or_additional_delta(aasist, change):
+    source = (demo.ROOT / "src/fakedetector/lifecycle/_assessment.py").read_text("utf-8")
+    assert source.count(demo._F01_LOW_TEXT) == 1
+    if not aasist:
+        source = source.replace(demo._AASIST_ID_GUARD, demo._HISTORICAL_ID_GUARD, 1)
+    changed = {
+        "tampered": source.replace("подлинность или безопасность файла", "подлинность файла", 1),
+        "duplicate": source + demo._F01_LOW_TEXT,
+        "old_and_new": source + demo._HISTORICAL_LOW_TEXT,
+        "other_branch": source.replace(
+            "Рекомендуется ручная проверка и подтверждение источника",
+            "Ручная проверка не требуется; подтверждение источника",
+            1,
+        ),
+    }[change]
+    assert changed != source
+    with pytest.raises(ValueError, match="Frozen ensemble implementation changed"):
+        demo._assessment_implementation(changed)
 
 
 @pytest.mark.parametrize("historical", [False, True])
@@ -98,6 +151,7 @@ def test_assessment_freeze_rejects_policy_or_unapproved_extension_changes(
     source = (demo.ROOT / "src/fakedetector/lifecycle/_assessment.py").read_text("utf-8")
     if historical:
         source = source.replace(demo._AASIST_ID_GUARD, demo._HISTORICAL_ID_GUARD, 1)
+        source = source.replace(demo._F01_LOW_TEXT, demo._HISTORICAL_LOW_TEXT, 1)
     assert before in source
     changed = source.replace(before, after, 1)
     with pytest.raises(ValueError, match="Frozen ensemble implementation changed"):

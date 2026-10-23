@@ -143,7 +143,8 @@ def test_runtime_isolation_rejects_scoring_measurement_or_prototype(monkeypatch,
 def test_historical_isolation_and_additive_isolation_have_distinct_provenance(monkeypatch):
     current = harness.runtime_isolation()
     assert (
-        current["assessment_implementation"]["compatibility"] == harness.demo._AASIST_COMPATIBILITY
+        current["assessment_implementation"]["compatibility"]
+        == harness.demo._AASIST_F01_COMPATIBILITY
     )
     assert len(current["runtime_ids"]) == 15 and len(current["core_ids"]) == 5
     policy = copy.deepcopy(harness.demo._policy())
@@ -166,6 +167,21 @@ def test_historical_isolation_and_additive_isolation_have_distinct_provenance(mo
         historical["assessment_implementation"]["current_sha256_lf"]
         != current["assessment_implementation"]["current_sha256_lf"]
     )
+
+
+@pytest.mark.parametrize("wording", [False, True])
+def test_additive_isolation_accepts_only_verified_aasist_wording_identity(monkeypatch, wording):
+    policy = copy.deepcopy(harness.demo._policy())
+    source = (harness.demo.ROOT / "src/fakedetector/lifecycle/_assessment.py").read_text("utf-8")
+    if not wording:
+        source = source.replace(harness.demo._F01_LOW_TEXT, harness.demo._HISTORICAL_LOW_TEXT, 1)
+    identity = harness.demo._assessment_implementation(source)
+    policy["assessment_implementation"] = identity
+    monkeypatch.setattr(harness.demo, "_policy", lambda: policy)
+    result = harness.runtime_isolation()
+    assert result["pass"] and len(result["runtime_ids"]) == 15
+    assert result["assessment_implementation"] == identity
+    assert identity["scoring_projection_sha256_lf"] == harness.demo.ASSESSMENT_SHA256
 
 
 @pytest.mark.parametrize("start,overlap,contained", [(6, 9, 9), (1, 7, 4), (24, 0, 0)])
