@@ -149,7 +149,7 @@ def test_http_basic_missing_wrong_and_valid_credentials(tmp_path: Path) -> None:
     for response in (missing, wrong):
         assert response.status_code == 401
         assert response.headers["www-authenticate"] == 'Basic realm="FakeDetector"'
-        assert "Запрос не выполнен" in response.text
+        assert "Не удалось выполнить запрос" in response.text
         assert "Not authenticated" not in response.text
     assert "authentication_required" in missing.text
     assert "authentication_failed" in wrong.text
@@ -184,7 +184,7 @@ def test_http_basic_malformed_payloads_are_safe_401_pages(
     assert response.headers["www-authenticate"] == 'Basic realm="FakeDetector"'
     assert response.headers["content-type"].startswith("text/html")
     assert "authentication_failed" in response.text
-    assert "Запрос не выполнен" in response.text
+    assert "Не удалось выполнить запрос" in response.text
     assert "Not authenticated" not in response.text
 
 
@@ -193,8 +193,9 @@ def test_upload_page_shows_formats_limits_and_disclaimer(tmp_path: Path) -> None
 
     assert response.status_code == 200
     assert "jpg, jpeg, png, webp" in response.text
-    assert "20 МБ" in response.text
-    assert "не является окончательной экспертной экспертизой" in response.text
+    assert "20 МиБ" in response.text
+    assert "20971520 байт" in response.text
+    assert "не заменяет окончательную экспертную экспертизу" in response.text
 
 
 def test_upload_page_locks_submit_button_after_form_submission(tmp_path: Path) -> None:
@@ -202,7 +203,9 @@ def test_upload_page_locks_submit_button_after_form_submission(tmp_path: Path) -
 
     assert 'id="analysis-upload"' in response.text
     assert '.addEventListener("submit"' in response.text
-    assert 'document.getElementById("analysis-submit").disabled = true' in response.text
+    assert 'const button = document.getElementById("analysis-submit")' in response.text
+    assert "button.disabled = true" in response.text
+    assert 'window.addEventListener("pageshow"' in response.text
 
 
 def test_same_origin_post_is_accepted_and_maps_webui_source(tmp_path: Path) -> None:
@@ -217,7 +220,7 @@ def test_same_origin_post_is_accepted_and_maps_webui_source(tmp_path: Path) -> N
     )
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/analyses/analysis-001"
+    assert response.headers["location"] == "/analyses/analysis-001?lang=ru"
     assert service.sources[0].channel.value == "webui"
 
 
@@ -634,7 +637,7 @@ def test_ready_status_redirects_to_result(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/analyses/analysis-001/result"
+    assert response.headers["location"] == "/analyses/analysis-001/result?lang=ru"
 
 
 def test_result_page_renders_canonical_result_without_recalculation(tmp_path: Path) -> None:
@@ -665,7 +668,7 @@ def test_result_page_handles_nullable_stage3_result_fields(tmp_path: Path) -> No
     )
 
     assert response.status_code == 200
-    assert "Оценка отсутствует" in response.text
+    assert "Оценка риска недоступна" in response.text
     assert "unsupported_extension" in response.text
 
 
@@ -703,20 +706,23 @@ def test_result_summary_explains_limits_and_escapes_canonical_fields(
     response = _client(tmp_path, service).get("/analyses/analysis-001/result", auth=AUTH)
     assert response.status_code == 200
     explanation = response.text.split('aria-label="Как понимать полноту и риск">', 1)[1]
-    explanation = explanation.split("</div>", 1)[0]
+    explanation = explanation.split("</aside>", 1)[0]
     assert "<details" not in explanation
     assert "выполнение применимых анализаторов настроенного плана" in explanation
     assert "не означает проверку всех способов манипуляции" in explanation
     assert "не гарантирует достаточность криминалистических свидетельств" in explanation
-    assert "LOW или score=0 не подтверждают подлинность или безопасность файла" in explanation
+    assert (
+        "Низкий технический риск или score=0 не подтверждают подлинность или безопасность файла"
+        in explanation
+    )
     assert "Отсутствующие, недостаточные или недоступные свидетельства" in explanation
     assert "не означают отрицательный результат проверки на манипуляцию" in explanation
-    assert response.text.index(explanation) < response.text.index("<h2>Сводная оценка</h2>")
+    assert response.text.index(explanation) < response.text.index('id="interpretation-heading"')
     assert unsafe not in response.text
     assert response.text.count("&lt;script&gt;alert(&#34;result&#34;)&lt;/script&gt;") == 5
     assert service.result.model_dump(mode="json") == before
     if completeness == "insufficient":
-        assert "Оценка отсутствует" in response.text
+        assert "Оценка риска недоступна" in response.text
 
 
 @pytest.mark.parametrize("include_raw_metrics", [False, True])
@@ -766,9 +772,14 @@ def test_aasist_only_silence_preserves_result_and_shows_limits(
     before = service.result.model_dump(mode="json")
     response = _client(tmp_path, service).get("/analyses/analysis-001/result", auth=AUTH)
     assert response.status_code == 200
-    assert "<dt>Полнота</dt><dd>complete</dd>" in response.text
-    assert "<dt>Итоговый риск</dt><dd>low</dd>" in response.text
-    assert "LOW или score=0 не подтверждают подлинность или безопасность файла" in response.text
+    assert "Применимый план выполнен" in response.text
+    assert "<code>complete</code>" in response.text
+    assert 'data-risk="low"' in response.text
+    assert "Низкий технический риск" in response.text
+    assert (
+        "Низкий технический риск или score=0 не подтверждают подлинность или безопасность файла"
+        in response.text
+    )
     assert "не гарантирует достаточность криминалистических свидетельств" in response.text
     assert "insufficient evidence" in response.text
     assert recommendation.text in response.text

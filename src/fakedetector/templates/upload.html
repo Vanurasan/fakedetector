@@ -1,35 +1,43 @@
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FakeDetector — загрузка</title>
-  <link rel="stylesheet" href="/static/styles.css">
-</head>
-<body>
-  <main class="container">
-    <h1>FakeDetector</h1>
-    <p class="lead">Загрузите мультимедийный файл для автоматизированной оценки признаков искусственного создания или модификации.</p>
-    <div class="notice">FakeDetector не является окончательной экспертной экспертизой. Проверяйте значимые выводы независимыми методами.</div>
-    <form id="analysis-upload" action="/analyses" method="post" enctype="multipart/form-data">
-      <label for="file">Файл</label>
-      <input id="file" name="file" type="file" required>
-      <button id="analysis-submit" type="submit">Начать анализ</button>
-    </form>
-    <section>
-      <h2>Поддерживаемые форматы и лимиты</h2>
+{% extends "base.html" %}
+{% block title %}{{ t('upload.title') }}{% endblock %}
+{% block content %}
+  <h1>{{ t('upload.title') }}</h1>
+  <p class="lead">{{ t('upload.intro') }}</p>
+  <p class="notice">{{ t('notice.expert') }}</p>
+  <div class="upload-layout">
+    <section class="card" aria-labelledby="upload-label">
+      <form id="analysis-upload" action="{{ url('submit') }}" method="post" enctype="multipart/form-data">
+        <label id="upload-label" for="file">{{ t('upload.file') }}</label>
+        <input id="file" name="file" type="file" required aria-describedby="file-help formats-heading" accept="{% for extensions in formats.values() %}{% for extension in extensions %}.{{ extension }}{% if not loop.last %},{% endif %}{% endfor %}{% if not loop.last %},{% endif %}{% endfor %}">
+        <p id="file-help" class="muted">{{ t('upload.help') }}</p>
+        <button id="analysis-submit" type="submit" data-ready="{{ t('upload.submit') }}" data-submitting="{{ t('upload.submitting') }}">{{ t('upload.submit') }}</button>
+        <p id="upload-status" role="status"></p>
+      </form>
+    </section>
+    <section class="card" aria-labelledby="formats-heading">
+      <h2 id="formats-heading">{{ t('upload.formats') }}</h2>
       <dl>
-      {% for label, extensions in formats.items() %}
-        <dt>{{ label }}</dt>
-        <dd>{{ extensions | join(", ") }} — до {{ limits[label] }} МБ</dd>
+      {% for media, extensions in formats.items() %}
+        <dt>{{ t('media.' ~ media) }}</dt>
+        <dd>{{ extensions | join(', ') }}<br>{{ t('upload.up_to', limit=limits[media]) }} ({{ limits[media] * 1048576 }} {{ t('format.bytes') }})</dd>
       {% endfor %}
       </dl>
     </section>
-  </main>
-  <script>
-    document.getElementById("analysis-upload").addEventListener("submit", function () {
-      document.getElementById("analysis-submit").disabled = true;
-    });
-  </script>
-</body>
-</html>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script>
+  const button = document.getElementById("analysis-submit");
+  const status = document.getElementById("upload-status");
+  document.getElementById("analysis-upload").addEventListener("submit", function () {
+    button.disabled = true;
+    button.textContent = button.dataset.submitting;
+    status.textContent = button.dataset.submitting;
+  });
+  window.addEventListener("pageshow", function () {
+    button.disabled = false;
+    button.textContent = button.dataset.ready;
+    status.textContent = "";
+  });
+</script>
+{% endblock %}

@@ -5,6 +5,7 @@ from __future__ import annotations
 from base64 import b64decode
 from binascii import Error as Base64DecodeError
 from contextlib import suppress
+from functools import partial
 from pathlib import Path
 from urllib.parse import SplitResult, urlsplit
 
@@ -24,6 +25,21 @@ from fakedetector._http_upload import (
     RequestBodyTooLargeError,
     multipart_body_limit_bytes,
     parse_bounded_multipart,
+)
+from fakedetector._webui_i18n import error_copy, translate
+from fakedetector._webui_presentation import (
+    Page,
+    analyzer_metadata,
+    duration,
+    file_size,
+    localization_text,
+    measurement_labels,
+    non_scoring,
+    number,
+    page_url,
+    quantity,
+    time_display,
+    time_iso,
 )
 from fakedetector.application import (
     AnalysisApplicationService,
@@ -59,7 +75,10 @@ def install_webui(
     config: AppConfig,
 ) -> None:
     """Install authenticated HTML routes and package-relative static resources."""
-    templates = Jinja2Templates(directory=str(_PACKAGE_ROOT / "templates"))
+    templates = Jinja2Templates(
+        directory=str(_PACKAGE_ROOT / "templates"),
+        context_processors=[_page_context],
+    )
     app.mount("/static", StaticFiles(directory=_PACKAGE_ROOT / "static"), name="static")
 
     async def require_basic(
@@ -204,7 +223,12 @@ def install_webui(
             return _persistence_error_page(templates, request)
         if status.result_available:
             return RedirectResponse(
-                url=f"/analyses/{status.analysis_id}/result",
+                url=page_url(
+                    "result",
+                    _request_locale(request),
+                    analysis_id=status.analysis_id,
+                    paused=_refresh_paused(request),
+                ),
                 status_code=303,
             )
         return _status_page(
@@ -212,7 +236,7 @@ def install_webui(
             request,
             status,
             status_code=200,
-            refresh_url=f"/analyses/{status.analysis_id}",
+            refresh_page="status",
         )
 
     @router.get("/analyses/{analysis_id}/result", include_in_schema=False)
@@ -225,7 +249,7 @@ def install_webui(
                 request,
                 error.status,
                 status_code=202,
-                refresh_url=f"/analyses/{error.status.analysis_id}/result",
+                refresh_page="result",
             )
         except AnalysisNotFoundError:
             return _not_found_page(templates, request)
@@ -338,14 +362,14 @@ def _normalized_origin(parts: SplitResult) -> tuple[str, str, int] | None:
 def _upload_context(config: AppConfig) -> dict[str, object]:
     return {
         "formats": {
-            "Изображения": tuple(config.allowed_formats.image.extensions),
-            "Аудио": tuple(config.allowed_formats.audio.extensions),
-            "Видео": tuple(config.allowed_formats.video.extensions),
+            "image": tuple(config.allowed_formats.image.extensions),
+            "audio": tuple(config.allowed_formats.audio.extensions),
+            "video": tuple(config.allowed_formats.video.extensions),
         },
         "limits": {
-            "Изображения": config.limits.max_file_size_mb.image,
-            "Аудио": config.limits.max_file_size_mb.audio,
-            "Видео": config.limits.max_file_size_mb.video,
+            "image": config.limits.max_file_size_mb.image,
+            "audio": config.limits.max_file_size_mb.audio,
+            "video": config.limits.max_file_size_mb.video,
         },
     }
 
@@ -357,15 +381,24 @@ def _submission_response(
 ) -> Response:
     if submission.terminal_result is None:
         return RedirectResponse(
-            url=f"/analyses/{submission.analysis_id}",
+            url=page_url(
+                "status",
+                _request_locale(request),
+                analysis_id=submission.analysis_id,
+                paused=_refresh_paused(request),
+            ),
             status_code=303,
         )
     result = submission.terminal_result
-    error = result.errors[0] if result.errors else ErrorDetail(
-        code="internal_error",
-        category="internal",
-        message="Анализ завершился внутренней ошибкой.",
-        retryable=True,
+    error = (
+        result.errors[0]
+        if result.errors
+        else ErrorDetail(
+            code="internal_error",
+            category="internal",
+            message="Анализ завершился внутренней ошибкой.",
+            retryable=True,
+        )
     )
     return _error_page(
         templates,
@@ -373,8 +406,8 @@ def _submission_response(
         status_code=intake_http_status(result.status, error.code),
         error=error,
         analysis_id=result.analysis_id,
-        status_url=f"/analyses/{result.analysis_id}",
-        result_url=f"/analyses/{result.analysis_id}/result",
+        status_url=page_url("status", _request_locale(request), analysis_id=result.analysis_id),
+        result_url=page_url("result", _request_locale(request), analysis_id=result.analysis_id),
     )
 
 
@@ -384,12 +417,31 @@ def _status_page(
     status: AnalysisStatusView,
     *,
     status_code: int,
-    refresh_url: str,
+    refresh_page: Page,
 ) -> Response:
     return templates.TemplateResponse(
         request=request,
         name="status.html",
-        context={"status": status, "refresh_url": refresh_url},
+        context={
+            "status": status,
+            "refresh_url": page_url(
+                refresh_page,
+                _request_locale(request),
+                analysis_id=status.analysis_id,
+                paused=_refresh_paused(request),
+            ),
+            "pause_url": page_url(
+                refresh_page,
+                _request_locale(request),
+                analysis_id=status.analysis_id,
+                paused=True,
+            ),
+            "resume_url": page_url(
+                refresh_page,
+                _request_locale(request),
+                analysis_id=status.analysis_id,
+            ),
+        },
         status_code=status_code,
     )
 
@@ -489,3 +541,53 @@ def _error_page(
         },
         status_code=status_code,
     )
+
+
+def _request_locale(request: Request) -> str:
+    values = request.query_params.getlist("lang")
+    return values[0] if len(values) == 1 and values[0] in {"ru", "en"} else "ru"
+
+
+def _refresh_paused(request: Request) -> bool:
+    return request.query_params.getlist("refresh") == ["off"]
+
+
+def _page_context(request: Request) -> dict[str, object]:
+    """Supply presentation helpers to every HTML response, including guard failures."""
+    locale = _request_locale(request)
+    paused = _refresh_paused(request)
+    routes: dict[str, Page] = {
+        "analysis_status": "status",
+        "analysis_result": "result",
+    }
+    route_name = getattr(request.scope.get("route"), "name", "")
+    current_page = routes.get(route_name, "upload") if request.method == "GET" else "upload"
+    analysis_id = str(request.path_params.get("analysis_id", ""))
+    language_links = tuple(
+        (
+            language,
+            translate(locale, "error.post_language_" + language)
+            if request.method == "POST"
+            else label,
+            page_url(current_page, language, analysis_id=analysis_id, paused=paused),
+        )
+        for language, label in (("ru", "Русский"), ("en", "English"))
+    )
+    return {
+        "locale": locale,
+        "t": partial(translate, locale),
+        "error_copy": partial(error_copy, locale),
+        "url": partial(page_url, locale=locale, analysis_id=analysis_id, paused=paused),
+        "language_links": language_links,
+        "refresh_paused": paused,
+        "number": number,
+        "quantity": partial(quantity, locale),
+        "time_display": partial(time_display, locale),
+        "time_iso": time_iso,
+        "file_size": partial(file_size, locale),
+        "duration": partial(duration, locale),
+        "localization_text": partial(localization_text, locale),
+        "analyzer_metadata": analyzer_metadata,
+        "non_scoring": non_scoring,
+        "measurement_labels": measurement_labels,
+    }

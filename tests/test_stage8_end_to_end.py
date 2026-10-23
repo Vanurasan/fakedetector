@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
 from stage8_helpers import make_config
@@ -70,8 +71,16 @@ def test_api_and_webui_share_one_production_service_and_results(
             follow_redirects=False,
         )
         assert web_created.status_code == 303
-        web_id = web_created.headers["location"].rsplit("/", maxsplit=1)[-1]
+        redirect = urlsplit(web_created.headers["location"])
+        assert not redirect.scheme and not redirect.netloc and not redirect.fragment
+        path_parts = redirect.path.split("/")
+        assert len(path_parts) == 3
+        assert path_parts[:2] == ["", "analyses"]
+        web_id = path_parts[2]
+        assert web_id
+        assert parse_qs(redirect.query, strict_parsing=True) == {"lang": ["ru"]}
         web_result_json = _wait_for_api_result(client, web_id)
+        assert web_result_json["analysis_id"] == web_id
 
         stored_api = app.state.runtime.result_repository.get(api_id)
         stored_web = app.state.runtime.result_repository.get(web_id)
@@ -115,7 +124,7 @@ def test_restart_exposes_persisted_result_and_lost_inflight_id_is_unknown(
             follow_redirects=False,
         )
         assert web_status.status_code == 303
-        assert web_status.headers["location"] == f"/analyses/{analysis_id}/result"
+        assert web_status.headers["location"] == f"/analyses/{analysis_id}/result?lang=ru"
         web_result = restarted_client.get(
             web_status.headers["location"],
             auth=WEB_AUTH,

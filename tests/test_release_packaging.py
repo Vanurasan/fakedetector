@@ -28,7 +28,10 @@ from fakedetector.config.models import AppConfig, ServerConfig
 
 _ROOT = Path(__file__).resolve().parents[1]
 _RESOURCES = {
+    "fakedetector/_webui_i18n.py",
+    "fakedetector/_webui_presentation.py",
     "fakedetector/static/styles.css",
+    "fakedetector/templates/base.html",
     "fakedetector/templates/error.html",
     "fakedetector/templates/result.html",
     "fakedetector/templates/status.html",
@@ -102,7 +105,8 @@ def test_application_version_explicit_override_remains_valid() -> None:
 
 
 def test_sdist_wheel_metadata_entry_point_and_resources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.syspath_prepend(str(_ROOT / "scripts"))
     import verify_release_package as verifier
@@ -162,9 +166,10 @@ def test_sdist_wheel_metadata_entry_point_and_resources(
             name for name in names if name.endswith(".dist-info/entry_points.txt")
         )
         metadata = BytesParser().parsebytes(archive.read(metadata_name))
-        assert archive.read(
-            f"{artifact_name}-{expected_version}.dist-info/licenses/LICENSE"
-        ) == license_bytes
+        assert (
+            archive.read(f"{artifact_name}-{expected_version}.dist-info/licenses/LICENSE")
+            == license_bytes
+        )
         entry_points = configparser.ConfigParser()
         entry_points.read_string(archive.read(entry_points_name).decode("utf-8"))
 
@@ -190,6 +195,14 @@ def test_sdist_wheel_metadata_entry_point_and_resources(
         from fakedetector.analyzers import _image_jpeg_dq
         from fakedetector.app import create_app
         from fakedetector.config.models import AppConfig
+        from fakedetector.domain import AnalysisResult, AnalysisStatus, ProcessingStage
+        from fakedetector.repositories import JsonFileResultRepository
+        from fakedetector.application import AnalysisStatusView
+        from fakedetector.webui import install_webui
+        from fakedetector import _webui_i18n, _webui_presentation
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        import os
         assert Path(fakedetector.__file__).is_relative_to(Path(sys.argv[1]))
         assert sorted(
             (item.analyzer_id, item.analyzer_version)
@@ -210,10 +223,58 @@ def test_sdist_wheel_metadata_entry_point_and_resources(
         app = create_app(config)
         assert app.state.runtime.application_service is app.state.application_service
         assert not config.external_systems.enabled
+        for module in (_webui_i18n, _webui_presentation):
+            assert Path(module.__file__).is_relative_to(Path(sys.argv[1]))
+        result = AnalysisResult.model_validate_json(Path(sys.argv[3]).read_bytes())
+        JsonFileResultRepository(config.result.directory).save(result)
+        payload = config.model_dump(mode="python")
+        payload["access_channels"]["webui"]["enabled"] = True
+        config = AppConfig.model_validate(payload)
+        os.environ[config.access_channels.webui.credentials_env_var] = "package:fixture"
+        app = create_app(config)
+        with TestClient(app) as client:
+            for locale in ("ru", "en"):
+                for path in ("/", f"/analyses/{result.analysis_id}/result"):
+                    response = client.get(path + "?lang=" + locale, auth=("package", "fixture"))
+                    assert response.status_code == 200
+                    assert f'<html lang="{locale}">' in response.text
+                assert client.get("/analyses/unknown?lang=" + locale,
+                                  auth=("package", "fixture")).status_code == 404
+            assert client.get("/?lang=en").status_code == 401
+            assert client.get("/static/styles.css").status_code == 200
+        # Deterministic pending projection exercises the installed status template too.
+        class PendingService:
+            def get_status(self, analysis_id):
+                return AnalysisStatusView(
+                    analysis_id, AnalysisStatus.RUNNING, ProcessingStage.ANALYSIS,
+                    result.created_at, result.processing.queued_at, result.processing.started_at,
+                    None, False, (),
+                )
+        pending_app = FastAPI()
+        install_webui(pending_app, service=PendingService(), authenticator=None, config=config)
+        for locale in ("ru", "en"):
+            response = TestClient(pending_app).get("/analyses/pending?lang=" + locale)
+            assert response.status_code == 200 and 'http-equiv="refresh"' in response.text
+            assert f'<html lang="{locale}">' in response.text
         """)
     config_path = tmp_path / "config.json"
     config_path.write_text(_config_with_disabled_channels().model_dump_json(), encoding="utf-8")
-    _run(sys.executable, "-I", "-c", probe, str(installed), str(config_path), cwd=tmp_path)
+    from stage8_helpers import make_completed_result
+
+    result_path = tmp_path / "result.json"
+    result_path.write_text(
+        make_completed_result("package-result").model_dump_json(), encoding="utf-8"
+    )
+    _run(
+        sys.executable,
+        "-I",
+        "-c",
+        probe,
+        str(installed),
+        str(config_path),
+        str(result_path),
+        cwd=tmp_path,
+    )
 
 
 @pytest.fixture

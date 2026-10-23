@@ -124,19 +124,19 @@ AFTER_MVP
 Текущий этап: Stage 12 — Analyzer Expansion, Licensing & Product Validation
 Статус Stage 11: DONE / CLOSED
 Статус Macros 0–8 Stage 11: DONE / owner accepted
-Последний завершённый Macro: Stage 12 Macro 3 — Audio Analyzer Expansion — Wave 1 (DONE / CLOSED / OWNER ACCEPTED / STRICTLY CERTIFIED — по подтверждению владельца в задании M4-R1)
+Последний завершённый Macro: Stage 12 Macro 6 — Correlation, Completeness & Result Semantics Review — DONE / OWNER ACCEPTED / MERGED (PR #79)
 Статус Stage 12: IN_PROGRESS
-Последний принятый инкремент: Stage 13 AASIST-L measurement-only и QG closure — OWNER ACCEPTED / MERGED (PR #78), merge SHA 35ae4d3ca11bfe0bfcfb98954bc43c911e524800
+Последний принятый инкремент: Stage 12 Macro 6 / M6-R2 — OWNER ACCEPTED / MERGED (PR #79), merge SHA 3d1ef2c0a050fdfa54e782f9c2493160a6d4f7cf; Stage 13 AASIST-L и QG closure ранее приняты в PR #78
 Дипломные реализации и исследования: PR #70 analyzer expansion, PR #71 ensemble, PR #72 controlled demo evaluation, PR #73 independent benign validation, PR #74 targeted VRC research, PR #75 VRC redesign research, PR #76 VRC2 prototype/applicability — OWNER ACCEPTED / MERGED; baseline сверки: 7da9cd1b31d3e88a2cc3d93ae7de77700858e3b4
-Текущая работа: STAGE12-M6-R2-SEMANTIC-REMEDIATION — адресная ремедиация четырёх findings; окончательная приёмка Macro 6 принадлежит OWNER
+Текущая работа: STAGE12-M7-R2-WEBUI-IMPLEMENTATION — IMPLEMENTATION IN PROGRESS; M7-R1 DESIGN ACCEPTED; независимые review и merge ожидаются
 Каталог: 15 runtime анализаторов — 5 CORE, 9 исходных experimental, 1 AASIST-L experimental measurement-only; enabled: standard=4, diploma=14; AASIST-L optional / disabled by default / non-scoring
-Решение владельца от 2026-10-19: новая функциональная разработка приостановлена до сверки документации и независимого архитектурного review; новый feature sprint не разрешён
+Решение владельца от 2026-10-19 сохраняет паузу остальных функциональных направлений; отдельным заданием M7-R2 разрешён только принятый WebUI presentation scope UX01–UX13
 Macro 4: незавершённые исследования DEFERRED ради завершения ВКР; M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12)
 M4-R2: COMPLETE_144_CELL_MATRIX; 133 VALID / 11 LOCAL_FAIL / 0 GLOBAL_STOP / 0 NOT_EXECUTED; G1 PASS / G2 FAIL / G3 PARTIAL / G4 NOT_EVALUATED_STAGE_A / G5 DEFER
 Stage B: BLOCKED / NOT AUTHORIZED; production: UNCHANGED / NO VRC PROMOTION; дальнейший полный Stage A rerun: NOT PLANNED
 Macro 5: NOT_STARTED / DEFERRED ради завершения ВКР
-Macro 6: IN_PROGRESS; независимый инженерный аудит M6-R1 PASS / OWNER review PASS; четыре findings рассмотрены; точная проекция F01 разрешена OWNER и реализована; повторные проверки PASS; MACRO6_READY_FOR_OWNER_ACCEPTANCE
-Ближайшее действие: независимый OWNER review полного M6-R2 diff и финальная приёмка; Macro 7 не начат; прежние VRC2_PROTOTYPE_APPLICABILITY_LIMITED и P5 FAIL сохранены
+Macro 6: DONE / OWNER ACCEPTED / MERGED (PR #79); F01/F03 и точная проекция F01 приняты; scoring и научные ограничения прежние
+Ближайшее действие: завершить проверки и представить M7-R2 на независимый OWNER review; прежние VRC2_PROTOTYPE_APPLICABILITY_LIMITED и P5 FAIL сохранены
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Состояние Macro 2: DONE / CLOSED; принятые результаты и основания закрытия приведены в §2.2
@@ -155,13 +155,14 @@ M3-ATD-D1: DONE / OWNER ACCEPTED DISPOSITION (2026-09-29); ATD — RESEARCH_ONLY
 M3-R2A: DONE / OWNER ACCEPTED RESEARCH RESULT (2026-09-26); production acceptance отсутствует
 M3-R2B: DONE / OWNER ACCEPTED RESEARCH RESULT (2026-09-26); исторический outcome ARC-NCC-1 на тот момент — READY_FOR_LARGER_VALIDATION, только research readiness; текущий ARC disposition — в M3-R3D-F; статистическая независимость не установлена
 Обязательный carry-forward Macro 3: ATD-LOCAL-1 и ASC-TV-1 — RESOLVED решениями владельца; MACRO3_ALL_REQUIRED_CARRY_FORWARD_RESOLVED: YES. Hygiene audit и закрытие Macro 3 приняты владельцем (см. [M3-CR1](#audio-m3-cr1))
-Будущие работы: Macro 7 — NOT_STARTED, следующий планируемый поток; Macros 8–10 — NOT_STARTED / не завершены; Stage 13 AASIST-L — OWNER ACCEPTED / MERGED (PR #78); остальные Stage 13+ — AFTER_MVP / NOT_STARTED
+Будущие работы: Macro 7 — IN_PROGRESS, M7-R1 DESIGN ACCEPTED, M7-R2 IMPLEMENTATION IN PROGRESS; Macros 8–10 — NOT_STARTED / не завершены; Stage 13 AASIST-L — OWNER ACCEPTED / MERGED (PR #78); остальные Stage 13+ — AFTER_MVP / NOT_STARTED
 Критические блокеры принятого DQ scope M2-A: отсутствуют; остальные методы требуют собственных gates
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
 Документационная база: сформирована
 ```
 
-Пауза относится к активной реализации, не закрывает Stage 12 и не отменяет
+За пределами отдельно разрешённого M7-R2 пауза относится к активной реализации,
+не закрывает Stage 12 и не отменяет
 Macros 5–10, M2H-D01 в Macro 6, будущие WebUI/RU/EN, корпусную приёмку,
 release activities и Stage 13+ ML. Карта фактической реализации —
 [PROJECT §6.19](PROJECT.md#implementation-map); контракты и исследовательские
@@ -2879,8 +2880,8 @@ Stage B сохранены. Git mutations не выполнялись.
 | 3 | Audio Analyzer Expansion — Wave 1 | DONE / CLOSED / OWNER ACCEPTED | M3-R1/R2A/R2B/R3A приняты владельцем; M3-R3B disposition принят, broad validation отложена; M3-R3C, M3-R3D-P/E/F приняты владельцем; M3-R3D-F confirmation MIXED (5/8 rescues); ARC research measurement demonstrated, production promotion и дальнейшее ARC retention development текущего Macro 3 DEFERRED; M3H-A01 deferred; M3-ATD-D1 DONE / OWNER ACCEPTED DISPOSITION, ATD RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, carry-forward RESOLVED; M3-ASC-D1 DONE / OWNER ACCEPTED DISPOSITION, ASC RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, carry-forward RESOLVED; все required carry-forward разрешены; M3-HYG-1 DONE / OWNER ACCEPTED, hygiene gate CLOSED; M3-CR1 DONE / OWNER ACCEPTED CLOSURE (2026-10-01); STRICTLY CERTIFIED по подтверждению владельца в M4-R1 (см. Macro 4); production audio-метод не принят |
 | 4 | Video Analyzer Expansion — Wave 1 | DEFERRED | M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12); G1 PASS, G2 FAIL, G3 PARTIAL, G4 NOT_EVALUATED_STAGE_A, G5 DEFER; Stage B BLOCKED / NOT AUTHORIZED; полный Stage A rerun NOT PLANNED; VCM-FRAME-1 TARGETED_RESEARCH / INACTIVE; production UNCHANGED / NO VRC PROMOTION; [закрытие Stage A](#video-m4r2-closeout) |
 | 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED / DEFERRED ради завершения ВКР | Исходный план после 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
-| 6 | Correlation, Completeness & Result Semantics Review | IN_PROGRESS / финальная приёмка OWNER ожидается | По отдельному разрешению M6-R1/R2 без завершения отложенных 4/5: независимый инженерный аудит PASS; четыре findings рассмотрены; F01/F03 исправлены, точная проекция F01 разрешена OWNER; focused и полный barrier PASS; MACRO6_READY_FOR_OWNER_ACCEPTANCE, дизайн оценки прежний |
-| 7 | WebUI Product Layer / Localization / Human-readable Results | NOT_STARTED / следующий планируемый поток | После приёмки 6: согласованное представление результата, RU/EN и проверка неизменности API/domain semantics |
+| 6 | Correlation, Completeness & Result Semantics Review | DONE / OWNER ACCEPTED / MERGED (PR #79) | M6-R1/R2 приняты без завершения отложенных 4/5; F01/F03 и точная проекция F01 приняты; focused и полный barrier PASS; дизайн оценки прежний |
+| 7 | WebUI Product Layer / Localization / Human-readable Results | IN_PROGRESS / M7-R1 DESIGN ACCEPTED; M7-R2 IMPLEMENTATION IN PROGRESS | Разрешены UX01–UX13 принятого M7-R1; presentation scope, RU/EN и неизменность API/domain semantics; независимые review и merge ожидаются |
 | 8 | Real Corpus & Hands-on Product Acceptance | NOT_STARTED | После 5–7: корпус с проверенными правами, воспроизводимые измерения и формальная ручная приёмка |
 | 9 | GitHub Release / Distribution | NOT_STARTED | После 0 и 8: проверенная поставка, лицензии/уведомления и отдельный шаг публикации владельцем |
 | 10 | Final Whole-Stage Audit & Certification | NOT_STARTED | После 0–9: независимый аудит, закрытие замечаний, quality barrier, сертификация установленного артефакта и решение о закрытии Stage 12 |
@@ -4670,7 +4671,7 @@ acceptance-only.diff, complete.diff, review-summary.md, git-status.txt,
 protocol-sha256.txt. Hash финального report служит ссылкой для будущей M4-R2-E;
 исполнение, media generation, encoding trials и новые измерения не выполнялись.
 
-## Macro 6 — корреляция и смысл результата — IN_PROGRESS
+## Macro 6 — корреляция и смысл результата — DONE / OWNER ACCEPTED / MERGED
 
 Независимый инженерный аудит M6-R1 принят владельцем: **PASS**, 0 BLOCKER,
 0 MAJOR, 2 MINOR и 2 INFO; исторический прогон — 1354 PASS / 5 SKIP.
@@ -4688,9 +4689,10 @@ pre-commit/mypy PASS; pytest 3283 PASS / 18 SKIP / 22 FAIL / 35 ERROR.
 Повторные проверки завершены 2026-10-24: focused **633 PASS / 1 SKIP**;
 полный `uv run poe check` — **PASS**, pytest **3354 PASS / 18 SKIP / 0 FAIL /
 0 ERROR**, coverage 91%; pre-commit, mypy и CLI smoke PASS.
-Рекомендация: **MACRO6_READY_FOR_OWNER_ACCEPTANCE**. Окончательная независимая
-приёмка OWNER ожидается. Это не OWNER ACCEPTED Macro 6 и не завершение Stage 12.
-Macro 7 не начат; новая strict installed-wheel certification не заявляется.
+После ремедиации рекомендация была **MACRO6_READY_FOR_OWNER_ACCEPTANCE**.
+По подтверждению владельца в задании M7-R2 Macro 6 принят и слит в PR #79,
+merge SHA `3d1ef2c0a050fdfa54e782f9c2493160a6d4f7cf`.
+Stage 12 не завершён; новая strict installed-wheel certification не заявляется.
 
 **M2H-D01 — REVIEWED в текущем audit scope.** Проверена действующая политика
 корреляции; подтверждённого implementation double-counting defect в проверенном
@@ -4712,6 +4714,19 @@ Macro 6 проверяет взаимодействия методов, отсу
 честную полноту активного профиля, ограничения и формулировки рекомендаций.
 Macro 0 не изменяет веса, пороги, `correlation_group` или риск-движок.
 
+## Macro 7 — WebUI presentation — IN_PROGRESS
+
+M7-R1 — **DESIGN ACCEPTED**. Нормативный вход разрешённого M7-R2:
+`M7-R1-webui-design-audit.zip`, SHA-256
+`7316abb7afeafae5ec8f5f1ab49768c2d558bf0a6335d3c5592d033d4424899f`.
+M7-R2 — **IMPLEMENTATION IN PROGRESS** до независимых review и merge.
+Scope: 7 P0 и 6 P1 (UX01–UX13), включая RU/EN, сводку результата с F01/F03,
+точные analyzer metadata, текстовые локализации, UTC/MiB и паузу refresh.
+UX14/UX15, media preview/retention, новые аналитические возможности и изменение
+оценки не разрешены. API, схемы, assessment, каталог, scheduler/worker,
+persistence/cleanup и safety guards сохраняются. Macro 7 не объявляется DONE.
+Macros 8–10 остаются незавершёнными; Macro 8 не начинается этим заданием.
+
 ## Macro 7–8 — наблюдения ручного знакомства с продуктом
 
 2026-09-20 владелец собрал сертифицированный ZIP, распаковал его вне репозитория,
@@ -4720,7 +4735,7 @@ Macro 0 не изменяет веса, пороги, `correlation_group` или
 image/audio/video. Это **неформальное знакомство с продуктом**, не формальная
 приёмка Stage 12 и не новая выполненная проверка этого прохода.
 
-Будущий backlog Macro 7, проверяемый в Macro 8:
+Наблюдения, ставшие входом принятого дизайна Macro 7 и будущей приёмки Macro 8:
 
 - человекочитаемое представление `completed`, `complete`, `low`, `weak`,
   при необходимости — понятные значки статуса;
@@ -4731,7 +4746,7 @@ image/audio/video. Это **неформальное знакомство с п�
   в подробностях, а не на первом плане обычного результата;
 - визуализация локализованных в медиа признаков, где это разрешено контрактами;
 - дальнейшая проверка читаемости рекомендаций при слабых признаках;
-  узкая коррекция complete+LOW выполнена отдельно в M6-R2 и ожидает приёмки;
+  узкая коррекция complete+LOW выполнена в M6-R2 и принята в Macro 6;
 - неизменные канонические API/domain enums и смысл результата при смене языка.
 
 Презентационный перевод сам по себе не требует изменения `CONTRACTS.md`.

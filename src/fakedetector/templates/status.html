@@ -1,23 +1,24 @@
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="2;url={{ refresh_url }}">
-  <title>FakeDetector — статус</title>
-  <link rel="stylesheet" href="/static/styles.css">
-</head>
-<body>
-  <main class="container">
-    <h1>Анализ выполняется</h1>
-    <p><strong>ID:</strong> <code>{{ status.analysis_id }}</code></p>
-    <p><strong>Статус:</strong> {{ status.status.value }}</p>
-    <p><strong>Этап:</strong> {{ status.stage.value }}</p>
-    <p>Страница обновится автоматически.</p>
-    {% if status.errors %}
-    <h2>Сообщения</h2>
-    <ul>{% for error in status.errors %}<li>{{ error.message }} ({{ error.code }})</li>{% endfor %}</ul>
-    {% endif %}
-  </main>
-</body>
-</html>
+{% extends "base.html" %}
+{% from "base.html" import timestamp, diagnostics with context %}
+{% block title %}{{ t('status.title') }}{% endblock %}
+{% block refresh %}{% if not refresh_paused %}<meta http-equiv="refresh" content="2;url={{ refresh_url }}">{% endif %}{% endblock %}
+{% block content %}
+  <h1>{{ t('analysis_status.' ~ status.status.value) }}</h1>
+  <p>{{ t('result.id') }}: <code>{{ status.analysis_id }}</code></p>
+  <section class="card" aria-labelledby="stage-heading">
+    <h2 id="stage-heading">{{ t('status.stage') }}: {{ t('stage.' ~ status.stage.value) }}</h2>
+    <p>{{ t('activity.' ~ status.stage.value) }}</p>
+    <dl class="meta-grid">
+      <div><dt>{{ t('result.created') }}</dt><dd>{{ timestamp(status.created_at) }}</dd></div>
+      <div><dt>{{ t('result.started') }}</dt><dd>{{ timestamp(status.started_at) }}</dd></div>
+    </dl>
+    <p class="muted">{{ t('status.paused' if refresh_paused else 'status.refresh_notice') }}</p>
+    <nav class="actions" aria-label="{{ t('status.title') }}">
+      <a class="button" href="{{ refresh_url }}">{{ t('status.refresh') }}</a>
+      <a href="{{ resume_url if refresh_paused else pause_url }}">{{ t('status.resume' if refresh_paused else 'status.pause') }}</a>
+      <a href="{{ url('upload') }}">{{ t('nav.new') }}</a>
+    </nav>
+  </section>
+  {% if status.errors %}<section class="card"><h2>{{ t('result.messages') }}</h2><p class="muted">{{ t('notice.original') }}</p>{{ diagnostics(status.errors, []) }}</section>{% endif %}
+  <details><summary>{{ t('result.details') }}</summary><p><code>{{ status.status.value }} / {{ status.stage.value }}</code></p></details>
+{% endblock %}
