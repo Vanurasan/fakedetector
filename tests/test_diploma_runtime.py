@@ -196,7 +196,10 @@ def test_diploma_real_preprocessing_workers_api_webui_persistence_cleanup(
             for analyzer in result["analyzers"]:
                 assert analyzer["analyzer_id"] in page.text
             assert "Измерения" in page.text
-            assert "Сводный сигнал" in page.text and "не вероятность подделки" in page.text
+            assert (
+                "Сводный эвристический сигнал" in page.text
+                and "не вероятность подделки" in page.text
+            )
             assert risk["summary"] in page.text
             assert "Объяснение оценки" in page.text and risk["model_id"] in page.text
             assert risk["explanation"] in html.unescape(page.text)

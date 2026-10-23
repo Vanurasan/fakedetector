@@ -13,6 +13,7 @@ from multiprocessing.process import BaseProcess
 from pathlib import Path
 from threading import Event, Lock
 from typing import Any, NoReturn
+from urllib.parse import parse_qs, urlsplit
 
 import numpy as np
 import pytest
@@ -320,11 +321,25 @@ def test_webui_success_uses_same_profile_b_service_and_persisted_result(
         )
         assert created.status_code == 303
         status_url = created.headers["location"]
-        analysis_id = status_url.rsplit("/", maxsplit=1)[-1]
+        redirect = urlsplit(status_url)
+        assert not redirect.scheme and not redirect.netloc and not redirect.fragment
+        path_parts = redirect.path.split("/")
+        assert len(path_parts) == 3
+        assert path_parts[:2] == ["", "analyses"]
+        analysis_id = path_parts[2]
+        assert analysis_id
+        assert parse_qs(redirect.query, strict_parsing=True) == {"lang": ["ru"]}
         backend_result = _wait_for_result(client, analysis_id)
+        assert backend_result["analysis_id"] == analysis_id
+        assert backend_result["status"] == "completed"
+        backend_status = client.get(f"/api/v1/analyses/{analysis_id}", headers=API_AUTH)
+        assert backend_status.status_code == 200
+        assert backend_status.json()["analysis_id"] == analysis_id
+        assert backend_status.json()["result_available"] is True
 
         web_status = client.get(status_url, auth=WEB_AUTH, follow_redirects=False)
         assert web_status.status_code == 303
+        assert web_status.headers["location"] == f"/analyses/{analysis_id}/result?lang=ru"
         result_page = client.get(web_status.headers["location"], auth=WEB_AUTH)
         assert result_page.status_code == 200
         assert "Результат анализа" in result_page.text

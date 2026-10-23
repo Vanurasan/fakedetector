@@ -1,99 +1,134 @@
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FakeDetector — результат</title>
-  <link rel="stylesheet" href="/static/styles.css">
-</head>
-<body>
-  <main class="container">
-    <h1>Результат анализа</h1>
-    <div class="notice">Это автоматизированная оценка технических признаков. Она не заменяет окончательную экспертную экспертизу.</div>
-    <dl>
-      <dt>ID</dt><dd><code>{{ result.analysis_id }}</code></dd>
-      <dt>Статус</dt><dd>{{ result.status.value }}</dd>
-      {% if result.file %}
-      <dt>Имя файла</dt><dd>{{ result.file.original_name }}</dd>
-      {% if result.file.media_type is defined %}<dt>Тип медиа</dt><dd>{{ result.file.media_type.value }}</dd>{% endif %}
-      {% endif %}
-      <dt>Создан</dt><dd>{{ result.created_at }}</dd>
-      <dt>Завершён</dt><dd>{{ result.processing.finished_at }}</dd>
-      <dt>Полнота</dt><dd>{{ result.completeness.status.value }}</dd>
-      {% if result.risk_assessment and result.risk_assessment.final_level %}
-      <dt>Итоговый риск</dt><dd>{{ result.risk_assessment.final_level.value }}</dd>
-      {% else %}
-      <dt>Итоговый риск</dt><dd>Оценка отсутствует</dd>
-      {% endif %}
-      {% if result.cleanup %}<dt>Очистка</dt><dd>{{ result.cleanup.status.value }}</dd>{% endif %}
+{% extends "base.html" %}
+{% from "base.html" import timestamp, diagnostics with context %}
+{% set risk = result.risk_assessment %}
+{% set diploma = risk and risk.model_id == 'diploma_ensemble_v1' and risk.model_version == '0.1.0' %}
+{% block title %}{{ t('result.title') }}{% endblock %}
+{% block content %}
+  <h1>{{ t('result.title') }}</h1>
+  <section class="card file-card" aria-labelledby="file-heading">
+    <h2 id="file-heading">{% if result.file %}{{ result.file.original_name if result.file.original_name else t('result.unnamed_file') }}{% else %}{{ t('result.no_file') }}{% endif %}</h2>
+    <p class="badge">{{ t('analysis_status.' ~ result.status.value) }}</p>
+    <dl class="meta-grid">
+      <div><dt>{{ t('result.id') }}</dt><dd><code>{{ result.analysis_id }}</code></dd></div>
+      {% if result.file and result.file.media_type is defined %}<div><dt>{{ t('result.media') }}</dt><dd>{{ t('media.' ~ result.file.media_type.value) }}</dd></div>{% endif %}
+      <div><dt>{{ t('result.created') }}</dt><dd>{{ timestamp(result.created_at) }}</dd></div>
+      <div><dt>{{ t('result.finished') }}</dt><dd>{{ timestamp(result.processing.finished_at) }}</dd></div>
     </dl>
+  </section>
 
-    <div class="notice" aria-label="Как понимать полноту и риск">
-      <p>Полнота описывает выполнение применимых анализаторов настроенного плана.
-        Статус complete не означает проверку всех способов манипуляции
-        и не гарантирует достаточность криминалистических свидетельств.</p>
-      <p>LOW или score=0 не подтверждают подлинность или безопасность файла.
-        Отсутствующие, недостаточные или недоступные свидетельства
-        не означают отрицательный результат проверки на манипуляцию.</p>
+  <section class="card assessment" aria-label="{{ t('result.risk') }}" data-risk="{{ risk.final_level.value if risk and risk.final_level else 'unavailable' }}">
+    <div><h2>{{ t('result.risk') }}</h2><p class="summary-value">{{ t('risk.' ~ risk.final_level.value) if risk and risk.final_level else t('result.no_risk') }}</p>
+      <p>{{ t('result.signal' if diploma else 'result.score') }}: <strong class="score">{{ number(risk.score) if risk and risk.score is not none else t('common.unknown') }}</strong>{% if diploma and risk.score is not none %} / 100{% endif %}</p>
+      {% if diploma %}<p>{{ t('result.scale') }}</p>{% endif %}
     </div>
+    <div><h2>{{ t('result.execution') }}</h2><p class="summary-value">{{ t('completeness.' ~ result.completeness.status.value) }}</p></div>
+  </section>
+  <aside class="notice" aria-label="{{ t('result.caution') }}">
+    <p>{{ t('notice.execution_scope') }}</p><p>{{ t('notice.low_not_authentic') }}</p><p>{{ t('notice.heuristic') }}</p><p>{{ t('notice.expert') }}</p>
+  </aside>
 
-    {% if result.risk_assessment %}
-    <section>
-      <h2>Сводная оценка</h2>
-      <p>{{ result.risk_assessment.summary }}</p>
-      {% if result.risk_assessment.model_id == 'diploma_ensemble_v1' %}
-      <p>Сводный сигнал — эвристическая шкала 0–100, не вероятность подделки.</p>
-      {% endif %}
-      <details><summary>Объяснение оценки</summary><p>{{ result.risk_assessment.explanation }}</p></details>
-    </section>
-    {% endif %}
+  <section class="card" aria-labelledby="interpretation-heading">
+    <h2 id="interpretation-heading">{{ t('result.interpretation') }}</h2>
+    <p class="muted original-language">{{ t('notice.original') }}</p>
+    {% if risk %}<p>{{ risk.summary }}</p>
+      {% if risk.limitations %}<h3>{{ t('result.limitations') }}</h3><ul>{% for limitation in risk.limitations %}<li>{{ limitation }}</li>{% endfor %}</ul>{% endif %}
+    {% else %}<p>{{ t('result.no_assessment') }}</p>{% endif %}
+  </section>
 
-    <section>
-      <h2>Признаки</h2>
-      {% if result.findings %}
-      <ul>{% for finding in result.findings %}<li><strong>{{ finding.severity.value }}</strong>: {{ finding.description }}</li>{% endfor %}</ul>
-      {% else %}<p>Зафиксированные признаки отсутствуют.</p>{% endif %}
-    </section>
-
-    <section>
-      <h2>Результаты анализаторов</h2>
-      {% for analyzer in result.analyzers %}
-      <article>
-        <h3><code>{{ analyzer.analyzer_id }}</code></h3>
-        <p>{{ analyzer.status.value }}: {{ analyzer.summary }}</p>
-        {% if analyzer.raw_metrics %}
-        <details><summary>Измерения</summary><pre>{{ analyzer.raw_metrics | tojson(indent=2) }}</pre></details>
-        {% endif %}
-      </article>
-      {% else %}<p>Результаты анализаторов отсутствуют.</p>{% endfor %}
-    </section>
-
-    <section>
-      <h2>Полнота и ограничения</h2>
-      {% if result.completeness.explanation %}<p>{{ result.completeness.explanation }}</p>{% endif %}
-      {% if result.risk_assessment and result.risk_assessment.limitations %}
-      <ul>{% for limitation in result.risk_assessment.limitations %}<li>{{ limitation }}</li>{% endfor %}</ul>
-      {% else %}<p>Дополнительные ограничения оценки не указаны.</p>{% endif %}
-    </section>
-
+  <section class="card" aria-labelledby="recommendation-heading">
+    <h2 id="recommendation-heading">{{ t('result.recommendation') }}</h2>
     {% if result.recommendation %}
-    <section><h2>Рекомендация</h2><p>{{ result.recommendation.text }}</p></section>
+      <p>{{ result.recommendation.text }}</p>
+      <p><strong>{{ t('action.' ~ result.recommendation.primary_action) }}</strong></p>
+      {% if result.recommendation.additional_actions %}<ul>{% for action in result.recommendation.additional_actions %}<li>{{ t('action.' ~ action) }}</li>{% endfor %}</ul>{% endif %}
+      <p>{{ t('result.manual') }}: {{ t('common.yes' if result.recommendation.requires_manual_review else 'common.no') }}</p>
+    {% else %}<p>{{ t('result.no_recommendation') }}</p>{% endif %}
+  </section>
+
+  <section aria-labelledby="findings-heading">
+    <h2 id="findings-heading">{{ t('result.findings') }}</h2>
+    {% for finding in result.findings %}
+    <article class="card finding">
+      <p class="badge">{{ t('severity.' ~ finding.severity.value) }}</p><p>{{ finding.description }}</p>
+      <p>{{ t('result.source') }}: <code>{{ finding.source_analyzer_id }}@{{ finding.source_analyzer_version }}</code></p>
+      {% if finding.localization %}<p>{{ localization_text(finding.localization) }}</p><p class="muted">{{ t('localization.scope') }}</p>{% endif %}
+      <details><summary>{{ t('result.finding_details') }}</summary>
+        <dl>{% for field in ('finding_id', 'type', 'group', 'correlation_group', 'source_score', 'score_impact', 'critical_override_eligible') %}<dt><code>{{ field }}</code></dt><dd>{{ finding | attr(field) if finding | attr(field) is not none else t('common.unknown') }}</dd>{% endfor %}</dl>
+        {% if finding.localization %}<pre tabindex="0" aria-label="{{ t('result.finding_details') }}">{{ finding.localization.model_dump(mode='json') | tojson(indent=2) }}</pre>{% endif %}
+        <p><code>evidence_refs</code>:</p><ul>{% for ref in finding.evidence_refs %}<li><code>{{ ref }}</code></li>{% else %}<li>{{ t('common.unknown') }}</li>{% endfor %}</ul>
+      </details>
+    </article>
+    {% else %}<p class="card">{{ t('result.no_findings') }}</p>{% endfor %}
+  </section>
+
+  <section aria-labelledby="analyzers-heading">
+    <h2 id="analyzers-heading">{{ t('result.analyzers') }}</h2>
+    {% for analyzer in result.analyzers %}
+    {% set metadata = analyzer_metadata(analyzer) %}
+    <article class="card" aria-labelledby="analyzer-{{ loop.index }}">
+      <h3 id="analyzer-{{ loop.index }}">{{ t(metadata[0]) if metadata else t('common.metadata_unavailable') }}</h3>
+      <p><code>{{ analyzer.analyzer_id }}@{{ analyzer.analyzer_version }}</code></p>
+      {% if metadata %}<p class="badge">{{ t(metadata[1]) }}</p>{% endif %}
+      {% if non_scoring(analyzer) %}<p class="badge">{{ t('notice.non_scoring') }}</p>{% endif %}
+      <p><strong>{{ t('analyzer_status.' ~ analyzer.status.value) }}</strong> · {{ t('result.applicable') }}: {{ t('common.yes' if analyzer.applicable else 'common.no') }}</p>
+      <p>{{ analyzer.summary }}</p>
+      {% for label in measurement_labels(analyzer) %}<p class="notice">{{ t(label) }}</p>{% endfor %}
+      {{ diagnostics(analyzer.errors, analyzer.warnings) }}
+      {% if analyzer.raw_metrics %}<details><summary>{{ t('result.measurements') }}</summary><pre tabindex="0" aria-label="{{ t('result.measurements') }}">{{ analyzer.raw_metrics | tojson(indent=2) }}</pre></details>{% else %}<p class="muted">{{ t('result.no_metrics') }}</p>{% endif %}
+    </article>
+    {% else %}<p class="card">{{ t('result.no_analyzers') }}</p>{% endfor %}
+  </section>
+
+  {% set messages = namespace(present=result.errors or result.warnings) %}
+  {% for analyzer in result.analyzers %}{% if analyzer.errors or analyzer.warnings %}{% set messages.present = true %}{% endif %}{% endfor %}
+  {% if result.cleanup and result.cleanup.errors %}{% set messages.present = true %}{% endif %}
+  {% if messages.present %}<p class="notice">{{ t('result.warnings_present') }}</p>{% endif %}
+  {% if result.analyzers | selectattr('errors') | list %}<p class="notice">{{ t('result.analyzer_errors') }}</p>{% endif %}
+  {% if result.cleanup and result.cleanup.status.value in ('partial', 'failed') %}<p class="notice">{{ t('result.cleanup_partial' if result.cleanup.status.value == 'partial' else 'result.cleanup_failed') }}</p>{% endif %}
+
+  <details class="card technical"><summary>{{ t('result.details') }}</summary>
+    <dl class="meta-grid">
+      <div><dt>{{ t('result.application') }}</dt><dd>{{ result.processing.application_version }}</dd></div>
+      <div><dt>{{ t('result.config') }}</dt><dd><code>{{ result.processing.config_snapshot_id }}</code></dd></div>
+      <div><dt>{{ t('result.duration') }}</dt><dd>{{ duration(result.processing.duration_ms) }}</dd></div>
+      <div><dt>{{ t('result.state') }}</dt><dd><code>{{ result.status.value }} / {{ result.stage.value }}</code></dd></div>
+      {% if risk %}<div><dt>{{ t('result.model') }}</dt><dd><code>{{ risk.model_id }}@{{ risk.model_version }}</code></dd></div>{% endif %}
+    </dl>
+    <h2>{{ t('result.execution') }}</h2>
+    <dl class="meta-grid">{% for field in ('planned_analyzers','applicable_analyzers','completed_analyzers','failed_analyzers','timed_out_analyzers','skipped_analyzers','not_applicable_analyzers') %}
+      <div><dt>{{ t('counter.' ~ field) }}</dt><dd>{{ result.completeness | attr(field) if result.completeness | attr(field) is not none else t('common.unknown') }}</dd></div>
+    {% endfor %}</dl>
+    <p>{{ t('result.coverage') }}: {{ number(result.completeness.coverage_ratio) if result.completeness.coverage_ratio is not none else t('common.unknown') }}</p>
+    <p><code>{{ result.completeness.status.value }}</code></p>
+    <h3>{{ t('result.missing') }}</h3><ul>{% for capability in result.completeness.missing_capabilities %}<li><code>{{ capability }}</code></li>{% else %}<li>{{ t('common.unknown') }}</li>{% endfor %}</ul>
+    <h3>{{ t('result.execution_explanation') }}</h3><p>{{ result.completeness.explanation }}</p>
+    {% if risk %}<h2>{{ t('result.explanation') }}</h2><p>{{ risk.explanation }}</p>
+      <dl><dt>{{ t('result.score_level') }}</dt><dd>{{ t('risk.' ~ risk.score_based_level.value) if risk.score_based_level else t('common.unknown') }}</dd>
+      <dt>{{ t('result.override') }}</dt><dd>{{ t('common.yes' if risk.critical_override_applied else 'common.no') }}</dd>
+      <dt>{{ t('result.critical_ids') }}</dt><dd>{% for finding_id in risk.critical_finding_ids %}<code>{{ finding_id }}</code> {% else %}{{ t('common.unknown') }}{% endfor %}</dd></dl>
     {% endif %}
 
-    <section>
-      <h2>Ошибки и предупреждения</h2>
-      {% if result.warnings %}<ul>{% for warning in result.warnings %}<li>{{ warning }}</li>{% endfor %}</ul>{% endif %}
-      {% if result.errors %}<ul>{% for error in result.errors %}<li>{{ error.message }} ({{ error.code }})</li>{% endfor %}</ul>{% endif %}
-      {% for analyzer in result.analyzers %}
-        {% for warning in analyzer.warnings %}<p>{{ analyzer.analyzer_id }}: {{ warning }}</p>{% endfor %}
-        {% for error in analyzer.errors %}<p>{{ analyzer.analyzer_id }}: {{ error.message }} ({{ error.code }})</p>{% endfor %}
-      {% endfor %}
-      {% if result.cleanup %}
-        {% for error in result.cleanup.errors %}<p>Очистка: {{ error.message }} ({{ error.code }})</p>{% endfor %}
+    {% if result.file %}<h2>{{ t('result.file') }}</h2><p>{{ t('result.size') }}: {{ file_size(result.file.size_bytes) }}</p>
+      {% if result.file.sha256 is defined %}<p>SHA-256: <code>{{ result.file.sha256 }}</code></p>{% endif %}
+      {% if result.file.technical_parameters is defined %}{% set params = result.file.technical_parameters %}
+        <h3>{{ t('result.parameters') }}</h3>
+        {% if params.width is defined %}<p>{{ t('result.width') }} × {{ t('result.height') }}: {{ params.width }} × {{ params.height }} px</p>{% endif %}
+        {% if params.duration_seconds is defined %}<p>{{ t('result.media_duration') }}: {{ quantity(params.duration_seconds) }} {{ t('format.seconds') }}</p>{% endif %}
+        {% if params.sample_rate_hz is defined %}<p>{{ t('result.sample_rate') }}: {{ params.sample_rate_hz }} Hz · {{ t('result.channels') }}: {{ params.channels }}</p>{% endif %}
+        {% if params.bitrate_bps is defined and params.bitrate_bps is not none %}<p>{{ t('result.bitrate') }}: {{ params.bitrate_bps }} bit/s</p>{% endif %}
+        <pre tabindex="0" aria-label="{{ t('result.parameters') }}">{{ params.model_dump(mode='json') | tojson(indent=2) }}</pre>
       {% endif %}
-      {% if not result.warnings and not result.errors %}<p>Ошибки и предупреждения верхнего уровня отсутствуют.</p>{% endif %}
-    </section>
-    <nav><a href="/">Проверить другой файл</a></nav>
-  </main>
-</body>
-</html>
+    {% endif %}
+    <h2>{{ t('result.cleanup') }}</h2>
+    {% if result.cleanup %}<p>{{ t('cleanup.' ~ result.cleanup.status.value) }} · <code>{{ result.cleanup.status.value }}</code></p>
+      <dl>{% for field,key in (('original_file_deleted','result.original_deleted'),('intermediate_files_deleted','result.intermediate_deleted'),('quarantine_used','result.quarantine')) %}<dt>{{ t(key) }}</dt><dd>{{ t('common.yes' if result.cleanup | attr(field) else 'common.no') }}</dd>{% endfor %}</dl>
+      <p>{{ t('result.finished') }}: {{ timestamp(result.cleanup.finished_at) }}</p>
+    {% else %}<p>{{ t('common.unknown') }}</p>{% endif %}
+    <h2>{{ t('result.messages') }}</h2>
+    {% if not messages.present %}<p>{{ t('result.no_messages') }}</p>{% endif %}
+    {{ diagnostics(result.errors, result.warnings) }}
+    {% for analyzer in result.analyzers %}{% if analyzer.errors or analyzer.warnings %}<h3><code>{{ analyzer.analyzer_id }}@{{ analyzer.analyzer_version }}</code></h3>{{ diagnostics(analyzer.errors, analyzer.warnings) }}{% endif %}{% endfor %}
+    {% if result.cleanup %}{{ diagnostics(result.cleanup.errors, []) }}{% endif %}
+  </details>
+  <nav class="actions"><a href="{{ url('upload') }}">{{ t('nav.other_file') }}</a></nav>
+{% endblock %}

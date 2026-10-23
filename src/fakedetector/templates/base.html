@@ -1,0 +1,29 @@
+{% macro timestamp(value) -%}
+{% if value is not none %}<time datetime="{{ time_iso(value) }}">{{ time_display(value) }}</time>{% else %}{{ t('common.unknown') }}{% endif %}
+{%- endmacro %}
+{% macro diagnostics(errors, warnings) -%}
+{% if warnings %}<ul class="messages">{% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}</ul>{% endif %}
+{% if errors %}<ul class="messages">{% for error in errors %}<li>{{ error.message }} <code>{{ error.code }}</code></li>{% endfor %}</ul>{% endif %}
+{%- endmacro %}
+<!doctype html>
+<html lang="{{ locale }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {% block refresh %}{% endblock %}
+  <title>FakeDetector — {% block title %}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">{{ t('nav.skip') }}</a>
+  <header class="site-header">
+    <a class="brand" href="{{ url('upload') }}">FakeDetector<span>{{ t('app.subtitle') }}</span></a>
+    <nav class="header-actions" aria-label="{{ t('nav.new') }}"><a href="{{ url('upload') }}">{{ t('nav.new') }}</a></nav>
+    <nav class="languages" aria-label="{{ t('nav.language') }}">
+      {% for language, label, href in language_links %}<a href="{{ href }}"{% if language == locale %} aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}
+    </nav>
+  </header>
+  <main id="main" class="container" tabindex="-1">{% block content %}{% endblock %}</main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
