@@ -294,8 +294,20 @@ class RiskAssessmentService:
         media = next(iter(media_types), None)
         families = tuple(family for family in _ENSEMBLE_FAMILIES if family.media_type is media)
         specs = {spec.analyzer_id: spec for family in families for spec in family.members}
-        if any(result.analyzer_id not in specs for result in results):
-            raise ValueError("unknown ensemble analyzer")
+        for result in results:
+            if result.analyzer_id == "audio_aasist_l_measurement":
+                if (
+                    result.media_type is not MediaType.AUDIO
+                    or result.analyzer_version != "1.0.0"
+                    or result.group != "audio"
+                    or result.score is not None
+                    or result.score_name is not None
+                    or result.candidate_findings
+                    or any(f.source_analyzer_id == result.analyzer_id for f in findings)
+                ):
+                    raise ValueError("invalid measurement-only AASIST-L result")
+            elif result.analyzer_id not in specs:
+                raise ValueError("unknown ensemble analyzer")
         by_id = {result.analyzer_id: result for result in results}
         responses = {
             analyzer_id: _ensemble_response(spec, by_id.get(analyzer_id), findings)

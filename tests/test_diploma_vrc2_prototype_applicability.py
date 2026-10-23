@@ -2,7 +2,9 @@
 
 import copy
 import subprocess
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -83,6 +85,87 @@ def test_runtime_isolation_gate_rejects_runtime_exposure(monkeypatch):
     monkeypatch.setattr(harness, "_resolve_runtime_analyzer_definition", lambda _: object())
     with pytest.raises(ValueError, match="runtime isolation"):
         harness.runtime_isolation()
+
+
+@pytest.mark.parametrize("change", ["extra", "missing_original", "missing_aasist", "prototype"])
+def test_runtime_isolation_preserves_closed_membership(monkeypatch, change):
+    registrations = list(harness._runtime_analyzer_registrations())
+    if change == "extra":
+        registrations.append(SimpleNamespace(analyzer_id="audio_unknown_ml"))
+    elif change == "prototype":
+        registrations.append(SimpleNamespace(analyzer_id=harness.ANALYZER.analyzer_id))
+    else:
+        missing = (
+            "audio_pcm_quality" if change == "missing_original" else "audio_aasist_l_measurement"
+        )
+        registrations = [r for r in registrations if r.analyzer_id != missing]
+    monkeypatch.setattr(harness, "_runtime_analyzer_registrations", lambda: registrations)
+    with pytest.raises(ValueError, match="Prototype runtime isolation failed"):
+        harness.runtime_isolation()
+
+
+@pytest.mark.parametrize(
+    "analyzer_id,change",
+    [
+        ("audio_pcm_quality", {"maturity": harness._AnalyzerMaturity.EXPERIMENTAL}),
+        ("audio_aasist_l_measurement", {"maturity": harness._AnalyzerMaturity.CORE}),
+        ("audio_aasist_l_measurement", {"maturity": harness._AnalyzerMaturity.EXPERIMENTAL_WEAK}),
+        ("audio_aasist_l_measurement", {"analyzer_version": "2.0.0"}),
+        ("audio_aasist_l_measurement", {"candidate_finding_types": frozenset({"ml_finding"})}),
+    ],
+)
+def test_runtime_isolation_rejects_maturity_version_or_finding_drift(
+    monkeypatch, analyzer_id, change
+):
+    resolve = harness._resolve_runtime_analyzer_definition
+    monkeypatch.setattr(
+        harness,
+        "_resolve_runtime_analyzer_definition",
+        lambda identity: (
+            replace(resolve(identity), **change) if identity == analyzer_id else resolve(identity)
+        ),
+    )
+    with pytest.raises(ValueError, match="Prototype runtime isolation failed"):
+        harness.runtime_isolation()
+
+
+@pytest.mark.parametrize(
+    "analyzer_id", ["audio_aasist_l_measurement", harness.ANALYZER.analyzer_id]
+)
+def test_runtime_isolation_rejects_scoring_measurement_or_prototype(monkeypatch, analyzer_id):
+    policy = copy.deepcopy(harness.demo._policy())
+    policy["families"][0]["members"].append({"analyzer_id": analyzer_id})
+    monkeypatch.setattr(harness.demo, "_policy", lambda: policy)
+    with pytest.raises(ValueError, match="Prototype runtime isolation failed"):
+        harness.runtime_isolation()
+
+
+def test_historical_isolation_and_additive_isolation_have_distinct_provenance(monkeypatch):
+    current = harness.runtime_isolation()
+    assert (
+        current["assessment_implementation"]["compatibility"] == harness.demo._AASIST_COMPATIBILITY
+    )
+    assert len(current["runtime_ids"]) == 15 and len(current["core_ids"]) == 5
+    policy = copy.deepcopy(harness.demo._policy())
+    policy["assessment_implementation"] = {
+        "compatibility": "historical-frozen",
+        "current_sha256_lf": harness.demo.ASSESSMENT_SHA256,
+        "historical_sha256_lf": harness.demo.ASSESSMENT_SHA256,
+        "scoring_projection_sha256_lf": harness.demo.ASSESSMENT_SHA256,
+    }
+    registrations = tuple(
+        r
+        for r in harness._runtime_analyzer_registrations()
+        if r.analyzer_id != "audio_aasist_l_measurement"
+    )
+    monkeypatch.setattr(harness.demo, "_policy", lambda: policy)
+    monkeypatch.setattr(harness, "_runtime_analyzer_registrations", lambda: registrations)
+    historical = harness.runtime_isolation()
+    assert len(historical["runtime_ids"]) == 14
+    assert (
+        historical["assessment_implementation"]["current_sha256_lf"]
+        != current["assessment_implementation"]["current_sha256_lf"]
+    )
 
 
 @pytest.mark.parametrize("start,overlap,contained", [(6, 9, 9), (1, 7, 4), (24, 0, 0)])

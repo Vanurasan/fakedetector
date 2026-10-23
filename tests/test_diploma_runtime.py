@@ -56,8 +56,8 @@ def test_catalog_preserves_five_core_and_resolves_all_opt_in_ids(tmp_path):
     }
     runtime = _runtime_analyzer_registrations()
     assert runtime[:5] == core
-    assert len(runtime) == len({r.analyzer_id for r in runtime}) == 14
-    assert len({r.worker_key for r in runtime}) == 14
+    assert len(runtime) == len({r.analyzer_id for r in runtime}) == 15
+    assert len({r.worker_key for r in runtime}) == 15
     config = _config(tmp_path)
     registry = AnalyzerRegistry(config, runtime)
     assert sum(len(registry.active_plan(media)) for media in MediaType) == 14

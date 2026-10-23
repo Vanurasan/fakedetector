@@ -49,6 +49,26 @@ ROOT = Path(__file__).resolve().parents[1]
 GENERATOR_VERSION = "diploma-demo-1.0.0"
 BASELINE_HEAD = "4459e795b8d784a4e683487c0d5b3f8e155b8bce"
 ASSESSMENT_SHA256 = "0b022e995316fecde23b7afbbeb2f32bb836e7bc973fdd3d0ed86c6fc06a2a1b"
+# Exact authorized source delta, not a replacement for the historical fingerprint.
+_AASIST_COMPATIBILITY = "aasist-l-measurement-only@1.0.0"
+_HISTORICAL_ID_GUARD = """        if any(result.analyzer_id not in specs for result in results):
+            raise ValueError("unknown ensemble analyzer")
+"""
+_AASIST_ID_GUARD = """        for result in results:
+            if result.analyzer_id == "audio_aasist_l_measurement":
+                if (
+                    result.media_type is not MediaType.AUDIO
+                    or result.analyzer_version != "1.0.0"
+                    or result.group != "audio"
+                    or result.score is not None
+                    or result.score_name is not None
+                    or result.candidate_findings
+                    or any(f.source_analyzer_id == result.analyzer_id for f in findings)
+                ):
+                    raise ValueError("invalid measurement-only AASIST-L result")
+            elif result.analyzer_id not in specs:
+                raise ValueError("unknown ensemble analyzer")
+"""
 ROLES = ("control", "manipulated", "confound_control")
 SPLITS = ("calibration_observation", "holdout_demo")
 MIME = {"png": "image/png", "jpg": "image/jpeg", "wav": "audio/wav", "mp4": "video/mp4"}
@@ -124,11 +144,31 @@ def _environment() -> dict[str, Any]:
     }
 
 
-def _policy() -> dict[str, Any]:
-    # Newline normalization makes the baseline fingerprint independent of Git eol settings.
-    assessment = ROOT / "src/fakedetector/lifecycle/_assessment.py"
-    if _digest(assessment.read_text(encoding="utf-8").encode()) != ASSESSMENT_SHA256:
+def _assessment_implementation(source: str) -> dict[str, str]:
+    """Accept only frozen source or its exact versioned, non-scoring ID extension."""
+    current = _digest(source.encode())
+    projection = source
+    compatibility = "historical-frozen"
+    if current != ASSESSMENT_SHA256:
+        if source.count(_AASIST_ID_GUARD) != 1:
+            raise ValueError("Frozen ensemble implementation changed; this sprint forbids tuning")
+        projection = source.replace(_AASIST_ID_GUARD, _HISTORICAL_ID_GUARD, 1)
+        compatibility = _AASIST_COMPATIBILITY
+    projected = _digest(projection.encode())
+    if projected != ASSESSMENT_SHA256:
         raise ValueError("Frozen ensemble implementation changed; this sprint forbids tuning")
+    return {
+        "compatibility": compatibility,
+        "current_sha256_lf": current,
+        "historical_sha256_lf": ASSESSMENT_SHA256,
+        "scoring_projection_sha256_lf": projected,
+    }
+
+
+def _policy() -> dict[str, Any]:
+    # read_text normalizes newlines independently of Git eol settings.
+    assessment = ROOT / "src/fakedetector/lifecycle/_assessment.py"
+    implementation = _assessment_implementation(assessment.read_text(encoding="utf-8"))
     raw = yaml.safe_load((ROOT / "config/config.diploma.yaml").read_text(encoding="utf-8"))
     risk = AppConfig.model_validate(raw).risk_assessment
     if (
@@ -142,6 +182,7 @@ def _policy() -> dict[str, Any]:
         "model": "diploma_ensemble_v1@0.1.0",
         "risk_configuration": risk.model_dump(mode="json"),
         "assessment_sha256_lf": ASSESSMENT_SHA256,
+        "assessment_implementation": implementation,
         "family_factors": [_family_factor(i) for i in range(4)],
         "capacities": {media.value: _media_capacity(media) for media in MediaType},
         "families": [

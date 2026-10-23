@@ -9,6 +9,10 @@ from types import MappingProxyType
 
 from pydantic import BaseModel
 
+from fakedetector.analyzers._audio_aasist_l import (
+    AudioAasistLMeasurementAnalyzer,
+    AudioAasistLSettings,
+)
 from fakedetector.analyzers._audio_experimental import (
     AudioBackgroundNoiseConsistencyAnalyzer,
     AudioSpectralConsistencyAnalyzer,
@@ -166,6 +170,12 @@ _BUILT_IN_ANALYZER_DEFINITIONS = (
 )
 
 _EXPERIMENTAL_ANALYZER_DEFINITIONS = (
+    _definition(
+        "stage13.audio_aasist_l_measurement.v1",
+        AudioAasistLMeasurementAnalyzer,
+        settings_model=AudioAasistLSettings,
+        maturity=_AnalyzerMaturity.EXPERIMENTAL,
+    ),
     _definition(
         "diploma.audio_repeated_segment_correspondence.v1",
         AudioRepeatedSegmentCorrespondenceAnalyzer,

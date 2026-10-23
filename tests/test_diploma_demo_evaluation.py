@@ -50,8 +50,102 @@ def test_frozen_membership_split_roles_and_policy():
     assert policy["capacities"] == {"image": 3.4375, "audio": 2.8125, "video": 2.05}
     assert policy["family_factors"] == [1, 0.25, 0.1, 0]
     assert policy["assessment_sha256_lf"] == demo.ASSESSMENT_SHA256
+    implementation = policy["assessment_implementation"]
+    assert implementation["compatibility"] == "aasist-l-measurement-only@1.0.0"
+    assert (
+        implementation["historical_sha256_lf"]
+        == implementation["scoring_projection_sha256_lf"]
+        == "0b022e995316fecde23b7afbbeb2f32bb836e7bc973fdd3d0ed86c6fc06a2a1b"
+    )
+    assert (
+        implementation["current_sha256_lf"]
+        == policy["runtime_sha256_lf"]["src/fakedetector/lifecycle/_assessment.py"]
+    )
+    assert implementation["current_sha256_lf"] != policy["assessment_sha256_lf"]
     assert len(policy["families"]) == 12
     assert sum(len(f["members"]) for f in policy["families"]) == 14
+
+
+def test_historical_and_exact_additive_assessment_have_distinct_identity():
+    source = (demo.ROOT / "src/fakedetector/lifecycle/_assessment.py").read_text("utf-8")
+    historical = source.replace(demo._AASIST_ID_GUARD, demo._HISTORICAL_ID_GUARD, 1)
+    identity = demo._assessment_implementation(historical)
+    assert identity == {
+        "compatibility": "historical-frozen",
+        "current_sha256_lf": demo.ASSESSMENT_SHA256,
+        "historical_sha256_lf": demo.ASSESSMENT_SHA256,
+        "scoring_projection_sha256_lf": demo.ASSESSMENT_SHA256,
+    }
+    assert demo._assessment_implementation(source)["compatibility"] == demo._AASIST_COMPATIBILITY
+
+
+@pytest.mark.parametrize("historical", [False, True])
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ('"audio_pcm_quality", 1.0', '"audio_pcm_quality", 0.9'),
+        ('"audio_quality"', '"audio_changed"'),
+        ('"ATD-LOCAL-1"', '"ATD-LOCAL-2"'),
+        ("0.25, 0.10", "0.50, 0.10"),
+        ("def _log_ratio_response", "def _changed_normalizer"),
+        ("return min(1.0, math.fsum", "return min(0.9, math.fsum"),
+        ("def _media_capacity", "def _changed_capacity"),
+    ],
+)
+def test_assessment_freeze_rejects_policy_or_unapproved_extension_changes(
+    historical, before, after
+):
+    source = (demo.ROOT / "src/fakedetector/lifecycle/_assessment.py").read_text("utf-8")
+    if historical:
+        source = source.replace(demo._AASIST_ID_GUARD, demo._HISTORICAL_ID_GUARD, 1)
+    assert before in source
+    changed = source.replace(before, after, 1)
+    with pytest.raises(ValueError, match="Frozen ensemble implementation changed"):
+        demo._assessment_implementation(changed)
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ('"audio_aasist_l_measurement"', '"audio_unknown_ml"'),
+        ('result.analyzer_version != "1.0.0"', 'result.analyzer_version != "2.0.0"'),
+        ("or result.score is not None", "or False"),
+        ("or result.candidate_findings", "or False"),
+        ("or any(f.source_analyzer_id == result.analyzer_id for f in findings)", "or False"),
+    ],
+)
+def test_additive_freeze_rejects_widening_the_measurement_contract(before, after):
+    source = (demo.ROOT / "src/fakedetector/lifecycle/_assessment.py").read_text("utf-8")
+    assert before in demo._AASIST_ID_GUARD
+    changed_guard = demo._AASIST_ID_GUARD.replace(before, after, 1)
+    with pytest.raises(ValueError, match="Frozen ensemble implementation changed"):
+        demo._assessment_implementation(source.replace(demo._AASIST_ID_GUARD, changed_guard, 1))
+
+
+@pytest.mark.parametrize("suffix", ["\n# unauthorized delta\n", demo._AASIST_ID_GUARD])
+def test_assessment_projection_is_unique_and_covers_the_entire_file(suffix):
+    source = (demo.ROOT / "src/fakedetector/lifecycle/_assessment.py").read_text("utf-8")
+    with pytest.raises(ValueError, match="Frozen ensemble implementation changed"):
+        demo._assessment_implementation(source + suffix)
+
+
+def test_frozen_diploma_threshold_configuration_still_rejected(tmp_path, monkeypatch):
+    source = demo.ROOT
+    for relative in (
+        "src/fakedetector/lifecycle/_assessment.py",
+        "config/config.diploma.yaml",
+        "uv.lock",
+    ):
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((source / relative).read_bytes())
+    profile = tmp_path / "config/config.diploma.yaml"
+    original = profile.read_text("utf-8")
+    assert "low_max: 25" in original
+    profile.write_text(original.replace("low_max: 25", "low_max: 26", 1), encoding="utf-8")
+    monkeypatch.setattr(demo, "ROOT", tmp_path)
+    with pytest.raises(ValueError, match="Diploma profile differs from the frozen policy"):
+        demo._policy()
 
 
 @pytest.mark.parametrize("media", ["image", "audio"])

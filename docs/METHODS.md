@@ -51,6 +51,63 @@
 Изменение принятого измерения, порогов или семантики требует явного решения
 владельца и обновления этой спецификации в том же принимаемом изменении.
 
+<a id="aasist-l-measurement"></a>
+## AASIST-L — отдельный experimental measurement-only допуск, 2026-10-22
+
+Заданием `STAGE13-ML-AASIST-L-IMPLEMENTATION-01` владелец разрешил ровно один
+`audio_aasist_l_measurement@1.0.0`, maturity `EXPERIMENTAL`, профиль
+`AASIST-L-PCM16-FIRST-1`. Feasibility `STAGE13-ML-FEASIBILITY-01` —
+RESEARCH PACKAGE PASS / FEASIBILITY ACCEPTED. Это разрешение инженерной
+реализации, **не ACCEPTED production/core forensic method** и не приёмка sprint.
+Provenance и лицензии: [AASIST-L](REFERENCES.md#aasist-l).
+
+- Цель: два необработанных logits опубликованного learned speech anti-spoof
+  отклика; отдельного scoring family, нормализации, порога решения и Findings нет.
+- Применимость: AUDIO, исходные mono/16000 Hz и существующий `normalized_audio`
+  (`audio_normalized` в registry), PCM16 WAV без resample/downmix. И исходные
+  факты, и фактический WAV header проверяются; другой rate/channels —
+  `not_applicable`, повреждение/неверный PCM encoding — техническая ошибка.
+- Читаются первые `min(header_frames,64600)` отсчётов, signed little-endian PCM16
+  переводится в float32 делением на 32768. Длинный вход обрезается с начала;
+  короткий циклически повторяется до `[1,64600]`. Ноль отсчётов, менее 1600
+  наблюдённых отсчётов или полностью цифровая тишина выбранного окна дают
+  `completed / state=insufficient_evidence`, без logits и без запуска модели.
+  1600 (100 мс) — детерминированная техническая граница, ограничивающая
+  размножение одного окна максимум 41 повтором; **не валидированный speech threshold**.
+- `observed_samples` — реально прочитанные отсчёты (не больше 64600),
+  `source_samples` — число из WAV header, `used_samples` — уникальный наблюдённый
+  префикс, поданный модели; `input_samples=64600` только при измерении.
+  Coverage относится к префиксу и WAV header, repetition не расширяет покрытие.
+  Публикуются начало окна 0, факты truncation/repetition/padding и число повторённых
+  отсчётов; waveform/embeddings/пути не публикуются.
+- Pin: AASIST-L, HF revision `357e022c44a1aa926097e18c1457bde3873ed8bf`,
+  766114 bytes, SHA-256
+  `f43f0a638b52846f5d0e630c0a738d10e9306325945127c6f8662d559585f218`.
+  Один offline admin-owned regular asset вне source/package/task tree, без
+  symlink/reparse/hardlink; bounded bytes сверяются до native parse и те же bytes
+  передаются session. Missing/hash/load/inference failures — безопасный ERROR,
+  без fallback, downloader, путей и повторных попыток. ACL и отделение от
+  runtime storage обеспечивает администратор; runtime проверяет filesystem
+  objects и запрещает расположение внутри source/package tree.
+- Только optional `onnxruntime==1.31.0`, CPUExecutionProvider, intra/inter threads=1,
+  sequential execution, одна session/worker invocation, один inference, batch=1.
+  Тяжёлые импорты/session ленивые; штатные deadline/terminate/kill/reap и cleanup
+  не меняются. Нет hard RAM quota; native/BLAS ресурсы измеряются отдельно.
+- `score=null`, `score_name=null`, `candidate_findings=[]`. Raw metrics содержат
+  профиль/model pin, факты входа/покрытия, два finite logits и `bona_fide_logit`
+  (колонка 1 по pinned wrapper), `speech_presence=unverified`, state и ограничения.
+  Ни probability, confidence, fake/real verdict, ни ensemble contribution нет.
+- Музыка, шум, несколько говорящих, тишина в начале, domain shift и атаки за
+  первым окном ограничивают смысл отклика. Speech presence не измерена;
+  сильный/нулевой logit не доказывает подделку/подлинность. Калибровка, forensic
+  validity, ONNX/PyTorch parity и независимый re-export не подтверждены.
+- Validation matrix sprint: native/invalid input, scaling/length/repeat/silence,
+  asset/runtime failures, finite bounded output, worker timeout/reap/cleanup,
+  regression прежних 14, ensemble invariance, real pinned-model и installed-wheel
+  smoke, ограниченные CPU/RAM/sequential/concurrent измерения. Синтетические
+  fixtures проверяют исполнение, не accuracy/FPR/EER. Production promotion,
+  расширение применимости и scoring требуют отдельного OWNER gate.
+
 ## Отдельный допуск VRC2 worker-only prototype — PROTOTYPE / NOT ACCEPTED
 
 Заданием `STAGE12-DIPLOMA-VRC2-PROTOTYPE-APPLICABILITY-SPRINT1` владелец разрешил

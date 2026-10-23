@@ -57,6 +57,33 @@ repository не добавляются. Deterministic generated positive, negati
 false-positive/challenge и boundary/not-applicable fixtures не являются
 статистической validation dataset и не должны так описываться.
 
+<a id="aasist-l"></a>
+## AASIST-L / ONNX Runtime — experimental measurement, 2026-10-22
+
+`audio_aasist_l_measurement@1.0.0`: отдельный OWNER AUTHORIZED scope
+`STAGE13-ML-AASIST-L-IMPLEMENTATION-01`; допуск метода — `METHODS.md`.
+
+| Область | Зафиксированный источник |
+|---|---|
+| Method source | Jung et al., AASIST, ICASSP 2022, [arXiv 2110.01200](https://arxiv.org/abs/2110.01200) |
+| Архитектура/checkpoint | [clovaai/aasist](https://github.com/clovaai/aasist/tree/a04c9863f63d44471dde8a6abcb3b082b07cd1d1), MIT, NAVER Corp. 2021-present |
+| Конкретный экспорт | [SpeechAntiSpoofingBenchmarks/AASIST-L](https://huggingface.co/SpeechAntiSpoofingBenchmarks/AASIST-L/tree/357e022c44a1aa926097e18c1457bde3873ed8bf), сторонний ONNX, MIT по pinned LICENSE |
+| Artifact | [aasist-l.onnx](https://huggingface.co/SpeechAntiSpoofingBenchmarks/AASIST-L/resolve/357e022c44a1aa926097e18c1457bde3873ed8bf/aasist-l.onnx), 766114 bytes, SHA-256 `f43f0a638b52846f5d0e630c0a738d10e9306325945127c6f8662d559585f218` |
+| Checkpoint provenance | upstream/HF `AASIST-L.pth` byte hash `814331d088032bb4c3fa61cc014789eadeed464209dd094ab3a2dd6ffbdce27a`; pickle не исполняется и не поставляется |
+| Обучение | ASVspoof2019 LA по upstream; права всех training-data content не выводятся из MIT-весов |
+| Implementation source | original FakeDetector implementation; reference first-window/cyclic-repeat и column-1 semantics сверены с pinned `aasist_l.py`; training/evaluation stack не переносится |
+| Runtime | optional `onnxruntime==1.31.0`, MIT, [Python API](https://onnxruntime.ai/docs/api/python/api_summary.html), [threading](https://onnxruntime.ai/docs/performance/tune-performance/threading.html); NumPy из существующего runtime |
+
+Feasibility ZIP SHA-256
+`90c54d5ca891d1b99bdf0a08900c8a5aa5fbd85d3a746cbd8ae3f3c0a1d46ed5`
+принят владельцем как инженерное свидетельство. Его pinned LICENSE/NOTICE
+сохранены в отдельном offline model handoff; MIT notices NAVER, eurecom-asp,
+Jee-weon Jung сохраняются. NC-SA t-DCF/EER evaluation code не включён.
+ORT устанавливается со своими LICENSE/ThirdPartyNotices; PyTorch, ONNX inspection
+tooling и GPU не требуются. Веса находятся вне Git и wheel; стандартный release
+kit их не включает. Independent re-export, numerical ONNX/PyTorch parity и
+forensic validity не подтверждены; inference smoke не является калибровкой.
+
 <a id="diploma-benign-validation-sources"></a>
 
 ## Дипломная benign-валидация — источники, 2026-10-13
