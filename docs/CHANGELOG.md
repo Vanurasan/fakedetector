@@ -343,6 +343,24 @@ YYYY-MM-DD
 
 ### 2026-10-24
 
+- **[STATUS] Закрыт Stage 12 Macro 7 по решению OWNER в M7-R3:**
+  DONE / OWNER ACCEPTED / CLOSED. M7-R1 — DESIGN ACCEPTED,
+  M7-R2 — ENGINEERING ACCEPTED; implementation PR #80 — MERGED,
+  merge SHA `04835a67992ec499c4151b6d733adb472ad2a45d`.
+  Все пять исходных failures M7-R2 закрыты в C1. Принятые владельцем результаты
+  M7-R2/C1: 3454 passed / 18 skipped, coverage 91%, полный quality barrier — PASS;
+  sdist provenance, wheel-from-sdist и isolated installed smoke — PASS.
+  Ручная браузерная приёмка — 6/6 PASS по сообщению OWNER.
+  Это свидетельства принятой реализации, не вновь выполненные проверки M7-R3.
+  Новая strict certification для указанного merge SHA не выполнялась.
+  UX01–UX13 реализованы; UX14/UX15 и media preview остаются DEFERRED.
+  RU/EN локализует интерфейс, сохранённые аналитические пояснения и сообщения
+  остаются исходным текстом. API и семантика assessment сохранены.
+  Stage 12 остаётся IN_PROGRESS; Macros 4–5 — DEFERRED, Macros 8–10 — NOT_STARTED.
+  Следующий поток — Macro 8: Real Corpus & Hands-on Product Acceptance;
+  приёмка корпуса и статистическая валидация этой записью не заявляются.
+  Эта запись фиксирует последующую приёмку; прежние записи прогресса ниже
+  и исторические failed результаты не переписаны.
 - **[STATUS] Принят Macro 6:** по подтверждению владельца в M7-R2 —
   DONE / OWNER ACCEPTED / MERGED, PR #79, SHA
   `3d1ef2c0a050fdfa54e782f9c2493160a6d4f7cf`. Эта запись уточняет текущий

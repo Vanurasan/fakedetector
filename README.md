@@ -30,9 +30,19 @@ Macro 6 — PASS; четыре находки рассмотрены, адрес
 принимает только точную обратную проекцию текста F01 с прежним полным SHA.
 Повторные focused tests и полный quality barrier прошли; Macro 6 —
 DONE / OWNER ACCEPTED / MERGED (PR #79, baseline
-`3d1ef2c0a050fdfa54e782f9c2493160a6d4f7cf`). Дизайн M7-R1 принят владельцем;
-отдельно разрешённый M7-R2 реализует WebUI/RU/EN: IMPLEMENTATION IN PROGRESS,
-независимые review и merge ожидаются. Macro 7 не закрыт; Macros 8–10 не завершены.
+`3d1ef2c0a050fdfa54e782f9c2493160a6d4f7cf`). Stage 12 Macro 7 —
+DONE / OWNER ACCEPTED / CLOSED: M7-R1 — DESIGN ACCEPTED,
+M7-R2 — ENGINEERING ACCEPTED, PR #80 — MERGED, merge SHA
+`04835a67992ec499c4151b6d733adb472ad2a45d`. UX01–UX13 реализованы;
+UX14/UX15 и media preview остаются DEFERRED. По принятой владельцем проверке
+M7-R2/C1 все пять исходных failures закрыты: 3454 passed / 18 skipped,
+coverage 91%, полный quality barrier, sdist provenance, wheel-from-sdist
+и isolated installed smoke — PASS. Ручная браузерная приёмка — 6/6 PASS
+по сообщению OWNER. API и семантика assessment сохранены.
+Новая strict certification для этого SHA не выполнялась.
+Stage 12 остаётся IN_PROGRESS, Macros 4–5 — DEFERRED, Macros 8–10 — NOT_STARTED.
+Следующий поток — Macro 8: Real Corpus & Hands-on Product Acceptance;
+приёмка реального корпуса ещё не выполнена.
 Текущий статус разработки, подробные основания закрытия предыдущих этапов
 и принятая политика Graphify `REBUILD_POLICY` —
 в [ROADMAP](docs/ROADMAP.md).
