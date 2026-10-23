@@ -126,14 +126,17 @@ AFTER_MVP
 Статус Macros 0–8 Stage 11: DONE / owner accepted
 Последний завершённый Macro: Stage 12 Macro 3 — Audio Analyzer Expansion — Wave 1 (DONE / CLOSED / OWNER ACCEPTED / STRICTLY CERTIFIED — по подтверждению владельца в задании M4-R1)
 Статус Stage 12: IN_PROGRESS
-Последний завершённый инкремент: DIPLOMA VRC2 PROTOTYPE/APPLICABILITY — Sprint 1 — DONE / OWNER ACCEPTED / MERGED (PR #76)
+Последний принятый инкремент: Stage 13 AASIST-L measurement-only и QG closure — OWNER ACCEPTED / MERGED (PR #78), merge SHA 35ae4d3ca11bfe0bfcfb98954bc43c911e524800
 Дипломные реализации и исследования: PR #70 analyzer expansion, PR #71 ensemble, PR #72 controlled demo evaluation, PR #73 independent benign validation, PR #74 targeted VRC research, PR #75 VRC redesign research, PR #76 VRC2 prototype/applicability — OWNER ACCEPTED / MERGED; baseline сверки: 7da9cd1b31d3e88a2cc3d93ae7de77700858e3b4
-Текущая работа: STAGE13-ML-AASIST-L-QG-CLOSURE-01 — совместимость historical guards; OWNER_ACTION_REQUIRED / OWNER REVIEW PENDING
+Текущая работа: STAGE12-M6-R2-SEMANTIC-REMEDIATION — адресная ремедиация четырёх findings; окончательная приёмка Macro 6 принадлежит OWNER
+Каталог: 15 runtime анализаторов — 5 CORE, 9 исходных experimental, 1 AASIST-L experimental measurement-only; enabled: standard=4, diploma=14; AASIST-L optional / disabled by default / non-scoring
 Решение владельца от 2026-10-19: новая функциональная разработка приостановлена до сверки документации и независимого архитектурного review; новый feature sprint не разрешён
-Macro 4: Video Analyzer Expansion — Wave 1 — IN_PROGRESS; M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12)
+Macro 4: незавершённые исследования DEFERRED ради завершения ВКР; M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12)
 M4-R2: COMPLETE_144_CELL_MATRIX; 133 VALID / 11 LOCAL_FAIL / 0 GLOBAL_STOP / 0 NOT_EXECUTED; G1 PASS / G2 FAIL / G3 PARTIAL / G4 NOT_EVALUATED_STAGE_A / G5 DEFER
 Stage B: BLOCKED / NOT AUTHORIZED; production: UNCHANGED / NO VRC PROMOTION; дальнейший полный Stage A rerun: NOT PLANNED
-Ближайшее действие: независимый owner review AASIST-L sprint; прежние VRC2_PROTOTYPE_APPLICABILITY_LIMITED и P5 FAIL сохранены; другие реализации/исследования требуют отдельного OWNER GATE
+Macro 5: NOT_STARTED / DEFERRED ради завершения ВКР
+Macro 6: IN_PROGRESS; независимый инженерный аудит M6-R1 PASS / OWNER review PASS; четыре findings рассмотрены; точная проекция F01 разрешена OWNER и реализована; повторные проверки PASS; MACRO6_READY_FOR_OWNER_ACCEPTANCE
+Ближайшее действие: независимый OWNER review полного M6-R2 diff и финальная приёмка; Macro 7 не начат; прежние VRC2_PROTOTYPE_APPLICABILITY_LIMITED и P5 FAIL сохранены
 Статус Macro 0: DONE / merged
 Решение владельца PROJECT_LICENSE: CLOSED — Apache-2.0
 Состояние Macro 2: DONE / CLOSED; принятые результаты и основания закрытия приведены в §2.2
@@ -152,7 +155,7 @@ M3-ATD-D1: DONE / OWNER ACCEPTED DISPOSITION (2026-09-29); ATD — RESEARCH_ONLY
 M3-R2A: DONE / OWNER ACCEPTED RESEARCH RESULT (2026-09-26); production acceptance отсутствует
 M3-R2B: DONE / OWNER ACCEPTED RESEARCH RESULT (2026-09-26); исторический outcome ARC-NCC-1 на тот момент — READY_FOR_LARGER_VALIDATION, только research readiness; текущий ARC disposition — в M3-R3D-F; статистическая независимость не установлена
 Обязательный carry-forward Macro 3: ATD-LOCAL-1 и ASC-TV-1 — RESOLVED решениями владельца; MACRO3_ALL_REQUIRED_CARRY_FORWARD_RESOLVED: YES. Hygiene audit и закрытие Macro 3 приняты владельцем (см. [M3-CR1](#audio-m3-cr1))
-Будущие работы: Stage 12 Macros 5–10 — NOT_STARTED; Stage 13 AASIST-L — отдельный разрешённый sprint, OWNER REVIEW PENDING; остальные Stage 13+ — AFTER_MVP / NOT_STARTED
+Будущие работы: Macro 7 — NOT_STARTED, следующий планируемый поток; Macros 8–10 — NOT_STARTED / не завершены; Stage 13 AASIST-L — OWNER ACCEPTED / MERGED (PR #78); остальные Stage 13+ — AFTER_MVP / NOT_STARTED
 Критические блокеры принятого DQ scope M2-A: отсутствуют; остальные методы требуют собственных gates
 Реализация программы: Этапы 1–11 завершены; MVP 0.1.0 DONE / CLOSED; финальная проверка Stage 11 — PASS
 Документационная база: сформирована
@@ -348,7 +351,7 @@ Grid остаётся `DEFERRED_RESEARCH_ONLY`.
 | 10 | Сборка и демонстрация MVP | DONE / CLOSED | Macro 1–3 DONE / owner accepted; independent post-remediation audit — PASS; S10-A01–S10-A04 CLOSED |
 | 11 | Post-MVP Normalization & Hardening | DONE / CLOSED | Macros 0–8 DONE / owner accepted; финальная проверка и strict certification — PASS; actionable findings 0 |
 | 12 | Analyzer Expansion, Licensing & Product Validation | IN_PROGRESS | Macro 0 DONE / merged; Macros 1–2 DONE / CLOSED; M2-HR6 PASS / OWNER ACCEPTED; лицензия проекта Apache-2.0 |
-| 13+ | Дальнейшие расширения | AASIST-L: OWNER REVIEW PENDING; остальные NOT_STARTED | Один разрешённый measurement-only sprint; другие ML, интеграции, история, масштабирование требуют отдельного решения |
+| 13+ | Дальнейшие расширения | AASIST-L: OWNER ACCEPTED / MERGED (PR #78); остальные NOT_STARTED | Один разрешённый measurement-only sprint; другие ML, интеграции, история, масштабирование требуют отдельного решения |
 
 ---
 
@@ -2477,7 +2480,11 @@ Stage нет); гарантии MVP A–R — `PASS`. Принята полит�
 служат этой цели. Принятые архитектурные ограничения находятся в `PROJECT.md`
 §20.1–20.2; интерфейсы и точная семантика результата — в `CONTRACTS.md`.
 
-Текущий подтверждённый production-каталог содержит ровно пять анализаторов
+Текущий runtime-каталог содержит 15 анализаторов: пять CORE, перечисленных ниже,
+девять исходных experimental и один отдельно разрешённый Stage 13 AASIST-L
+experimental measurement-only. Стандартный enabled profile содержит 4,
+дипломный — 14; AASIST-L optional, disabled by default и non-scoring.
+Подтверждённый CORE-каталог содержит ровно пять анализаторов
 (`src/fakedetector/analyzers/_catalog.py`):
 
 - `image_metadata_consistency@1.0.0`;
@@ -2489,10 +2496,12 @@ Stage нет); гарантии MVP A–R — `PASS`. Принята полит�
 Macro 0 не изменяет этот каталог, предобработку, WebUI или локализацию.
 В Pass 2 разрешены только лицензионные metadata, включение LICENSE в поставку
 и соответствующие release-тесты; публикация не выполняется.
-Stage 12 не реализует ML и не добавляет ML runtime,
+Исходная граница Stage 12: этап не реализует ML и не добавляет ML runtime,
 веса, GPU-требования или загрузки моделей; исследовательский каталог ML
 допустим, реализация отложена в Stage 13+. Калибровка вероятности, новая
 инфраструктура и интеграции не становятся частью этапа автоматически.
+Отдельное исключение разрешено владельцем как Stage 13 AASIST-L sprint
+и принято в PR #78; это не ретроактивное изменение исходных gates Stage 12.
 
 <a id="diploma-sprint1"></a>
 ## Дипломный analyzer expansion — Sprint 1, 2026-10-12
@@ -2854,10 +2863,10 @@ intended untracked report. Read-only inventory фактического архи
 Локальный post-staging barrier не является strict installed-wheel certification:
 для нового merge SHA она остаётся **UNVERIFIED / NOT CLAIMED**. Агент не повторял
 тесты в docs-only сверке или remediation R1.
-Текущий gate — owner review документационной сверки и независимый архитектурный
+На момент этой документационной сверки gate — owner review и независимый архитектурный
 review. Изменение метода/применимости, broader validation и runtime/ensemble
 integration требуют отдельного задания после решения владельца о продолжении.
-Stage 12 и Macro 4 остаются IN_PROGRESS; VRC G5 DEFER и запрет исходного
+На тот момент Stage 12 и Macro 4 оставались IN_PROGRESS; VRC G5 DEFER и запрет исходного
 Stage B сохранены. Git mutations не выполнялись.
 
 ## Карта Macro и зависимости
@@ -2868,10 +2877,10 @@ Stage B сохранены. Git mutations не выполнялись.
 | 1 | Forensic Preprocessing Foundations | DONE / CLOSED / owner accepted | M1-A–M1-G и targeted remediation DONE / owner accepted / committed; M1-H DONE / PASS; actionable findings 0 |
 | 2 | Image Analyzer Expansion — Wave 1 | DONE / CLOSED | Один новый production-анализатор DQ; остальные кандидаты research-only/deferred; M2-HR6 PASS / OWNER ACCEPTED; M2H-D01 → Macro 6 |
 | 3 | Audio Analyzer Expansion — Wave 1 | DONE / CLOSED / OWNER ACCEPTED | M3-R1/R2A/R2B/R3A приняты владельцем; M3-R3B disposition принят, broad validation отложена; M3-R3C, M3-R3D-P/E/F приняты владельцем; M3-R3D-F confirmation MIXED (5/8 rescues); ARC research measurement demonstrated, production promotion и дальнейшее ARC retention development текущего Macro 3 DEFERRED; M3H-A01 deferred; M3-ATD-D1 DONE / OWNER ACCEPTED DISPOSITION, ATD RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, carry-forward RESOLVED; M3-ASC-D1 DONE / OWNER ACCEPTED DISPOSITION, ASC RESEARCH_ONLY_NON_SPECIFIC / OWNER ACCEPTED, carry-forward RESOLVED; все required carry-forward разрешены; M3-HYG-1 DONE / OWNER ACCEPTED, hygiene gate CLOSED; M3-CR1 DONE / OWNER ACCEPTED CLOSURE (2026-10-01); STRICTLY CERTIFIED по подтверждению владельца в M4-R1 (см. Macro 4); production audio-метод не принят |
-| 4 | Video Analyzer Expansion — Wave 1 | IN_PROGRESS | M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12); G1 PASS, G2 FAIL, G3 PARTIAL, G4 NOT_EVALUATED_STAGE_A, G5 DEFER; Stage B BLOCKED / NOT AUTHORIZED; полный Stage A rerun NOT PLANNED; VCM-FRAME-1 TARGETED_RESEARCH / INACTIVE; production UNCHANGED / NO VRC PROMOTION; [закрытие Stage A](#video-m4r2-closeout) |
-| 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED | После 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
-| 6 | Correlation, Completeness & Result Semantics Review | NOT_STARTED | После 2–5: проверка выросшего набора без двойного учёта и завышения полноты; изменения дизайна только отдельным решением |
-| 7 | WebUI Product Layer / Localization / Human-readable Results | NOT_STARTED | После 6: согласованное представление результата, RU/EN и проверка неизменности API/domain semantics |
+| 4 | Video Analyzer Expansion — Wave 1 | DEFERRED | M4-R2 VRC-DENSE-1 Stage A COMPLETE / SYNTHETIC_ONLY / OWNER ACCEPTED / COMPLETE WITH ENGINEERING FAIL (2026-10-12); G1 PASS, G2 FAIL, G3 PARTIAL, G4 NOT_EVALUATED_STAGE_A, G5 DEFER; Stage B BLOCKED / NOT AUTHORIZED; полный Stage A rerun NOT PLANNED; VCM-FRAME-1 TARGETED_RESEARCH / INACTIVE; production UNCHANGED / NO VRC PROMOTION; [закрытие Stage A](#video-m4r2-closeout) |
+| 5 | Analyzer Wave 2 / Experimental Promotion | NOT_STARTED / DEFERRED ради завершения ВКР | Исходный план после 2–4: обоснованный отбор второй волны, проверка экспериментальных методов и допуск в доверенный каталог |
+| 6 | Correlation, Completeness & Result Semantics Review | IN_PROGRESS / финальная приёмка OWNER ожидается | По отдельному разрешению M6-R1/R2 без завершения отложенных 4/5: независимый инженерный аудит PASS; четыре findings рассмотрены; F01/F03 исправлены, точная проекция F01 разрешена OWNER; focused и полный barrier PASS; MACRO6_READY_FOR_OWNER_ACCEPTANCE, дизайн оценки прежний |
+| 7 | WebUI Product Layer / Localization / Human-readable Results | NOT_STARTED / следующий планируемый поток | После приёмки 6: согласованное представление результата, RU/EN и проверка неизменности API/domain semantics |
 | 8 | Real Corpus & Hands-on Product Acceptance | NOT_STARTED | После 5–7: корпус с проверенными правами, воспроизводимые измерения и формальная ручная приёмка |
 | 9 | GitHub Release / Distribution | NOT_STARTED | После 0 и 8: проверенная поставка, лицензии/уведомления и отдельный шаг публикации владельцем |
 | 10 | Final Whole-Stage Audit & Certification | NOT_STARTED | После 0–9: независимый аудит, закрытие замечаний, quality barrier, сертификация установленного артефакта и решение о закрытии Stage 12 |
@@ -4444,7 +4453,11 @@ acceptance-only.diff, complete.diff от HEAD, review-summary.md и git-status.t
 предоставлены для owner review. Изменения unstaged, Git mutations не выполнялись.
 
 <a id="video-m4r1"></a>
-## Macro 4 — Video Analyzer Expansion — Wave 1 — IN_PROGRESS
+## Macro 4 — Video Analyzer Expansion — Wave 1 — незавершённые исследования DEFERRED
+
+Решение владельца в M6-R2 от 2026-10-23: дальнейшая исследовательская работа
+отложена ради завершения ВКР. Это не DONE Macro 4. Принятые исторические
+результаты, неуспешные gates и запрет исходного Stage B ниже сохранены.
 
 <a id="video-m4r2-closeout"></a>
 ### M4-R2 — закрытие VRC-DENSE-1 Stage A и G5 DEFER, 2026-10-12
@@ -4657,11 +4670,34 @@ acceptance-only.diff, complete.diff, review-summary.md, git-status.txt,
 protocol-sha256.txt. Hash финального report служит ссылкой для будущей M4-R2-E;
 исполнение, media generation, encoding trials и новые измерения не выполнялись.
 
-## Macro 6 — корреляция и смысл результата
+## Macro 6 — корреляция и смысл результата — IN_PROGRESS
 
-Из закрытого Macro 2 перенесён **M2H-D01 — DEFERRED TO MACRO 6**.
-Это отложенный вопрос, не блокер закрытия Macro 2; его решение требует
-отдельно разрешённой работы Macro 6.
+Независимый инженерный аудит M6-R1 принят владельцем: **PASS**, 0 BLOCKER,
+0 MAJOR, 2 MINOR и 2 INFO; исторический прогон — 1354 PASS / 5 SKIP.
+Четыре findings рассмотрены в отдельно разрешённой M6-R2: F01 — текст
+complete+LOW, F03 — пояснение технической полноты рядом со сводкой WebUI,
+F02 — сохранение научного ограничения, F04 — сверка текущих статусов.
+F01/F03 реализованы. Первый прогон до дополнительного разрешения OWNER:
+focused 422 PASS / 1 SKIP / 31 ERROR в historical fixture; `uv run poe check`:
+pre-commit/mypy PASS; pytest 3283 PASS / 18 SKIP / 22 FAIL / 35 ERROR.
+Причина всех failures/errors — прежний full-source SHA guard, не допускавший
+новую строку F01. Этот исторический отказ сохранён в review logs.
+Владелец явно разрешил точную проекцию F01 и связанные проверки; допуск
+реализован и закреплён в PROJECT §10.8. Исторические hashes и scoring прежние;
+любые иные изменения source по-прежнему отклоняются.
+Повторные проверки завершены 2026-10-24: focused **633 PASS / 1 SKIP**;
+полный `uv run poe check` — **PASS**, pytest **3354 PASS / 18 SKIP / 0 FAIL /
+0 ERROR**, coverage 91%; pre-commit, mypy и CLI smoke PASS.
+Рекомендация: **MACRO6_READY_FOR_OWNER_ACCEPTANCE**. Окончательная независимая
+приёмка OWNER ожидается. Это не OWNER ACCEPTED Macro 6 и не завершение Stage 12.
+Macro 7 не начат; новая strict installed-wheel certification не заявляется.
+
+**M2H-D01 — REVIEWED в текущем audit scope.** Проверена действующая политика
+корреляции; подтверждённого implementation double-counting defect в проверенном
+объёме нет. Остаточная научная зависимость сохраняется; новая политика корреляции
+не разрешена. Формальное закрытие владельцем более широкого исторического
+scope по одному ID не заявляется. Точная научная граница уже описана в
+[METHODS](METHODS.md#diploma-ensemble-normalization), новая спецификация здесь не вводится.
 
 Размер портфеля не равен числу независимых свидетельств. ELA, double
 quantization, JPEG grid и JPEG ghost могут отражать общую историю JPEG-обработки;
@@ -4694,8 +4730,8 @@ image/audio/video. Это **неформальное знакомство с п�
 - `coverage_ratio`, `error=[]`, `timeout=[]` и сходные технические сведения
   в подробностях, а не на первом плане обычного результата;
 - визуализация локализованных в медиа признаков, где это разрешено контрактами;
-- осторожные рекомендации при слабых признаках вместо чрезмерно категоричного
-  «дополнительные действия не требуются»;
+- дальнейшая проверка читаемости рекомендаций при слабых признаках;
+  узкая коррекция complete+LOW выполнена отдельно в M6-R2 и ожидает приёмки;
 - неизменные канонические API/domain enums и смысл результата при смене языка.
 
 Презентационный перевод сам по себе не требует изменения `CONTRACTS.md`.
@@ -4723,7 +4759,9 @@ Macro 8 должен заранее закрепить разрешённый к
   гарантий установленного wheel; публикация и Git-действия выполнены владельцем;
 - [ ] финальный аудит, относящиеся к реализации тесты/quality checks и строгая
   installed-wheel certification прошли, замечания закрыты;
-- [ ] ML-реализация, веса и ML runtime не добавлены; Stage 13+ остаётся отдельно.
+- [ ] Исходный gate Stage 12: ML-реализация, веса и ML runtime не добавлены;
+  Stage 13+ остаётся отдельно. Отдельно разрешённый AASIST-L принят как Stage 13
+  в PR #78; исходный gate не объявляется ретроактивно пройденным.
 
 ---
 
@@ -4734,8 +4772,10 @@ Macro 8 должен заранее закрепить разрешённый к
 Feasibility `STAGE13-ML-FEASIBILITY-01` — OWNER ACCEPTED. Реализованы один
 experimental catalog entry, analyzer-owned settings, offline pinned bytes,
 optional ORT CPU extra и точный non-scoring ensemble pass-through.
-Статус sprint: **IMPLEMENTED / OWNER REVIEW PENDING**, не owner acceptance,
-не завершение Stage 13 и не strict certification. Default и diploma profiles
+Текущий статус sprint: **OWNER ACCEPTED / MERGED (PR #78)**, merge SHA
+`35ae4d3ca11bfe0bfcfb98954bc43c911e524800`, по подтверждению владельца
+в M6-R2 от 2026-10-23. Stage 13 целиком не завершён; новая strict certification
+этого SHA не заявляется. Default и diploma profiles
 сохраняют прежние enabled lists. Полный diff и evidence передаются отдельно
 в `FakeDetector-Work/reviews/STAGE13-ML-AASIST-L-IMPLEMENTATION-01`.
 Коррекция `STAGE13-ML-AASIST-L-QG-CLOSURE-01` от 2026-10-23 сохраняет исторический
@@ -4743,7 +4783,9 @@ fingerprint и проверяет точную версионированную 
 полный `uv run poe check`: 3333 PASS / 17 SKIP / 1 FAIL / 0 ERROR. Единственный FAIL —
 неизменённый sdist provenance guard для untracked нового source; **OWNER_ACTION_REQUIRED**
 (staging и последующая verification принадлежат владельцу). Полный barrier PASS
-и strict certification не заявляются; коррекция ожидает независимого owner review.
+и strict certification в том историческом запуске не заявлялись; на тот момент
+коррекция ожидала независимого owner review. Последующая приёмка PR #78
+не превращает исторический pre-staging FAIL в PASS.
 Остальные перечисленные направления не начаты и требуют отдельного решения.
 
 ## Анализ и качество

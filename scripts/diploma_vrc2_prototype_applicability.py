@@ -73,7 +73,10 @@ def runtime_isolation() -> dict[str, Any]:
     }
     actual = {r.analyzer_id for r in _runtime_analyzer_registrations()}
     policy = demo._policy()
-    additive = policy["assessment_implementation"]["compatibility"] == demo._AASIST_COMPATIBILITY
+    additive = policy["assessment_implementation"]["compatibility"] in (
+        demo._AASIST_COMPATIBILITY,
+        demo._AASIST_F01_COMPATIBILITY,
+    )
     measurement_id = "audio_aasist_l_measurement"
     expected = core | experimental | ({measurement_id} if additive else set())
     measurement = _resolve_runtime_analyzer_definition(measurement_id)

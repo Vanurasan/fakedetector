@@ -49,8 +49,20 @@ ROOT = Path(__file__).resolve().parents[1]
 GENERATOR_VERSION = "diploma-demo-1.0.0"
 BASELINE_HEAD = "4459e795b8d784a4e683487c0d5b3f8e155b8bce"
 ASSESSMENT_SHA256 = "0b022e995316fecde23b7afbbeb2f32bb836e7bc973fdd3d0ed86c6fc06a2a1b"
-# Exact authorized source delta, not a replacement for the historical fingerprint.
+# Exact authorized source deltas, not replacements for the historical fingerprint.
 _AASIST_COMPATIBILITY = "aasist-l-measurement-only@1.0.0"
+_F01_COMPATIBILITY = "complete-low-wording@1.0.0"
+_AASIST_F01_COMPATIBILITY = f"{_AASIST_COMPATIBILITY}+{_F01_COMPATIBILITY}"
+_HISTORICAL_LOW_TEXT = (
+    '        "Дополнительные действия не требуются; '
+    'результат не является окончательной экспертизой.",\n'
+)
+_F01_LOW_TEXT = """        (
+            "По результатам выполненных проверок система не рекомендует дополнительных действий. "
+            "Низкий уровень технического риска относится только к проверенным признакам "
+            "и не подтверждает подлинность или безопасность файла."
+        ),
+"""
 _HISTORICAL_ID_GUARD = """        if any(result.analyzer_id not in specs for result in results):
             raise ValueError("unknown ensemble analyzer")
 """
@@ -145,18 +157,27 @@ def _environment() -> dict[str, Any]:
 
 
 def _assessment_implementation(source: str) -> dict[str, str]:
-    """Accept only frozen source or its exact versioned, non-scoring ID extension."""
+    """Verify the full frozen SHA after only exact authorized ID/wording projections."""
     current = _digest(source.encode())
     projection = source
+    wording_projected = source.count(_F01_LOW_TEXT) == 1
+    if wording_projected:
+        projection = projection.replace(_F01_LOW_TEXT, _HISTORICAL_LOW_TEXT, 1)
     compatibility = "historical-frozen"
-    if current != ASSESSMENT_SHA256:
-        if source.count(_AASIST_ID_GUARD) != 1:
+    if _digest(projection.encode()) != ASSESSMENT_SHA256:
+        if projection.count(_AASIST_ID_GUARD) != 1:
             raise ValueError("Frozen ensemble implementation changed; this sprint forbids tuning")
-        projection = source.replace(_AASIST_ID_GUARD, _HISTORICAL_ID_GUARD, 1)
+        projection = projection.replace(_AASIST_ID_GUARD, _HISTORICAL_ID_GUARD, 1)
         compatibility = _AASIST_COMPATIBILITY
     projected = _digest(projection.encode())
     if projected != ASSESSMENT_SHA256:
         raise ValueError("Frozen ensemble implementation changed; this sprint forbids tuning")
+    if wording_projected:
+        compatibility = (
+            _F01_COMPATIBILITY
+            if compatibility == "historical-frozen"
+            else _AASIST_F01_COMPATIBILITY
+        )
     return {
         "compatibility": compatibility,
         "current_sha256_lf": current,
